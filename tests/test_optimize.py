@@ -6,9 +6,40 @@ import yaml
 
 from evalloop import build as build_mod
 from evalloop import optimize as optimize_mod
+from evalloop import report as report_mod
 from evalloop import run as run_mod
 
 REPO_ROOT = build_mod.REPO_ROOT
+
+
+@pytest.fixture
+def isolated_artifact_paths(tmp_path, monkeypatch):
+    """Redirect every artifact path that build()/optimize() write through to
+    tmp_path. Without this, tests that exercise the real orchestration pollute
+    the developer's checkout: label-test entries in results/index.jsonl and
+    results/runs/ (with pytest tmp paths recorded in meta.json), junk
+    prompts/optimized/ dirs, and promptfoo/promptfooconfig.yaml silently
+    replaced by the label-test build.
+    """
+    build_dir = tmp_path / "data" / "build"
+    promptfoo_dir = tmp_path / "promptfoo"
+    results_dir = tmp_path / "results"
+
+    monkeypatch.setattr(build_mod, "BUILD_DIR", build_dir)
+    monkeypatch.setattr(build_mod, "TESTS_TEST_PATH", build_dir / "tests_test.yaml")
+    monkeypatch.setattr(build_mod, "TESTS_TRAIN_PATH", build_dir / "tests_train.yaml")
+    monkeypatch.setattr(build_mod, "PROMPTFOO_DIR", promptfoo_dir)
+    monkeypatch.setattr(build_mod, "PROMPTFOO_CONFIG_PATH", promptfoo_dir / "promptfooconfig.yaml")
+    monkeypatch.setattr(run_mod, "PROMPTFOO_CONFIG_PATH", promptfoo_dir / "promptfooconfig.yaml")
+    monkeypatch.setattr(run_mod, "VARIANTS_DIR", promptfoo_dir / "variants")
+    monkeypatch.setattr(run_mod, "RESULTS_DIR", results_dir)
+    monkeypatch.setattr(run_mod, "RUNS_DIR", results_dir / "runs")
+    monkeypatch.setattr(run_mod, "INDEX_PATH", results_dir / "index.jsonl")
+    monkeypatch.setattr(report_mod, "RUNS_DIR", results_dir / "runs")
+    monkeypatch.setattr(report_mod, "REPORTS_DIR", results_dir / "reports")
+    monkeypatch.setattr(optimize_mod, "OPTIMIZED_DIR", tmp_path / "prompts" / "optimized")
+    monkeypatch.setattr(optimize_mod, "VARIANTS_DIR", promptfoo_dir / "variants")
+    return tmp_path
 
 
 # ---------------------------------------------------------------------------
@@ -112,7 +143,7 @@ def test_reroot_file_refs_adds_prefix_only_to_file_uris():
     assert rerooted["c"] == 3
 
 
-def test_build_variant_config_reroots_and_swaps_prompt(tmp_path, monkeypatch):
+def test_build_variant_config_reroots_and_swaps_prompt(isolated_artifact_paths, tmp_path, monkeypatch):
     # promptfooconfig.yaml paths are relative to promptfoo/; the variant lives
     # one level deeper at promptfoo/variants/, so every file:// ref must gain
     # one extra "../". Pin down a known (label-type) build first so this
@@ -256,7 +287,7 @@ def _write_label_type_golden(path):
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
-def test_optimize_end_to_end_with_stubbed_gepa_and_promptfoo(monkeypatch, tmp_path):
+def test_optimize_end_to_end_with_stubbed_gepa_and_promptfoo(isolated_artifact_paths, monkeypatch, tmp_path):
     # decouple from the live project's data/golden.jsonl (currently CUAD-100,
     # a text-extraction task) so this label-only optimize() path has data
     # that actually matches its own config's labels.
@@ -303,7 +334,9 @@ def test_optimize_end_to_end_with_stubbed_gepa_and_promptfoo(monkeypatch, tmp_pa
     assert outcome.variant_path.exists()
     assert outcome.run_id
     assert (run_mod.RUNS_DIR / outcome.run_id / "output.json").exists()
-    # no prior base run existed in this project's real index.jsonl -> compare skipped
+    # the isolated index.jsonl only holds this variant run (base runs are
+    # variant=None), so compare is skipped -- deterministically, unlike when
+    # this read the developer's real results/index.jsonl
     assert outcome.base_run_id is None
     assert outcome.compare_path is None
 

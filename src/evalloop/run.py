@@ -211,6 +211,10 @@ def run(
         config_path_display = str(resolved_config_path.relative_to(REPO_ROOT))
     except ValueError:
         config_path_display = str(resolved_config_path)
+    try:
+        promptfoo_config_display = str(promptfoo_config_path.relative_to(REPO_ROOT))
+    except ValueError:
+        promptfoo_config_display = str(promptfoo_config_path)
 
     meta = {
         "run_id": run_id,
@@ -219,7 +223,7 @@ def run(
         "answer_type": config.task.answer_type,
         "variant": variant,
         "config_path": config_path_display,  # so blog.py can generate accurate `--config` repro commands
-        "promptfoo_config_path": str(promptfoo_config_path.relative_to(REPO_ROOT)),
+        "promptfoo_config_path": promptfoo_config_display,
         "prompt_file": str(prompt_path.relative_to(REPO_ROOT)),
         "prompt_sha256": sha256_of_file(prompt_path),
         "repeat": effective_repeat,
