@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+
+# Node (promptfoo cache, if run locally without npx cache dir override)
+node_modules/
+
+# Secrets
+.env
+
+# OS
+.DS_Store
+Thumbs.db
