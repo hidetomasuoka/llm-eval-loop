@@ -128,10 +128,17 @@ def _build_default_test(config: Config, allow_same_judge: bool) -> dict:
                 "Re-run with --allow-same-judge to override this on purpose."
             )
         rubric_path = REPO_ROOT / config.judge.rubric_file
+        # Empirically (promptfoo 0.121.17): a `file://` value on llm-rubric is
+        # NOT run through Nunjucks templating -- {{input}}/{{expected}} come
+        # through to the grading prompt as literal, unsubstituted text (see
+        # `renderedAssertionValue` in a real output.json). Inline string
+        # values *do* get templated (matches the promptfoo docs' own inline
+        # example), so read the rubric file's content here and embed it
+        # directly instead of referencing it by file://.
         default_test["assert"] = [
             {
                 "type": "llm-rubric",
-                "value": f"file://{to_promptfoo_relpath(rubric_path)}",
+                "value": rubric_path.read_text(encoding="utf-8"),
                 "provider": judge_provider,
                 "threshold": config.judge.threshold,
             }

@@ -86,6 +86,8 @@ class OptimizeConfig:
 class BlogConfig:
     jpy_per_usd: float = 150.0
     slug_prefix: str = "llm-eval"
+    # README.md 9.3.1: "self-made" またはこのリストで許可したライセンス値のみ公開可
+    allowed_sources: list[str] = field(default_factory=lambda: ["self-made"])
 
 
 @dataclass
@@ -166,6 +168,7 @@ def load_config(path: str | Path) -> Config:
     blog = BlogConfig(
         jpy_per_usd=float(blog_raw.get("jpy_per_usd", 150.0)),
         slug_prefix=blog_raw.get("slug_prefix", "llm-eval"),
+        allowed_sources=blog_raw.get("allowed_sources") or ["self-made"],
     )
 
     return Config(task=task, models=models, run=run, judge=judge, optimize=optimize, blog=blog, path=path)

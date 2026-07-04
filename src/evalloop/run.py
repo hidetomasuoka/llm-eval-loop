@@ -70,7 +70,15 @@ def get_promptfoo_version() -> str:
         return "unknown"
     for args in (["--version"], ["-V"]):
         try:
-            proc = subprocess.run([*npx_cmd, *args], capture_output=True, text=True, timeout=60, cwd=REPO_ROOT)
+            proc = subprocess.run(
+                [*npx_cmd, *args],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=60,
+                cwd=REPO_ROOT,
+            )
             out = proc.stdout.strip() or proc.stderr.strip()
             if proc.returncode == 0 and out:
                 return out.splitlines()[-1].strip()
@@ -81,7 +89,9 @@ def get_promptfoo_version() -> str:
 
 def get_node_version() -> str:
     try:
-        proc = subprocess.run(["node", "--version"], capture_output=True, text=True, timeout=10)
+        proc = subprocess.run(
+            ["node", "--version"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10
+        )
         return proc.stdout.strip() or "unknown"
     except (OSError, subprocess.TimeoutExpired):
         return "unknown"
@@ -136,7 +146,16 @@ def run_promptfoo_eval(
     if max_concurrency is not None:
         cmd += ["-j", str(max_concurrency)]
 
-    return subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True, timeout=timeout_s)
+    # promptfoo's own stdout/stderr, and anything it echoes from prompts/data,
+    # is UTF-8 -- capturing with text=True but no explicit encoding falls back
+    # to the OS locale codepage (cp932 on ja-JP Windows), which raises
+    # UnicodeDecodeError deep in subprocess's background reader thread the
+    # moment any non-cp932 byte shows up (e.g. curly quotes, em dashes,
+    # certain CJK punctuation). Decode as UTF-8 explicitly and never raise on
+    # a stray bad byte.
+    return subprocess.run(
+        cmd, cwd=REPO_ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout_s
+    )
 
 
 def _actual_cost_from_output(output_path: Path) -> float:
@@ -179,12 +198,19 @@ def run(
     actual_cost = _actual_cost_from_output(output_path) if output_path.exists() else 0.0
     prompt_path = REPO_ROOT / config.task.prompt_file
 
+    resolved_config_path = Path(config_path).resolve()
+    try:
+        config_path_display = str(resolved_config_path.relative_to(REPO_ROOT))
+    except ValueError:
+        config_path_display = str(resolved_config_path)
+
     meta = {
         "run_id": run_id,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "task_name": config.task.name,
         "answer_type": config.task.answer_type,
         "variant": variant,
+        "config_path": config_path_display,  # so blog.py can generate accurate `--config` repro commands
         "promptfoo_config_path": str(promptfoo_config_path.relative_to(REPO_ROOT)),
         "prompt_file": str(prompt_path.relative_to(REPO_ROOT)),
         "prompt_sha256": sha256_of_file(prompt_path),
@@ -201,7 +227,8 @@ def run(
         "promptfoo_version": get_promptfoo_version(),
         "node_version": get_node_version(),
         "evalloop_command": (
-            f"evalloop run{f' --variant {variant}' if variant else ''}"
+            f"evalloop run{f' --config {config_path_display}' if config_path_display != 'config.yaml' else ''}"
+            f"{f' --variant {variant}' if variant else ''}"
             f" --repeat {effective_repeat}{f' --limit {limit}' if limit else ''}{' --no-cache' if no_cache else ''}"
         ),
         "promptfoo_exit_code": proc.returncode,

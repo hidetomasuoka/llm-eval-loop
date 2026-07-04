@@ -10,6 +10,7 @@ from evalloop.schemas import (
     OptimizeConfig,
     RunConfig,
     TaskConfig,
+    load_golden_jsonl,
 )
 
 REPO_ROOT = build_mod.REPO_ROOT
@@ -65,7 +66,13 @@ def test_default_test_text_pins_judge_provider_and_threshold():
     assert rubric_assert["type"] == "llm-rubric"
     assert rubric_assert["provider"] == "anthropic:messages:claude-sonnet-4-6"
     assert rubric_assert["threshold"] == 0.8
-    assert "judge_rubric.txt" in rubric_assert["value"]
+    # inline file content, NOT a file:// reference -- promptfoo 0.121.17 does not
+    # substitute {{input}}/{{expected}} inside a file://-loaded llm-rubric value,
+    # only inline string values get Nunjucks-templated (confirmed via a live run)
+    assert not rubric_assert["value"].startswith("file://")
+    assert "{{input}}" in rubric_assert["value"]
+    assert "{{expected}}" in rubric_assert["value"]
+    assert rubric_assert["value"] == (REPO_ROOT / "prompts" / "base" / "judge_rubric.txt").read_text(encoding="utf-8")
 
 
 def test_iron_rule_2_same_judge_raises_by_default():
@@ -151,18 +158,34 @@ def test_to_promptfoo_relpath_uses_forward_slashes():
 
 
 # ---------------------------------------------------------------------------
-# full build() pipeline against the real sample project config/golden
+# full build() pipeline against the real project config/golden.
+#
+# NOTE: config.yaml / data/golden.jsonl are the *active* task, which the tool
+# is explicitly designed to let users swap (see README.md's "self task" note)
+# -- currently the CUAD-100 clause-extraction task, previously the sample
+# inquiry-classification task. These assertions are deliberately generic
+# (derived from the real files at test time) rather than hardcoding one
+# task's exact case counts/labels, so they don't break every time the active
+# task changes.
 # ---------------------------------------------------------------------------
 
 
 def test_build_end_to_end_against_real_sample():
-    estimate = build_mod.build(config_path=REPO_ROOT / "config.yaml", yes=True)
+    real_cases = load_golden_jsonl(build_mod.GOLDEN_PATH)
+    expected_test_count = sum(1 for c in real_cases if c.split == "test")
+    expected_train_count = sum(1 for c in real_cases if c.split == "train")
+
+    # the live config.yaml evaluates all 5 tiers (including sonnet46) and also
+    # judges with sonnet46's provider for its answer_type=text task -- a
+    # documented, deliberate tradeoff (see config.yaml's judge: comment) that
+    # requires the iron-rule-#2 override.
+    estimate = build_mod.build(config_path=REPO_ROOT / "config.yaml", yes=True, allow_same_judge=True)
     assert estimate.total_usd >= 0
 
     test_entries = yaml.safe_load(build_mod.TESTS_TEST_PATH.read_text(encoding="utf-8"))
     train_entries = yaml.safe_load(build_mod.TESTS_TRAIN_PATH.read_text(encoding="utf-8"))
-    assert len(test_entries) == 12
-    assert len(train_entries) == 8
+    assert len(test_entries) == expected_test_count
+    assert len(train_entries) == expected_train_count
 
     test_ids = {e["vars"]["case_id"] for e in test_entries}
     train_ids = {e["vars"]["case_id"] for e in train_entries}

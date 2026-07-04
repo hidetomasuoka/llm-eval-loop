@@ -217,7 +217,12 @@ blog:
 2. answer_typeに応じて `defaultTest.assert` を構成:
    - **label**: `javascript` assert（`asserts/label_match.js`）。出力を正規化（前後空白・全角半角・末尾句点除去）し、`context.vars.expected` と一致、またはラベルリスト中の1つだけが出力に含まれる場合にpass
    - **json**: `is-json`（json_schema_file指定）＋ `javascript`（`asserts/json_field_match.js`）でフィールド比較
-   - **text**: `llm-rubric`。`provider` に judge.provider を**必ず明示**（環境変数依存のデフォルトグレーダー禁止）、`threshold` 設定、rubricはファイルから
+   - **text**: `llm-rubric`。`provider` に judge.provider を**必ず明示**（環境変数依存のデフォルトグレーダー禁止）、`threshold` 設定。
+     rubricは**ファイルの中身を読み込んでインライン文字列として`value`に埋め込む**（`file://...`参照ではない）。
+     実機検証で判明: promptfoo 0.121.17では`llm-rubric`の`value`が`file://`参照だと
+     `{{input}}`/`{{expected}}`がNunjucksテンプレート処理されず、リテラルな`{{input}}`文字列の
+     ままジャッジに渡ってしまう（インラインの`value`文字列なら置換される）。`calibrate.py`の
+     echo-replay用ルーブリックも同様にインライン化している
 3. promptfooconfig.yaml をテンプレートから生成: providers（temperature/max_tokens含む、`label`にaliasを設定）、prompts（file://参照）、tests（**tests_test.yaml のみ**）
 4. 実行前コスト概算 = Σ(モデル単価 × 推定トークン × ケース数 × repeat) を表示。`cost_warn_usd` 超過時は y/n 確認（`--yes` でスキップ可）
 
@@ -294,10 +299,17 @@ human_labels.jsonl の各ケースについて、`--run-id` があれば既存ru
 ## 10. サンプルタスク
 
 - タスク: 「日本語の問い合わせ文を `契約照会 / 障害報告 / 機能要望 / その他` に分類」、answer_type=label
-- `data/sample/golden.jsonl` にダミー20件（train 8 / test 12、meta.category は `基本` / `曖昧` / `複合`、**meta.source は全件 "self-made"**）。実際に使う `data/golden.jsonl` はこのサンプルのコピー
-- `data/sample/human_labels.jsonl` にダミー10件。実際に使う `data/human_labels.jsonl` はこのコピー
+- `data/sample/golden.jsonl` にダミー20件（train 8 / test 12、meta.category は `基本` / `曖昧` / `複合`、**meta.source は全件 "self-made"**）
+- `data/sample/human_labels.jsonl` にダミー10件
 - `prompts/base/task.txt`（{{input}}入り）と `judge_rubric.txt` の初期版
-- config.yaml 初期値はこのサンプルを指す
+- config.yaml 初期値はこのサンプルを指していた
+
+> **現状**: `data/golden.jsonl` / `config.yaml` / `prompts/base/*.txt` は実地検証のため
+> CUAD-100タスク（README.md参照）に差し替え済み。`data/sample/` 配下のファイルはこの
+> サンプルタスクの原本として変更されていない。サンプルタスクに戻すには
+> `data/sample/golden.jsonl` → `data/golden.jsonl`、`data/sample/human_labels.jsonl` →
+> `data/human_labels.jsonl` にコピーし、`config.yaml`の`task.*`を本セクション冒頭の値に
+> 戻せばよい。
 
 ## 11. 鉄の掟（違反する実装は不可）
 
@@ -322,12 +334,16 @@ human_labels.jsonl の各ケースについて、`--run-id` があれば既存ru
 各モジュールのユニットテストは `tests/` にあり、`pytest` で全件確認できる
 （label正規化・split分離assert・output.jsonパーサ・公開ガードを含む）。
 
-**実装時の既知の制約**（README.mdの「既知の制約」も参照）:
-- 開発時のサンドボックス環境にはNode.js・API キー・Ollamaの実行環境がなく、
-  `npx promptfoo eval` と dspy GEPA の実 API 呼び出し部分は subprocess/API 境界を
-  モック化したユニットテストでのみ検証している。実機（Mac、対応Node.js、有効なAPIキー、
-  必要なら`ollama serve`）での `evalloop doctor` 実行が最初の実地検証になる
-- `optimize` は `answer_type=="label"` のみ対応（metricの都合上）
+**実装時の既知の制約**（README.mdの「既知の制約」「Windows実地検証」も参照）:
+- 初期実装はNode.js・APIキー・Ollamaの無いサンドボックス環境で行い、`npx promptfoo eval` と
+  dspy GEPA の実API呼び出し部分はsubprocess/API境界をモック化したユニットテストのみで検証した
+- その後、実機（Windows 11 + Node.js v22.23.1 + Ollama）で `doctor`/`build`/`run`/`report`/`blog`
+  を実際に動かして検証し、モックだけでは見つからなかった複数の実装バグ（npx解決・cp932
+  デコード・llm-rubricのfile://テンプレート未展開など）を発見・修正した。詳細は
+  README.md「Windows実地検証で見つかった問題と修正」を参照
+- `optimize` は `answer_type=="label"` のみ対応（metricの都合上）。現在アクティブなタスクは
+  `answer_type=text`（CUAD-100）のため、`optimize`自体は`data/sample/`のラベルタスクに
+  戻すか、text用metricの追加実装をしないと使えない
 
 ## 13. セットアップ
 

@@ -107,7 +107,10 @@ def _judge_verdicts_fresh(
             "assert": [
                 {
                     "type": "llm-rubric",
-                    "value": f"file://{build_mod.to_promptfoo_relpath(rubric_path)}",
+                    # inline, not file:// -- see build.py's comment on why:
+                    # file://-loaded llm-rubric values don't get Nunjucks
+                    # substitution on {{input}}/{{expected}} in promptfoo 0.121.17
+                    "value": rubric_path.read_text(encoding="utf-8"),
                     "provider": cfg.judge.provider,
                     "threshold": cfg.judge.threshold,
                 }
