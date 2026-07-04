@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import pytest
 import yaml
@@ -7,7 +8,16 @@ from evalloop import analyze as analyze_mod
 from evalloop import blog as blog_mod
 from evalloop import build as build_mod
 from evalloop import run as run_mod
-from evalloop.schemas import GoldenCase
+from evalloop.schemas import (
+    BlogConfig,
+    Config,
+    GoldenCase,
+    JudgeConfig,
+    ModelConfig,
+    OptimizeConfig,
+    RunConfig,
+    TaskConfig,
+)
 
 REPO_ROOT = build_mod.REPO_ROOT
 
@@ -83,6 +93,72 @@ def test_labels_english_fallback_when_no_cjk_font():
     labels = blog_mod._labels(has_cjk_font=False)
     assert labels.accuracy == "Accuracy"
     assert all(ord(ch) < 128 for ch in labels.accuracy + labels.cost + labels.model + labels.category + labels.unassigned)
+
+
+# ---------------------------------------------------------------------------
+# conditions.md reproduce block
+# ---------------------------------------------------------------------------
+
+
+def _mk_config(answer_type, judge_provider, model_provider):
+    return Config(
+        task=TaskConfig(
+            name="t",
+            answer_type=answer_type,
+            prompt_file="prompts/base/task.txt",
+            labels=["契約照会", "解約"] if answer_type == "label" else [],
+        ),
+        models=[ModelConfig(provider=model_provider, alias="m1", tier="small")],
+        run=RunConfig(),
+        judge=JudgeConfig(provider=judge_provider),
+        optimize=OptimizeConfig(target_alias="m1", reflection_provider="r"),
+        blog=BlogConfig(),
+        path=Path("config.yaml"),
+    )
+
+
+def _mk_run_data(run_id="run-1"):
+    meta = {
+        "run_id": run_id,
+        "repeat": 1,
+        "prompt_file": "prompts/base/task.txt",
+        "prompt_sha256": "a" * 64,
+        "models": [],
+        "promptfoo_version": "0.0.0-test",
+        "judge": {"provider": "j"},
+    }
+    return blog_mod.RunData(run_id=run_id, meta=meta, stats=[])
+
+
+def test_conditions_reproduce_adds_allow_same_judge_for_same_judge_text_config():
+    # config.yaml-style setup: llm-rubric judge is also an evaluated model, so
+    # a bare `evalloop build` aborts on iron rule #2 -- the reproduce block
+    # must carry the override or it isn't copy-pastable
+    config = _mk_config("text", judge_provider="p:shared", model_provider="p:shared")
+    md = blog_mod.render_conditions_md([_mk_run_data()], config, fig03_written=False)
+    assert "evalloop build --allow-same-judge" in md
+
+
+def test_conditions_reproduce_plain_build_when_judge_is_independent():
+    config = _mk_config("text", judge_provider="p:judge", model_provider="p:model")
+    md = blog_mod.render_conditions_md([_mk_run_data()], config, fig03_written=False)
+    assert "evalloop build\n" in md
+    assert "--allow-same-judge" not in md
+
+
+def test_conditions_reproduce_plain_build_for_label_config():
+    # same provider on both sides is irrelevant outside answer_type=text:
+    # build.py only enforces iron rule #2 for the llm-rubric path
+    config = _mk_config("label", judge_provider="p:shared", model_provider="p:shared")
+    md = blog_mod.render_conditions_md([_mk_run_data()], config, fig03_written=False)
+    assert "--allow-same-judge" not in md
+
+
+def test_conditions_reproduce_report_uses_positional_run_id():
+    config = _mk_config("label", judge_provider="p:judge", model_provider="p:model")
+    md = blog_mod.render_conditions_md([_mk_run_data("run-xyz")], config, fig03_written=False)
+    assert "evalloop report run-xyz" in md
+    assert "--run" not in md
 
 
 # ---------------------------------------------------------------------------

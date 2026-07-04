@@ -1,9 +1,9 @@
 """Failure analysis: failures / cluster / pivot.
 
-    failures --run RUN_ID   output.json -> results/runs/{run_id}/failures.jsonl
+    failures RUN_ID         output.json -> results/runs/{run_id}/failures.jsonl
                                          -> appends open-coding rows to data/notes.csv
-    cluster  --notes ...    data/notes.csv -> data/taxonomy.draft.yaml (never touches taxonomy.yaml)
-    pivot    --run RUN_ID   output.json + data/taxonomy.yaml -> reports/pivot_{run_id}.md
+    cluster  [--notes PATH] data/notes.csv -> data/taxonomy.draft.yaml (never touches taxonomy.yaml)
+    pivot    RUN_ID         output.json + data/taxonomy.yaml -> reports/pivot_{run_id}.md
 
 `cluster`'s taxonomy proposal still goes through promptfoo (a throwaway
 single-provider eval using judge.provider), per the architecture rule that
@@ -22,7 +22,7 @@ import yaml
 
 from evalloop import build as build_mod
 from evalloop import run as run_mod
-from evalloop.schemas import load_config, parse_promptfoo_output
+from evalloop.schemas import SchemaError, load_config, load_golden_jsonl, parse_promptfoo_output
 
 REPO_ROOT = build_mod.REPO_ROOT
 NOTES_PATH = REPO_ROOT / "data" / "notes.csv"
@@ -32,6 +32,8 @@ REPORTS_DIR = REPO_ROOT / "results" / "reports"
 
 NOTES_COLUMNS = ["case_id", "model", "input_head", "output_head", "expected", "note"]
 HEAD_LEN = 50
+# inputs are long contract texts; 50 chars is too little context to annotate a failure by hand
+INPUT_HEAD_LEN = 120
 
 
 class AnalyzeError(RuntimeError):
@@ -82,12 +84,20 @@ def failures(run_id: str) -> tuple[Path, Path]:
             for row in csv.DictReader(f):
                 existing_keys.add((row.get("case_id", ""), row.get("model", "")))
 
+    # output.json doesn't carry the original input text, so join it back in
+    # from golden.jsonl by case_id. A missing/invalid golden.jsonl must not
+    # block failure triage -- the input_head column just stays empty.
+    try:
+        golden_inputs = {c.id: c.input for c in load_golden_jsonl(build_mod.GOLDEN_PATH)}
+    except SchemaError:
+        golden_inputs = {}
+
     NOTES_PATH.parent.mkdir(parents=True, exist_ok=True)
     new_rows = [
         {
             "case_id": r.case_id or "",
             "model": r.alias or "",
-            "input_head": "",  # output.json doesn't carry the original input text; fill from golden.jsonl if needed
+            "input_head": _head(golden_inputs.get(r.case_id or "", ""), INPUT_HEAD_LEN),
             "output_head": _head(r.output or r.error or ""),
             "expected": _head(r.expected) if r.expected is not None else "",
             "note": "",
@@ -165,7 +175,7 @@ def _run_cluster_llm(notes_rows: list[dict], judge_provider: str) -> dict:
 def cluster(notes_path: str | Path | None = None, config_path: str | Path = REPO_ROOT / "config.yaml") -> Path:
     notes_path = Path(notes_path) if notes_path is not None else NOTES_PATH
     if not notes_path.exists():
-        raise AnalyzeError(f"{notes_path} not found; run `evalloop failures --run RUN_ID` first")
+        raise AnalyzeError(f"{notes_path} not found; run `evalloop failures RUN_ID` first")
 
     with notes_path.open(encoding="utf-8", newline="") as f:
         notes_rows = list(csv.DictReader(f))

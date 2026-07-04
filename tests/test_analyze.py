@@ -18,12 +18,14 @@ def analyze_env(tmp_path, monkeypatch):
     taxonomy_path = tmp_path / "taxonomy.yaml"
     taxonomy_draft_path = tmp_path / "taxonomy.draft.yaml"
     reports_dir = tmp_path / "reports"
+    golden_path = tmp_path / "golden.jsonl"  # left missing unless a test writes it
 
     monkeypatch.setattr(run_mod, "RUNS_DIR", runs_dir)
     monkeypatch.setattr(analyze_mod, "NOTES_PATH", notes_path)
     monkeypatch.setattr(analyze_mod, "TAXONOMY_PATH", taxonomy_path)
     monkeypatch.setattr(analyze_mod, "TAXONOMY_DRAFT_PATH", taxonomy_draft_path)
     monkeypatch.setattr(analyze_mod, "REPORTS_DIR", reports_dir)
+    monkeypatch.setattr(build_mod, "GOLDEN_PATH", golden_path)
 
     return {
         "runs_dir": runs_dir,
@@ -31,6 +33,7 @@ def analyze_env(tmp_path, monkeypatch):
         "taxonomy_path": taxonomy_path,
         "taxonomy_draft_path": taxonomy_draft_path,
         "reports_dir": reports_dir,
+        "golden_path": golden_path,
     }
 
 
@@ -122,6 +125,51 @@ def test_failures_is_idempotent_no_duplicate_notes_rows(analyze_env):
 def test_failures_missing_run_raises(analyze_env):
     with pytest.raises(analyze_mod.AnalyzeError):
         analyze_mod.failures("does-not-exist")
+
+
+def test_failures_fills_input_head_from_golden(analyze_env):
+    long_input = "本契約は解約可能である。" * 30  # far longer than INPUT_HEAD_LEN
+    with analyze_env["golden_path"].open("w", encoding="utf-8") as f:
+        f.write(
+            json.dumps(
+                {
+                    "id": "case-0002",
+                    "input": long_input,
+                    "expected": "契約照会",
+                    "split": "test",
+                    "meta": {"category": "基本", "source": "self-made"},
+                },
+                ensure_ascii=False,
+            )
+            + "\n"
+        )
+    _write_run_output(
+        analyze_env["runs_dir"],
+        "run-1",
+        [
+            _row("case-0002", "haiku45", False),
+            _row("case-9999", "haiku45", False),  # not in golden.jsonl
+        ],
+    )
+
+    _, notes_path = analyze_mod.failures("run-1")
+
+    with notes_path.open(encoding="utf-8", newline="") as f:
+        rows = {r["case_id"]: r for r in csv.DictReader(f)}
+    assert rows["case-0002"]["input_head"] == long_input[: analyze_mod.INPUT_HEAD_LEN] + "..."
+    assert rows["case-9999"]["input_head"] == ""
+
+
+def test_failures_tolerates_missing_golden(analyze_env):
+    # analyze_env leaves golden_path missing; triage must still work
+    _write_run_output(analyze_env["runs_dir"], "run-1", [_row("case-0002", "haiku45", False)])
+
+    _, notes_path = analyze_mod.failures("run-1")
+
+    with notes_path.open(encoding="utf-8", newline="") as f:
+        rows = list(csv.DictReader(f))
+    assert len(rows) == 1
+    assert rows[0]["input_head"] == ""
 
 
 # ---------------------------------------------------------------------------

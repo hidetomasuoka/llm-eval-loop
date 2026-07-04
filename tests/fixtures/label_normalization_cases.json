@@ -1,0 +1,30 @@
+{
+  "description": "Shared normalization case table for asserts/label_match.js (normalizeLabel) and optimize.py (_normalize_label). Both implementations must produce exactly the `normalized` value for each `input` -- tests/test_label_normalization.py runs this table through both and fails on any drift. Extend this table whenever either implementation changes.",
+  "cases": [
+    {"name": "plain", "input": "解約可能", "normalized": "解約可能"},
+    {"name": "surrounding-whitespace", "input": "  解約可能  ", "normalized": "解約可能"},
+    {"name": "fullwidth-space", "input": "　解約可能　", "normalized": "解約可能"},
+    {"name": "newline-and-tab", "input": "\n解約可能\t", "normalized": "解約可能"},
+    {"name": "empty", "input": "", "normalized": ""},
+    {"name": "fullwidth-alnum", "input": "ＯＫ１２３", "normalized": "OK123"},
+    {"name": "kagi-quotes", "input": "「解約可能」", "normalized": "解約可能"},
+    {"name": "double-kagi-quotes", "input": "『解約可能』", "normalized": "解約可能"},
+    {"name": "ascii-double-quotes", "input": "\"解約可能\"", "normalized": "解約可能"},
+    {"name": "ascii-single-quotes", "input": "'解約可能'", "normalized": "解約可能"},
+    {"name": "square-brackets", "input": "[解約可能]", "normalized": "解約可能"},
+    {"name": "fullwidth-square-brackets", "input": "［解約可能］", "normalized": "解約可能"},
+    {"name": "nested-quotes", "input": "『「解約可能」』", "normalized": "解約可能"},
+    {"name": "trailing-kuten", "input": "解約可能。", "normalized": "解約可能"},
+    {"name": "trailing-touten", "input": "解約可能、", "normalized": "解約可能"},
+    {"name": "trailing-fullwidth-period", "input": "解約可能．", "normalized": "解約可能"},
+    {"name": "trailing-fullwidth-comma", "input": "解約可能，", "normalized": "解約可能"},
+    {"name": "trailing-mixed-punctuation", "input": "解約可能。。、", "normalized": "解約可能"},
+    {"name": "quotes-then-trailing-punct-keeps-inner-close-quote", "input": "「解約可能」。", "normalized": "解約可能」"},
+    {"name": "closing-quote-at-start-not-stripped", "input": "」解約可能", "normalized": "」解約可能"},
+    {"name": "opening-quote-at-end-not-stripped", "input": "解約可能「", "normalized": "解約可能「"},
+    {"name": "inner-punctuation-preserved", "input": "解約・可能, その他", "normalized": "解約・可能, その他"},
+    {"name": "quoted-with-inner-spaces", "input": "\" 解約可能 \"", "normalized": "解約可能"},
+    {"name": "fullwidth-question-mark-kept", "input": "解約可能？", "normalized": "解約可能?"},
+    {"name": "label-embedded-in-sentence", "input": "この契約は「解約可能」です。", "normalized": "この契約は「解約可能」です"}
+  ]
+}
