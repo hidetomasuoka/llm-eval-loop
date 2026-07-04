@@ -183,6 +183,81 @@ def test_judge_verdicts_from_run_majority_vote_across_repeats(calibrate_env):
     assert verdicts[("case-0001", "haiku45")] is True
 
 
+def test_fresh_mode_two_models_same_case_counted_independently(calibrate_env, monkeypatch):
+    """Regression for issue #6: fresh mode matched echo-replay verdicts back by
+    case_id alone, so two models labeled on the same case silently overwrote
+    each other (the last result row won for both keys). Verdicts must join on
+    the (case_id, model_label) composite key.
+    """
+    _write_human_labels(
+        calibrate_env["human_labels_path"],
+        [
+            # 同一case-0001を2モデルでラベル: haiku45は正解(pass)、qwen7bは不正解(fail)
+            {"case_id": "case-0001", "model_label": "haiku45", "output_raw": "契約照会", "human_verdict": "pass"},
+            {"case_id": "case-0001", "model_label": "qwen7b", "output_raw": "その他", "human_verdict": "fail"},
+        ],
+    )
+
+    def fake_eval(config_path, output_path, **kwargs):
+        config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        # echo provider replays output_raw; judge passes only the correct answer
+        rows = []
+        for test in config["tests"]:
+            passed = test["vars"]["output_raw"] == "契約照会"
+            rows.append(
+                {
+                    "vars": dict(test["vars"]),
+                    "provider": {"id": "echo", "label": "echo"},
+                    "response": {"output": test["vars"]["output_raw"]},
+                    "gradingResult": {"pass": passed, "score": 1 if passed else 0},
+                    "success": passed,
+                }
+            )
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json.dumps({"results": {"results": rows}}), encoding="utf-8")
+
+        class _P:
+            returncode = 0
+            stderr = ""
+
+        return _P()
+
+    monkeypatch.setattr(run_mod, "run_promptfoo_eval", fake_eval)
+
+    result = calibrate_mod.calibrate(config_path=REPO_ROOT / "config.yaml", run_id=None)
+
+    # 2ラベルとも独立に判定される: judge=pass/human=pass と judge=fail/human=fail で一致率100%
+    assert result.n_compared == 2
+    assert result.agreement_rate == pytest.approx(1.0)
+    by_key = {(c.case_id, c.alias): c for c in result.cases}
+    assert by_key[("case-0001", "haiku45")].judge_pass is True
+    assert by_key[("case-0001", "qwen7b")].judge_pass is False
+
+
+def test_run_id_mode_two_models_same_case_counted_independently(calibrate_env):
+    """Cross-check mode already joins on (case_id, alias); pin that behavior."""
+    _write_human_labels(
+        calibrate_env["human_labels_path"],
+        [
+            {"case_id": "case-0001", "model_label": "haiku45", "output_raw": "契約照会", "human_verdict": "pass"},
+            {"case_id": "case-0001", "model_label": "qwen7b", "output_raw": "その他", "human_verdict": "fail"},
+        ],
+    )
+    _write_run_output(
+        calibrate_env["runs_dir"],
+        "run-6",
+        [
+            _row("case-0001", "haiku45", True),
+            _row("case-0001", "qwen7b", False),
+        ],
+    )
+
+    result = calibrate_mod.calibrate(config_path=REPO_ROOT / "config.yaml", run_id="run-6")
+
+    assert result.n_compared == 2
+    assert result.agreement_rate == pytest.approx(1.0)
+
+
 def test_fresh_judge_config_uses_echo_provider_and_pinned_judge(calibrate_env, monkeypatch):
     """Structural check of the 'no run_id' path: build.py's iron-rule-#2 judge
     pin must flow into the throwaway echo-replay config, without ever calling
@@ -204,7 +279,7 @@ def test_fresh_judge_config_uses_echo_provider_and_pinned_judge(calibrate_env, m
                     "results": {
                         "results": [
                             {
-                                "vars": {"case_id": "case-0001"},
+                                "vars": {"case_id": "case-0001", "model_label": "haiku45"},
                                 "provider": {"id": "echo", "label": "echo"},
                                 "response": {"output": "契約照会"},
                                 "gradingResult": {"pass": True, "score": 1},
