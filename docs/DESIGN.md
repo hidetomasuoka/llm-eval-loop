@@ -52,7 +52,9 @@
 
 ## 3. 技術スタック
 
-- **promptfoo**: `npx promptfoo@latest` で実行（グローバルインストール不要）。Node.js が前提。
+- **promptfoo**: `npx promptfoo@<固定バージョン>` で実行（グローバルインストール不要）。Node.js が前提。
+  バージョンは `src/evalloop/run.py` の `PROMPTFOO_VERSION` で一元的に固定する（サプライチェーン
+  露出と再現性ドリフト対策。`@latest` は使わない）。
   promptfoo 0.121.17 の実行時チェックで確認済みの必須レンジは **`^20.20.0` または `>=22.22.0`**
   （21.x、および22.0.0〜22.21.xは非対応。`node --version` が範囲外だとpromptfoo自体がハードエラーで起動を拒否する。
   これは実装時に実機で確認した値であり、`src/evalloop/cli.py` の `_node_version_ok()` もこの正確なレンジでチェックしている）
@@ -202,8 +204,8 @@ blog:
 |---|---|---|---|
 | `doctor` | config.yaml | 標準出力 | Node/promptfoo/Ollama/APIキーの疎通確認。全providerに1件だけ極小evalを流す |
 | `build` | golden.jsonl, config.yaml | data/build/*, promptfoo/promptfooconfig.yaml | tests生成＋config生成＋**実行前コスト概算表示** |
-| `run [--variant NAME] [--repeat N] [--limit N] [--no-cache]` | build成果物 | results/runs/{run_id}/ | `npx promptfoo@latest eval -c ... -o ...` をsubprocess実行し、meta.json・index.jsonlを記録 |
-| `view` | - | - | `npx promptfoo@latest view` のパススルー |
+| `run [--variant NAME] [--repeat N] [--limit N] [--no-cache]` | build成果物 | results/runs/{run_id}/ | `npx promptfoo@<固定バージョン> eval -c ... -o ...` をsubprocess実行し、meta.json・index.jsonlを記録 |
+| `view` | - | - | `npx promptfoo@<固定バージョン> view` のパススルー |
 | `report RUN_ID` | output.json | reports/{run_id}.md | マトリクスレポート |
 | `calibrate [--run-id ID]` | human_labels.jsonl | 標準出力＋meta更新 | ジャッジと人手ラベルの一致率。閾値未満なら警告 |
 | `failures RUN_ID` | output.json | results/runs/{run_id}/failures.jsonl, data/notes.csv | 失敗抽出＋メモ用テンプレ生成（追記・冪等） |

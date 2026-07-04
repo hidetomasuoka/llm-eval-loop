@@ -1,4 +1,4 @@
-"""Wraps `npx promptfoo@latest eval` as a subprocess and records results.
+"""Wraps `npx promptfoo@<pinned version> eval` as a subprocess and records results.
 
 Iron rules enforced here (README.md section 11):
     3. results are append-only: every run gets a fresh run_id directory and a
@@ -37,6 +37,14 @@ class RunError(RuntimeError):
     pass
 
 
+# promptfooのバージョンはここで一元的に固定する（@latestは使わない）。
+# @latestだと (1) npmのその時点の最新版が毎回実行されるサプライチェーン露出、
+# (2) 連載期間中に採点・出力仕様が変わる再現性ドリフト、の2つの問題がある。
+# 更新手順: この値を上げる → `evalloop doctor` + `run --limit` スモーク → コミット
+# （README「必要環境」参照）。実行時の実バージョンはmeta.jsonにも事後記録される。
+PROMPTFOO_VERSION = "0.121.17"
+
+
 def _npx_base_cmd() -> list[str]:
     """`subprocess.run(["npx", ...])` raises FileNotFoundError on Windows because
     npx is installed as `npx.cmd`, which bare CreateProcess (no shell) won't
@@ -46,7 +54,7 @@ def _npx_base_cmd() -> list[str]:
     npx_path = shutil.which("npx")
     if npx_path is None:
         raise RunError("`npx` not found on PATH. Install Node.js 20.20+ (see README.md section 13).")
-    return [npx_path, "promptfoo@latest"]
+    return [npx_path, f"promptfoo@{PROMPTFOO_VERSION}"]
 
 
 def new_run_id() -> str:
