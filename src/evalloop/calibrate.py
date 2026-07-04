@@ -148,7 +148,11 @@ def _judge_verdicts_fresh(
 
     verdicts: dict[tuple[str, str], bool] = {}
     for r in parsed.results:
-        row_vars = r.raw.get("vars") or {}
+        row_vars = (
+            r.raw.get("vars")
+            or (r.raw.get("testCase") or {}).get("vars")
+            or {}
+        )
         case_id = row_vars.get("case_id") or r.case_id
         # each echo-replay row corresponds to exactly one human label; the
         # model_label var (e.g. "haiku45") identifies which one -- the echo
