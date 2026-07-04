@@ -48,7 +48,7 @@
 使い捨てconfigで1回のevalを流したりする形で実装している。`src/evalloop/calibrate.py`,
 `src/evalloop/analyze.py` 参照）。Pythonが直接LLM APIを叩くことはない。
 
-> **補足**: promptfooは2026年3月にOpenAIに買収されたが、MITライセンスのOSSとして継続。ローカル実行ならデータは手元に残る。**`promptfoo share` はクラウドアップロードなので本プロジェクトでは使用禁止**（セクション9の公開ガード参照）。
+> **補足**: promptfooは2026年3月にOpenAIに買収されたが、現行ライセンス（MIT）のOSSとして継続することが公式に表明されている（出典: [OpenAI to acquire Promptfoo](https://openai.com/index/openai-to-acquire-promptfoo/)、[Promptfoo is joining OpenAI](https://www.promptfoo.dev/blog/promptfoo-joining-openai/)）。ローカル実行ならデータは手元に残る。**`promptfoo share` はクラウドアップロードなので本プロジェクトでは使用禁止**（セクション9の公開ガード参照）。
 
 ## 3. 技術スタック
 
