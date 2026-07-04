@@ -5,7 +5,7 @@ __pycache__/
 .pytest_cache/
 *.egg-info/
 dist/
-build/
+/build/
 
 # Node (promptfoo cache, if run locally without npx cache dir override)
 node_modules/
@@ -16,3 +16,41 @@ node_modules/
 # OS
 .DS_Store
 Thumbs.db
+
+# ---------------------------------------------------------------------------
+# evalloopの生成物（コミット禁止）
+#
+# run成果物の生出力（output.json / meta.json）にはローカル絶対パスや
+# プロバイダのエラーペイロードが含まれうる。ブログ公開ガードのシークレット
+# スキャンは blog/ ステージングにしか走らないため、これらを誤コミットするのが
+# 最有力のリーク経路になる。生成物ポリシーの全体像は README を参照。
+# ---------------------------------------------------------------------------
+
+# evalloop build の生成物（config.yaml + golden.jsonl から常に再生成できる）
+data/build/*
+!data/build/.gitkeep
+promptfoo/promptfooconfig.yaml
+
+# evalloop optimize が生成するvariant config
+promptfoo/variants/*
+!promptfoo/variants/.gitkeep
+
+# evalloop calibrate の一時config（正常時は自動削除。クラッシュ時の残骸対策）
+promptfoo/_calibrate_*.yaml
+
+# run成果物（マシンローカルの監査証跡。台帳index.jsonlも追記型のローカルファイル）
+results/runs/*
+!results/runs/.gitkeep
+results/reports/*
+!results/reports/.gitkeep
+results/index.jsonl
+
+# 失敗分析のローカル作業ファイル
+# （人手キュレーション済みの data/taxonomy.yaml は追跡対象のまま）
+data/notes.csv
+data/failures.jsonl
+data/taxonomy.draft.yaml
+
+# ブログ用エクスポート出力（公開ガード通過後の一式。記事側で利用する）
+blog/*
+!blog/.gitkeep

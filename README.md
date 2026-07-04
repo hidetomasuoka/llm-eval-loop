@@ -152,6 +152,26 @@ Windows 11 + Node.js + Ollama (qwen2.5:7b) の実機で `doctor`/`build`/`run`/`
 本実行はCPU律速のローカル推論のため長時間かかる（1件あたり実測約136秒 = 抽出+採点で
 モデル呼び出し2回）。
 
+## 生成物ポリシー（gitに追跡されないファイル）
+
+`evalloop` の各コマンドが生成するファイルはすべてgitignoreされており、リポジトリには含まれない。
+fresh clone後はクイックスタートの手順どおり `uv run evalloop build` を最初に実行して
+`promptfoo/promptfooconfig.yaml` と `data/build/` を生成すること。
+
+| コマンド | 生成物（すべてgit非追跡） |
+|---|---|
+| `evalloop build` | `data/build/`, `promptfoo/promptfooconfig.yaml` |
+| `evalloop run` | `results/runs/{run_id}/`, `results/index.jsonl`（マシンローカルの監査台帳） |
+| `evalloop report` | `results/reports/` |
+| `evalloop failures` / `cluster` | `data/notes.csv`, `data/failures.jsonl`, `data/taxonomy.draft.yaml` |
+| `evalloop optimize` | `promptfoo/variants/`（`prompts/optimized/` は実験成果物として任意にコミット可） |
+| `evalloop blog` | `blog/` |
+
+run成果物の生出力（output.json / meta.json）にはローカル絶対パスやプロバイダのエラー
+ペイロードが含まれうるため、公開リポジトリにはコミットしない。人手でキュレーションする
+ファイル（`data/golden.jsonl`, `data/human_labels.jsonl`, `data/taxonomy.yaml`, `prompts/base/`,
+`config.yaml`）は通常どおり追跡対象。
+
 ## 既知の制約
 
 - `evalloop optimize` は現状 `task.answer_type == "label"` のタスクのみ対応
