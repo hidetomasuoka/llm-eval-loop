@@ -152,17 +152,16 @@ def _build_default_test(config: Config, allow_same_judge: bool) -> dict:
 
 def _build_promptfoo_config(config: Config, allow_same_judge: bool) -> dict:
     prompt_path = REPO_ROOT / config.task.prompt_file
-    providers = [
-        {
-            "id": m.provider,
-            "label": m.alias,
-            "config": {
-                "temperature": config.run.temperature,
-                "max_tokens": config.run.max_tokens,
-            },
-        }
-        for m in config.models
-    ]
+    providers = []
+    for m in config.models:
+        # claude-opus-4-8 / claude-fable-5 はsamplingパラメータ(temperature等)を
+        # HTTP 400で拒否する。supports_sampling_params: false のモデルには
+        # temperatureを出力しない（max_tokensは全モデルで受け付ける）
+        provider_config: dict = {}
+        if m.supports_sampling_params:
+            provider_config["temperature"] = config.run.temperature
+        provider_config["max_tokens"] = config.run.max_tokens
+        providers.append({"id": m.provider, "label": m.alias, "config": provider_config})
 
     return {
         "description": config.task.name,

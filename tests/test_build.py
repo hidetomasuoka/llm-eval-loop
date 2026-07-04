@@ -101,6 +101,38 @@ def test_iron_rule_2_same_judge_allowed_with_override():
 
 
 # ---------------------------------------------------------------------------
+# supports_sampling_params: temperature omission for models that 400 on it
+# ---------------------------------------------------------------------------
+
+
+def test_provider_config_includes_temperature_by_default():
+    cfg = _make_config()
+    promptfoo_config = build_mod._build_promptfoo_config(cfg, allow_same_judge=False)
+    for provider in promptfoo_config["providers"]:
+        assert provider["config"]["temperature"] == 0.0
+        assert provider["config"]["max_tokens"] == 1024
+
+
+def test_provider_config_omits_temperature_when_sampling_unsupported():
+    # claude-opus-4-8 / claude-fable-5 はtemperature指定をHTTP 400で拒否する
+    cfg = _make_config(
+        models=[
+            ModelConfig(provider="anthropic:messages:claude-haiku-4-5-20251001", alias="haiku45", tier="small", price_in_per_mtok=1, price_out_per_mtok=5),
+            ModelConfig(provider="anthropic:messages:claude-opus-4-8", alias="opus48", tier="large", price_in_per_mtok=5, price_out_per_mtok=25, supports_sampling_params=False),
+            ModelConfig(provider="anthropic:messages:claude-fable-5", alias="fable5", tier="frontier", price_in_per_mtok=10, price_out_per_mtok=50, supports_sampling_params=False),
+        ]
+    )
+    promptfoo_config = build_mod._build_promptfoo_config(cfg, allow_same_judge=False)
+    by_alias = {p["label"]: p["config"] for p in promptfoo_config["providers"]}
+    assert "temperature" in by_alias["haiku45"]
+    assert "temperature" not in by_alias["opus48"]
+    assert "temperature" not in by_alias["fable5"]
+    # max_tokensは全モデルで受け付けるので常に出力される
+    for provider_config in by_alias.values():
+        assert provider_config["max_tokens"] == 1024
+
+
+# ---------------------------------------------------------------------------
 # iron rule #1 defense-in-depth check
 # ---------------------------------------------------------------------------
 
