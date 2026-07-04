@@ -13,6 +13,10 @@ never reimplements judging in Python. Two modes:
     without re-generating them") into the *same* llm-rubric assert build.py
     would generate. This still delegates grading to promptfoo.
 
+In both modes, judge verdicts are joined back to human labels on the
+(case_id, model_label) composite key -- never on case_id alone, since the
+same case may carry one label per model (see docs/DESIGN.md section 5.3).
+
 Iron rule #6: results/reports must show an explicit warning whenever the
 judge is uncalibrated or below judge.agreement_threshold. This module is what
 produces the calibration_status that report.py reads back out of meta.json.
@@ -89,6 +93,11 @@ def _judge_verdicts_fresh(
                 "description": f"{label.case_id}:{label.model_label}",
                 "vars": {
                     "case_id": label.case_id,
+                    # model_labelはプロンプトでは未使用だが、結果行をラベルへ
+                    # (case_id, model_label)の複合キーで1:1にマッチバックする
+                    # ために必須。case_id単独では同一caseの複数モデルラベルが
+                    # 互いに上書きされ、一致率が壊れる（issue #6）
+                    "model_label": label.model_label,
                     "output_raw": label.output_raw,
                     "input": case.input,
                     "expected": case.expected,
@@ -139,14 +148,20 @@ def _judge_verdicts_fresh(
 
     verdicts: dict[tuple[str, str], bool] = {}
     for r in parsed.results:
-        case_id = (r.raw.get("vars") or {}).get("case_id") or r.case_id
-        if case_id is None or r.passed is None:
+        row_vars = (
+            r.raw.get("vars")
+            or (r.raw.get("testCase") or {}).get("vars")
+            or {}
+        )
+        case_id = row_vars.get("case_id") or r.case_id
+        # each echo-replay row corresponds to exactly one human label; the
+        # model_label var (e.g. "haiku45") identifies which one -- the echo
+        # provider's own alias is useless here, and joining by case_id alone
+        # would let multiple models on the same case overwrite each other
+        model_label = row_vars.get("model_label")
+        if case_id is None or model_label is None or r.passed is None:
             continue
-        # the human_label's model_label (e.g. "haiku45") is the key we compare
-        # against, not the echo provider's own alias
-        for label in labels:
-            if label.case_id == case_id:
-                verdicts[(case_id, label.model_label)] = bool(r.passed)
+        verdicts[(case_id, model_label)] = bool(r.passed)
     return verdicts
 
 

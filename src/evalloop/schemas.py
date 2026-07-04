@@ -263,6 +263,13 @@ def assert_split_disjoint(train_ids: set[str], test_ids: set[str]) -> None:
 
 @dataclass
 class HumanLabel:
+    """One human verdict on one model's output for one case.
+
+    (case_id, model_label) is the composite primary key: the same case may be
+    labeled once per model, and calibrate joins judge verdicts back on that
+    pair -- never on case_id alone.
+    """
+
     case_id: str
     model_label: str
     output_raw: str
@@ -275,6 +282,7 @@ def load_human_labels(path: str | Path) -> list[HumanLabel]:
         raise SchemaError(f"human labels file not found: {path}")
 
     labels: list[HumanLabel] = []
+    seen_keys: set[tuple[str, str]] = set()
     with path.open(encoding="utf-8") as f:
         for lineno, line in enumerate(f, start=1):
             line = line.strip()
@@ -288,6 +296,13 @@ def load_human_labels(path: str | Path) -> list[HumanLabel]:
                 raise SchemaError(
                     f"{path}:{lineno}: human_verdict must be 'pass' or 'fail', got {row['human_verdict']!r}"
                 )
+            key = (row["case_id"], row["model_label"])
+            if key in seen_keys:
+                raise SchemaError(
+                    f"{path}:{lineno}: duplicate (case_id, model_label) pair {key!r}; "
+                    "each case may be labeled at most once per model"
+                )
+            seen_keys.add(key)
             labels.append(
                 HumanLabel(
                     case_id=row["case_id"],

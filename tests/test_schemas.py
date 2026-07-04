@@ -203,3 +203,37 @@ def test_load_human_labels_rejects_bad_verdict(tmp_path):
     )
     with pytest.raises(SchemaError):
         load_human_labels(bad)
+
+
+def test_load_human_labels_rejects_duplicate_case_model_pair(tmp_path):
+    # (case_id, model_label)は複合主キー。重複はcalibrateの一致率を静かに
+    # 汚染するため、ロード時点でエラーにする（issue #6）
+    bad = tmp_path / "human_labels.jsonl"
+    bad.write_text(
+        "\n".join(
+            [
+                '{"case_id": "case-0001", "model_label": "haiku45", "output_raw": "a", "human_verdict": "pass"}',
+                '{"case_id": "case-0001", "model_label": "haiku45", "output_raw": "b", "human_verdict": "fail"}',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(SchemaError, match="duplicate"):
+        load_human_labels(bad)
+
+
+def test_load_human_labels_allows_same_case_across_models(tmp_path):
+    ok = tmp_path / "human_labels.jsonl"
+    ok.write_text(
+        "\n".join(
+            [
+                '{"case_id": "case-0001", "model_label": "haiku45", "output_raw": "a", "human_verdict": "pass"}',
+                '{"case_id": "case-0001", "model_label": "qwen7b", "output_raw": "b", "human_verdict": "fail"}',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    labels = load_human_labels(ok)
+    assert len(labels) == 2
