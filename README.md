@@ -46,11 +46,15 @@ Dataset、The Atticus Project発行・CC BY 4.0）から抽出した契約条項
 いつでも戻せる（下記「自分のタスクに差し替える」参照）。
 
 ```bash
-uv run evalloop build                          # golden.jsonl -> promptfoo設定一式を生成
+uv run evalloop build --allow-same-judge       # golden.jsonl -> promptfoo設定一式を生成
 uv run evalloop run --limit 10                 # 先頭10件だけ試し打ち
 uv run evalloop report <表示されたrun_id>       # モデル×精度×コストのMarkdown表を生成
 uv run evalloop view                           # promptfooのローカルビューアで結果を見る
 ```
+
+> `--allow-same-judge` が必要なのは、同梱の `config.yaml` がjudge（sonnet46と同一provider）を
+> 評価対象5モデルの中に含めているため（sonnet46の行だけ自己採点になる既知のトレードオフ。
+> `config.yaml` のjudgeコメント参照）。judgeを評価対象外のモデルにすれば不要になる。
 
 > API キーなしで試す場合: `config.local-verify.yaml` は Ollama (qwen2.5:7b) だけで
 > 実行・採点まで完結する検証専用configで、`ANTHROPIC_API_KEY` が無くても
@@ -71,6 +75,7 @@ uv run evalloop pivot <run_id>                              # 失敗カテゴリ
 uv run evalloop calibrate --run-id <run_id>                 # LLMジャッジと人手ラベルの一致率を確認
 uv run evalloop optimize                                    # dspy GEPAでプロンプトを改善（train splitのみ使用）
 #   -> 最適化後、自動でrun/report/compare(直近のベースrunがあれば)まで実行される
+#   ※ optimizeはanswer_type=labelのタスク専用。現在のCUAD-100(text)ではエラーになる（既知の制約参照）
 uv run evalloop blog --runs <run_id>                        # ブログ用の図表・記事ドラフトをblog/に出力
 ```
 
@@ -92,6 +97,8 @@ uv run evalloop blog --runs <run_id>                        # ブログ用の図
 > `models[].supports_sampling_params: false` を設定すると、`evalloop build` が生成する
 > promptfoo設定からtemperatureが省略される（`max_tokens` は全モデルで送信される）。
 > 同梱の `config.yaml` ではopus48 / fable5に設定済み。
+> なお `claude-fable-5` はthinkingが常時有効なモデルのため、レイテンシ・出力トークン量が
+> 他モデルより大きくなりうる（コスト概算・レイテンシ比較の解釈時に注意）。
 
 ## CLIコマンド一覧
 
@@ -171,6 +178,21 @@ run成果物の生出力（output.json / meta.json）にはローカル絶対パ
 ペイロードが含まれうるため、公開リポジトリにはコミットしない。人手でキュレーションする
 ファイル（`data/golden.jsonl`, `data/human_labels.jsonl`, `data/taxonomy.yaml`, `prompts/base/`,
 `config.yaml`）は通常どおり追跡対象。
+
+## データ出自
+
+同梱データはすべて公開データセット由来、または本プロジェクトのために創作した合成データであり、
+**実在の顧客データ・業務データ・実際の問い合わせとは一切関係ない**。
+
+- `data/golden.jsonl` — [CUAD v1](https://www.atticusprojectai.org/cuad)（The Atticus Project発行、
+  **CC BY 4.0**）から抽出した100件のサブセット。取得元は
+  Hugging Faceの `chenghao/cuad_qa` ミラー（`config.yaml` の `blog.allowed_sources` に出典表記あり）
+- `data/human_labels.jsonl` — 現在は意図的に空（CUAD-100への人手レビュー未実施のため。既知の制約参照）
+- `data/sample/golden.jsonl` — 旧サンプルタスク（問い合わせ4分類）の**自作ダミー20件**
+  （`meta.source: "self-made"`）。一般的なSaaS問い合わせを模した創作文で、実在の問い合わせの
+  引用・改変ではない
+- `data/sample/human_labels.jsonl` — ジャッジ校正デモ用の**合成フィクスチャ10件**。
+  `output_raw` は架空のモデル出力であり、実際のLLM実行結果ではない
 
 ## 既知の制約
 

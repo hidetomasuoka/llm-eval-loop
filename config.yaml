@@ -31,6 +31,7 @@ task:
   json_schema_file: null
 
 # 評価対象モデル一覧。★provider IDは例。promptfoo公式Docsで実装時に確認すること
+# 単価は2026-07時点のAnthropic公式価格（$/MTok）。実行前に公式料金ページで最新を確認すること
 models:
   - provider: ollama:chat:qwen2.5:7b
     alias: qwen7b
@@ -40,7 +41,7 @@ models:
   - provider: anthropic:messages:claude-haiku-4-5-20251001
     alias: haiku45
     tier: small
-    price_in_per_mtok: 1.0      # ★単価は例。使用時点の公式価格に更新する
+    price_in_per_mtok: 1.0
     price_out_per_mtok: 5.0
   - provider: anthropic:messages:claude-sonnet-4-6
     alias: sonnet46
@@ -50,16 +51,16 @@ models:
   - provider: anthropic:messages:claude-opus-4-8
     alias: opus48
     tier: large
-    price_in_per_mtok: 15.0
-    price_out_per_mtok: 75.0
+    price_in_per_mtok: 5.0
+    price_out_per_mtok: 25.0
     # claude-opus-4-8はsamplingパラメータ(temperature/top_p/top_k)をHTTP 400で
     # 拒否するため、build時にtemperatureを出力しない
     supports_sampling_params: false
   - provider: anthropic:messages:claude-fable-5
     alias: fable5
     tier: frontier
-    price_in_per_mtok: 15.0
-    price_out_per_mtok: 75.0
+    price_in_per_mtok: 10.0
+    price_out_per_mtok: 50.0
     # claude-fable-5も同様にsamplingパラメータをHTTP 400で拒否する
     supports_sampling_params: false
 
