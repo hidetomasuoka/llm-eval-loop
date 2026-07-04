@@ -87,6 +87,12 @@ uv run evalloop blog --runs <run_id>                        # ブログ用の図
 （例: `anthropic/claude-...`）を使う。**書式が異なる**ので注意。単価・provider IDはあくまで
 サンプル値なので、`doctor` が通らないIDは使わず、単価は使用時点の公式価格に更新すること。
 
+> **samplingパラメータを受け付けないモデルに注意**: `claude-opus-4-8` や `claude-fable-5` は
+> `temperature` 等のsamplingパラメータの指定を **HTTP 400で拒否**する。該当モデルには
+> `models[].supports_sampling_params: false` を設定すると、`evalloop build` が生成する
+> promptfoo設定からtemperatureが省略される（`max_tokens` は全モデルで送信される）。
+> 同梱の `config.yaml` ではopus48 / fable5に設定済み。
+
 ## CLIコマンド一覧
 
 | コマンド | 説明 |

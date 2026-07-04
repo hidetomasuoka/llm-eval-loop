@@ -52,11 +52,16 @@ models:
     tier: large
     price_in_per_mtok: 15.0
     price_out_per_mtok: 75.0
+    # claude-opus-4-8はsamplingパラメータ(temperature/top_p/top_k)をHTTP 400で
+    # 拒否するため、build時にtemperatureを出力しない
+    supports_sampling_params: false
   - provider: anthropic:messages:claude-fable-5
     alias: fable5
     tier: frontier
     price_in_per_mtok: 15.0
     price_out_per_mtok: 75.0
+    # claude-fable-5も同様にsamplingパラメータをHTTP 400で拒否する
+    supports_sampling_params: false
 
 run:
   repeat: 1                     # 安定測定フェーズでは3にする（promptfoo --repeat）

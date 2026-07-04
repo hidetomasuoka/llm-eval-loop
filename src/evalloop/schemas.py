@@ -57,6 +57,10 @@ class ModelConfig:
     tier: str
     price_in_per_mtok: float = 0.0
     price_out_per_mtok: float = 0.0
+    # claude-opus-4-8 / claude-fable-5 など、samplingパラメータ(temperature等)を
+    # HTTP 400で拒否するモデルは false にする。build時にprovider configへ
+    # temperatureを出力しない（max_tokensはどのモデルも受け付けるので常に出力）
+    supports_sampling_params: bool = True
 
 
 @dataclass
@@ -139,6 +143,7 @@ def load_config(path: str | Path) -> Config:
             tier=m.get("tier", "unknown"),
             price_in_per_mtok=float(m.get("price_in_per_mtok", 0.0)),
             price_out_per_mtok=float(m.get("price_out_per_mtok", 0.0)),
+            supports_sampling_params=bool(m.get("supports_sampling_params", True)),
         )
         for m in models_raw
     ]

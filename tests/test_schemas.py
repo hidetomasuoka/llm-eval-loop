@@ -30,6 +30,34 @@ def test_load_config_parses_real_config():
     assert cfg.optimize.target_alias in aliases
 
 
+def test_load_config_parses_supports_sampling_params(tmp_path):
+    cfg_file = tmp_path / "config.yaml"
+    cfg_file.write_text(
+        "\n".join(
+            [
+                "task:",
+                "  name: x",
+                "  answer_type: label",
+                "  prompt_file: p.txt",
+                "  labels: [a, b]",
+                "models:",
+                "  - {provider: p1, alias: default_model, tier: t}",
+                "  - {provider: p2, alias: no_sampling, tier: t, supports_sampling_params: false}",
+                "judge:",
+                "  provider: j",
+                "optimize:",
+                "  target_alias: default_model",
+                "  reflection_provider: r",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    cfg = load_config(cfg_file)
+    assert cfg.model_by_alias("default_model").supports_sampling_params is True
+    assert cfg.model_by_alias("no_sampling").supports_sampling_params is False
+
+
 def test_load_config_missing_top_level_key(tmp_path):
     bad = tmp_path / "config.yaml"
     bad.write_text("task:\n  name: x\n  answer_type: label\n  prompt_file: p.txt\n  labels: [a]\n", encoding="utf-8")
