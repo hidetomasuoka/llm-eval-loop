@@ -75,24 +75,24 @@ llm-eval-loop/
 │   ├── human_labels.jsonl       # ジャッジ校正用（5.3）
 │   ├── notes.csv                # オープンコーディング用（5.4）
 │   ├── taxonomy.yaml            # 失敗タクソノミー（5.5）
-│   ├── build/                   # ★evalloop build の自動生成物。手編集禁止
+│   ├── build/                   # ★evalloop build の自動生成物。手編集禁止（git非追跡）
 │   │   ├── tests_test.yaml      # promptfoo用テスト（split=test のみ）
 │   │   └── tests_train.yaml     # GEPA用（promptfooのevalには絶対渡さない）
 │   └── sample/                  # 動作確認用ダミー一式（セクション10）
 ├── promptfoo/
-│   ├── promptfooconfig.yaml     # buildがテンプレートから生成
-│   └── variants/                # 最適化プロンプト版config（optimizeが生成）
+│   ├── promptfooconfig.yaml     # buildがテンプレートから生成（git非追跡）
+│   └── variants/                # 最適化プロンプト版config（optimizeが生成、git非追跡）
 ├── prompts/
 │   ├── base/task.txt            # {{input}} プレースホルダを含むベースプロンプト
 │   ├── base/judge_rubric.txt
 │   └── optimized/{alias}/{ts}/task.txt   # GEPA出力（上書き禁止）
-├── results/
+├── results/                     # run成果物はすべてgit非追跡（README「生成物ポリシー」参照）
 │   ├── runs/{run_id}/
 │   │   ├── output.json          # promptfoo -o の生出力
 │   │   └── meta.json            # config snapshot・コスト集計・校正状態
-│   ├── index.jsonl              # 全run台帳（追記のみ）
+│   ├── index.jsonl              # 全run台帳（追記のみ、マシンローカル）
 │   └── reports/                 # Markdownレポート
-├── blog/                        # ブログ用エクスポート（セクション9）
+├── blog/                        # ブログ用エクスポート（セクション9、git非追跡）
 ├── src/evalloop/
 │   ├── cli.py                   # typerエントリポイント
 │   ├── build.py                 # golden → promptfoo tests/config 生成
