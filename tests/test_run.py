@@ -22,6 +22,16 @@ def _patch_dirs(monkeypatch, tmp_path):
     monkeypatch.setattr(run_mod, "get_node_version", lambda: "v22.22.0")
 
 
+def test_npx_base_cmd_uses_pinned_version_not_latest(monkeypatch):
+    # @latestはサプライチェーン露出＋再現性ドリフトのため禁止（issue #19）
+    monkeypatch.setattr(run_mod.shutil, "which", lambda name: "/fake/npx")
+    cmd = run_mod._npx_base_cmd()
+    assert cmd == ["/fake/npx", f"promptfoo@{run_mod.PROMPTFOO_VERSION}"]
+    assert "latest" not in cmd[1]
+    # 固定値は具体的なバージョン番号であること（"latest"等のタグではない）
+    assert run_mod.PROMPTFOO_VERSION[0].isdigit()
+
+
 def test_run_missing_promptfoo_config_raises(monkeypatch, tmp_path):
     monkeypatch.setattr(run_mod, "PROMPTFOO_CONFIG_PATH", tmp_path / "nope.yaml")
     with pytest.raises(run_mod.RunError):

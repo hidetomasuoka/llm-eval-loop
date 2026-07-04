@@ -383,7 +383,7 @@ def _extract_result_rows(raw: dict) -> tuple[list[dict], list[str]]:
         warns.append(
             "output.json: 'results' was a flat list rather than the nested "
             "{results:{results:[...]}} shape; using it directly. Verify against "
-            "`npx promptfoo@latest --version` if this looks wrong."
+            "the pinned promptfoo version (run.PROMPTFOO_VERSION) if this looks wrong."
         )
         return results_field, warns
 

@@ -18,6 +18,10 @@
 
 - **Node.js**: `^20.20.0` または `>=22.22.0`（21.x、22.0.0〜22.21.xは非対応。promptfoo自体が
   この範囲外だと起動を拒否する。まず `node --version` で確認すること）
+- **promptfoo**: バージョンは `src/evalloop/run.py` の `PROMPTFOO_VERSION` で固定されており、
+  `npx promptfoo@<固定バージョン>` として実行される（`@latest` は使わない —
+  サプライチェーン露出と結果の再現性ドリフト対策）。更新するときは固定値を上げて
+  `evalloop doctor` と `run --limit` のスモークを通してからコミットする
 - **Python 3.11+** と [uv](https://docs.astral.sh/uv/)
 - **Ollama**（ローカル小型モデルを使う場合。`ollama pull qwen2.5:7b` など）
 - `ANTHROPIC_API_KEY`（必須。実行・LLMジャッジ・GEPAのreflectionに使用）。

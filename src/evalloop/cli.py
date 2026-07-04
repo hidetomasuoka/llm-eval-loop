@@ -102,7 +102,7 @@ def doctor(config: str = typer.Option(DEFAULT_CONFIG_PATH, help="Path to config.
     console.print(f"node --version: {node_version}  {node_flag}")
 
     pf_version = run_mod.get_promptfoo_version()
-    console.print(f"promptfoo version (npx promptfoo@latest --version): {pf_version}")
+    console.print(f"promptfoo version (pinned: {run_mod.PROMPTFOO_VERSION}): {pf_version}")
 
     table = Table(title="providers")
     table.add_column("alias", overflow="fold")
