@@ -16,13 +16,17 @@
 
 task:
   # タスク名。run_id や blog の slug のプレフィックスには使わない（それは blog.slug_prefix）
-  name: sample-inquiry-classification
+  # CUAD (Contract Understanding Atticus Dataset) v1 の100件サブセットを使った
+  # 契約条項抽出タスク。元のサンプルタスク(問い合わせ分類)は data/sample/ に残っている。
+  name: cuad100-clause-extraction
   # label: 決定的なラベル一致assert（javascript） / json: is-json + フィールド比較 / text: llm-rubric
-  answer_type: label
+  # CUADは抽出式QA（該当箇所のテキストを抜き出す）なので answer_type=text で
+  # llm-rubricジャッジを使う
+  answer_type: text
   # {{input}} プレースホルダを含むベースプロンプト。file:// でpromptfooに渡される
   prompt_file: prompts/base/task.txt
-  # answer_type=label のときの許容ラベル一覧（正規化・部分一致判定にも使う）
-  labels: ["契約照会", "障害報告", "機能要望", "その他"]
+  # answer_type=label のときの許容ラベル一覧（正規化・部分一致判定にも使う）。text/jsonでは未使用
+  labels: []
   # answer_type=json のときのみ必須。JSON Schemaファイルへのパス
   json_schema_file: null
 
@@ -63,6 +67,12 @@ run:
 judge:
   # llm-rubric の grader。必ず明示する（環境キー依存の暗黙デフォルトグレーダーは禁止）
   # 被評価モデルと同一providerの場合、build は既定で停止する（--allow-same-judge でのみ回避）
+  #
+  # 注意: このconfigはmodels[]に5段階の全ティアを含めており、judgeにはそのうち
+  # sonnet46と同一providerを使っている。そのためanswer_type=textでbuildする際は
+  # `evalloop build --allow-same-judge` が必要（sonnet46の行だけ自己採点になる
+  # 既知のトレードオフとして許容している。他の4モデルは独立採点される）。
+  # 自己採点バイアスを避けたい場合は、評価対象に含まれない別モデルをjudgeに指定すること。
   provider: anthropic:messages:claude-sonnet-4-6
   threshold: 0.8
   agreement_threshold: 0.85     # human_labels.jsonl とのジャッジ一致率のしきい値
@@ -76,3 +86,6 @@ optimize:
 blog:
   jpy_per_usd: 150               # コストの円換算表示用（0で非表示）
   slug_prefix: llm-eval
+  allowed_sources:                # 公開ガード(README.md 9.3.1)が許可するmeta.sourceの値
+    - "self-made"
+    - "CUAD v1 (The Atticus Project, CC BY 4.0) via chenghao/cuad_qa mirror on Hugging Face"

@@ -1,0 +1,53 @@
+# =============================================================================
+# ローカル検証専用configファイル（config.yaml の代わりに --config で指定して使う）
+#
+# config.yaml は「本来の」設定（judgeにClaude Sonnet、models[]に5モデル）だが、
+# このマシンには ANTHROPIC_API_KEY が無いため、そのままでは1件もLLM呼び出しが
+# 成功しない。このファイルは Ollama (qwen2.5:7b) だけで実行・採点まで完結させ、
+# APIキーなしでもパイプライン全体(build→run→report)を実地検証できるようにする
+# ためのもの。judge.provider を評価対象と同一(qwen7b)にしているため、
+# `evalloop build --config config.local-verify.yaml --allow-same-judge` で
+# 鉄の掟#2の自己採点ガードを明示的に解除する必要がある（自己採点バイアスが
+# あることを理解した上での意図的な選択）。
+#
+# 本番相当の評価（Claude系モデル込み）をする場合は config.yaml を使うこと。
+# =============================================================================
+
+task:
+  name: cuad100-clause-extraction
+  answer_type: text
+  prompt_file: prompts/base/task.txt
+  labels: []
+  json_schema_file: null
+
+models:
+  - provider: ollama:chat:qwen2.5:7b
+    alias: qwen7b
+    tier: local
+    price_in_per_mtok: 0.0
+    price_out_per_mtok: 0.0
+
+run:
+  repeat: 1
+  temperature: 0.0
+  max_tokens: 1024
+  cost_warn_usd: 3.0
+
+judge:
+  # 意図的に評価対象(qwen7b)と同一provider。--allow-same-judge が必要。
+  provider: ollama:chat:qwen2.5:7b
+  threshold: 0.6                  # ローカル小型モデルジャッジのため閾値をやや緩める
+  agreement_threshold: 0.85
+  rubric_file: prompts/base/judge_rubric.txt
+
+optimize:
+  target_alias: qwen7b
+  reflection_provider: ollama_chat/qwen2.5:7b
+  auto: light
+
+blog:
+  jpy_per_usd: 150
+  slug_prefix: llm-eval
+  allowed_sources:
+    - "self-made"
+    - "CUAD v1 (The Atticus Project, CC BY 4.0) via chenghao/cuad_qa mirror on Hugging Face"

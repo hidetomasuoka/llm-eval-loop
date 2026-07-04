@@ -333,12 +333,16 @@ def render_conditions_md(runs: list[RunData], config, fig03_written: bool) -> st
         "",
         "## reproduce",
         "```bash",
-        "evalloop build",
     ]
+    config_flag = f" --config {primary.meta['config_path']}" if primary.meta.get("config_path", "config.yaml") != "config.yaml" else ""
+    lines.append(f"evalloop build{config_flag}")
     for run in runs:
         variant_flag = f" --variant {run.meta.get('variant')}" if run.meta.get("variant") else ""
-        lines.append(f"evalloop run{variant_flag} --repeat {run.meta.get('repeat')}")
-    lines += ["evalloop report --run " + primary.run_id, "```", ""]
+        run_config_flag = (
+            f" --config {run.meta['config_path']}" if run.meta.get("config_path", "config.yaml") != "config.yaml" else ""
+        )
+        lines.append(f"evalloop run{run_config_flag}{variant_flag} --repeat {run.meta.get('repeat')}")
+    lines += ["evalloop report " + primary.run_id, "```", ""]
     return "\n".join(lines)
 
 
@@ -421,7 +425,7 @@ def blog(
 
     config = load_config(config_path)
     golden_cases = load_golden_jsonl(build_mod.GOLDEN_PATH)
-    check_source_guard(golden_cases)  # guard 1, before any file is written
+    check_source_guard(golden_cases, allowed_sources=frozenset(config.blog.allowed_sources))  # guard 1
 
     runs = [_load_run_data(rid) for rid in run_ids]
     found_font = find_cjk_font()

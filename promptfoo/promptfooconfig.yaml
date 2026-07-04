@@ -1,4 +1,4 @@
-description: sample-inquiry-classification
+description: cuad100-clause-extraction
 providers:
 - id: ollama:chat:qwen2.5:7b
   label: qwen7b

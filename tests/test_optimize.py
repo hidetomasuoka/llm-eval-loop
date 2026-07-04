@@ -112,10 +112,20 @@ def test_reroot_file_refs_adds_prefix_only_to_file_uris():
     assert rerooted["c"] == 3
 
 
-def test_build_variant_config_reroots_and_swaps_prompt(tmp_path):
+def test_build_variant_config_reroots_and_swaps_prompt(tmp_path, monkeypatch):
     # promptfooconfig.yaml paths are relative to promptfoo/; the variant lives
     # one level deeper at promptfoo/variants/, so every file:// ref must gain
-    # one extra "../"
+    # one extra "../". Pin down a known (label-type) build first so this
+    # doesn't depend on whichever task config.yaml last happened to build --
+    # label-type still has a file:// javascript assert to check rerooting on
+    # (text-type's llm-rubric assert is inline content, not file://, since
+    # promptfoo doesn't template {{input}}/{{expected}} in file://-loaded
+    # rubric values -- see build.py's comment).
+    synthetic_golden = tmp_path / "golden.jsonl"
+    _write_label_type_golden(synthetic_golden)
+    monkeypatch.setattr(build_mod, "GOLDEN_PATH", synthetic_golden)
+    build_mod.build(config_path=_label_type_config_path(tmp_path), yes=True)
+
     fake_task_path = optimize_mod.OPTIMIZED_DIR / "qwen7b" / "20260101-000000" / "task.txt"
     variant_config = optimize_mod.build_variant_config("qwen7b", fake_task_path)
 
@@ -208,8 +218,54 @@ def test_compare_missing_run_raises(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_optimize_end_to_end_with_stubbed_gepa_and_promptfoo(monkeypatch):
-    build_mod.build(config_path=REPO_ROOT / "config.yaml", yes=True)
+def _label_type_config_path(tmp_path):
+    """optimize() only supports answer_type=='label' (its GEPA metric is a
+    label_match.js port). The project's live config.yaml is currently the
+    CUAD-100 text-extraction task, so this test needs its own label-type
+    config -- otherwise it'd just be testing the OptimizeError guard, not the
+    real orchestration path.
+    """
+    raw = yaml.safe_load((REPO_ROOT / "config.yaml").read_text(encoding="utf-8"))
+    raw["task"]["answer_type"] = "label"
+    raw["task"]["labels"] = ["契約照会", "障害報告", "機能要望", "その他"]
+    path = tmp_path / "config.label-test.yaml"
+    path.write_text(yaml.safe_dump(raw, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    return path
+
+
+def _write_label_type_golden(path):
+    labels = ["契約照会", "障害報告", "機能要望", "その他"]
+    with path.open("w", encoding="utf-8") as f:
+        for i in range(8):
+            row = {
+                "id": f"case-{i+1:04d}",
+                "input": f"問い合わせ文サンプル{i+1}",
+                "expected": labels[i % len(labels)],
+                "split": "train",
+                "meta": {"category": "基本", "source": "self-made"},
+            }
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        for i in range(12):
+            row = {
+                "id": f"case-{i+100:04d}",
+                "input": f"問い合わせ文サンプル{i+100}",
+                "expected": labels[i % len(labels)],
+                "split": "test",
+                "meta": {"category": "基本", "source": "self-made"},
+            }
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def test_optimize_end_to_end_with_stubbed_gepa_and_promptfoo(monkeypatch, tmp_path):
+    # decouple from the live project's data/golden.jsonl (currently CUAD-100,
+    # a text-extraction task) so this label-only optimize() path has data
+    # that actually matches its own config's labels.
+    synthetic_golden = tmp_path / "golden.jsonl"
+    _write_label_type_golden(synthetic_golden)
+    monkeypatch.setattr(build_mod, "GOLDEN_PATH", synthetic_golden)
+
+    config_path = _label_type_config_path(tmp_path)
+    build_mod.build(config_path=config_path, yes=True)
 
     fake_optimized = types.SimpleNamespace(
         signature=types.SimpleNamespace(instructions="最適化された新しい指示文です。")
@@ -240,7 +296,7 @@ def test_optimize_end_to_end_with_stubbed_gepa_and_promptfoo(monkeypatch):
 
     monkeypatch.setattr(run_mod, "run_promptfoo_eval", fake_eval)
 
-    outcome = optimize_mod.optimize(config_path=REPO_ROOT / "config.yaml")
+    outcome = optimize_mod.optimize(config_path=config_path)
 
     assert outcome.task_path.exists()
     assert "最適化された新しい指示文です。" in outcome.task_path.read_text(encoding="utf-8")
@@ -253,10 +309,10 @@ def test_optimize_end_to_end_with_stubbed_gepa_and_promptfoo(monkeypatch):
 
 
 def test_optimize_rejects_non_label_answer_type(monkeypatch, tmp_path):
+    raw = yaml.safe_load((REPO_ROOT / "config.yaml").read_text(encoding="utf-8"))
+    raw["task"]["answer_type"] = "text"  # explicit, regardless of the live config's current task type
     bad_config = tmp_path / "config.yaml"
-    bad_config.write_text(
-        (REPO_ROOT / "config.yaml").read_text(encoding="utf-8").replace("answer_type: label", "answer_type: text"),
-        encoding="utf-8",
-    )
+    bad_config.write_text(yaml.safe_dump(raw, allow_unicode=True, sort_keys=False), encoding="utf-8")
+
     with pytest.raises(optimize_mod.OptimizeError):
         optimize_mod.optimize(config_path=bad_config)
