@@ -185,3 +185,14 @@ run成果物の生出力（output.json / meta.json）にはローカル絶対パ
   意図的に空にしてある。`evalloop calibrate` を使うには先に人手レビューが必要
 
 設計の背景・データ仕様・「鉄の掟」の詳細は [docs/DESIGN.md](docs/DESIGN.md) を参照。
+
+## インストール方針
+
+本プロジェクトはPyPIには公開していない。**git clone + `uv sync` で利用する前提**
+（[セットアップ](#セットアップ)参照）。ソースツリー内のパス規約（`data/` `prompts/` `results/`等）に
+アンカーした設計のため、site-packagesへのwheelインストールはサポートしない。
+
+## ライセンス
+
+[MIT License](LICENSE)。同梱データのライセンスは別途各ファイルの出典表記に従う
+（現在の `data/golden.jsonl` はCUAD v1由来・CC BY 4.0）。
