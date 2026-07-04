@@ -1,4 +1,18 @@
+from pathlib import Path
+
+import yaml
+
 from evalloop import cli
+from evalloop import run as run_mod
+from evalloop.schemas import (
+    BlogConfig,
+    Config,
+    JudgeConfig,
+    ModelConfig,
+    OptimizeConfig,
+    RunConfig,
+    TaskConfig,
+)
 
 
 def test_env_key_for_provider_anthropic():
@@ -37,3 +51,43 @@ def test_node_version_ok_false_for_old():
 
 def test_node_version_ok_none_for_unparsable():
     assert cli._node_version_ok("unknown") is None
+
+
+def _smoke_cfg():
+    return Config(
+        task=TaskConfig(name="t", answer_type="text", prompt_file="prompts/base/task.txt"),
+        models=[
+            ModelConfig(provider="p:samples", alias="samples", tier="small"),
+            ModelConfig(provider="p:nosample", alias="nosample", tier="frontier", supports_sampling_params=False),
+        ],
+        run=RunConfig(),
+        judge=JudgeConfig(provider="p:judge"),
+        optimize=OptimizeConfig(target_alias="samples", reflection_provider="r"),
+        blog=BlogConfig(),
+        path=Path("config.yaml"),
+    )
+
+
+def test_smoke_test_omits_temperature_for_no_sampling_models(monkeypatch):
+    # opus48/fable5-style models reject temperature with HTTP 400; the doctor
+    # smoke test must mirror build.py's supports_sampling_params handling or
+    # it reports a false connectivity failure for exactly those models
+    captured = {}
+
+    def fake_eval(config_path, output_path, **kwargs):
+        captured["config"] = yaml.safe_load(Path(config_path).read_text(encoding="utf-8"))
+
+        class _P:
+            returncode = 1
+            stdout = ""
+            stderr = ""
+
+        return _P()
+
+    monkeypatch.setattr(run_mod, "run_promptfoo_eval", fake_eval)
+
+    cli._smoke_test_providers(_smoke_cfg())
+
+    by_label = {p["label"]: p["config"] for p in captured["config"]["providers"]}
+    assert by_label["samples"] == {"temperature": 0.0, "max_tokens": 16}
+    assert by_label["nosample"] == {"max_tokens": 16}

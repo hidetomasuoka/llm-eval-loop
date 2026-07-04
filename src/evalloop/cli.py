@@ -136,12 +136,19 @@ def _smoke_test_providers(cfg: Config) -> None:
     """
     with tempfile.TemporaryDirectory(prefix="evalloop-doctor-") as tmp:
         tmp_path = Path(tmp)
+        providers = []
+        for m in cfg.models:
+            # mirror build.py: models with supports_sampling_params=false reject
+            # temperature with HTTP 400, so sending it here makes the smoke test
+            # report a false connectivity failure for exactly those models
+            provider_config: dict = {}
+            if m.supports_sampling_params:
+                provider_config["temperature"] = 0.0
+            provider_config["max_tokens"] = 16
+            providers.append({"id": m.provider, "label": m.alias, "config": provider_config})
         smoke_config = {
             "description": "evalloop doctor smoke test",
-            "providers": [
-                {"id": m.provider, "label": m.alias, "config": {"temperature": 0.0, "max_tokens": 16}}
-                for m in cfg.models
-            ],
+            "providers": providers,
             "prompts": ["Reply with a single word: OK. Input: {{input}}"],
             "tests": [{"description": "smoke", "vars": {"input": "connectivity check"}}],
         }
