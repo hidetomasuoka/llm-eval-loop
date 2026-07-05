@@ -136,8 +136,9 @@ label正規化・train/test split分離・output.jsonパーサ・ブログ公開
 
 CI（[.github/workflows/ci.yml](.github/workflows/ci.yml)）は push / PR ごとに
 Ubuntu / Windows × Python 3.11 / 3.12 で pytest + ruff を実行する。さらに master への
-push 時、ランナー上の Ollama（qwen2.5:0.5b）で3ケースの実スモーク（build → run → report）を
-流す。ローカルモデルなので APIキー・secrets 登録は不要、コストも0。
+push 時、Actions secrets に `OLLAMA_API_KEY` が設定されていれば、Ollama Cloud
+（gpt-oss:20b）で3ケースの実スモーク（build → run → report）を流す（未設定なら
+自動スキップ）。従量課金のAPIコストは発生しない。
 
 ## Windows実地検証で見つかった問題と修正
 

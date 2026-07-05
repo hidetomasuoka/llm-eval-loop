@@ -2,8 +2,9 @@
 # CI スモークテスト専用 config（.github/workflows/ci.yml の smoke ジョブが使用）
 #
 # 目的は build -> run -> report のパイプライン疎通確認であって精度測定ではない。
-# CIランナー上の Ollama + 超小型ローカルモデル（qwen2.5:0.5b）で実行するため、
-# APIキー不要・コスト0で回せる。
+# Ollama Cloud（https://ollama.com）で実行する: ci.yml が OLLAMA_BASE_URL と
+# OLLAMA_API_KEY（Actions secrets）を設定し、promptfoo の ollama provider が
+# Bearer 認証で ollama.com を叩く（pinned promptfoo 0.121.17 で対応確認済み）。
 #
 # 注意: task セクションは config.yaml（本番タスク）のミラー。本タスクを
 #       差し替えたときはこのファイルの task も追随させること。
@@ -16,12 +17,14 @@ task:
   labels: []
   json_schema_file: null
 
-# スモークはCIランナーのCPUで動く最小のローカルモデル1つだけを評価する
+# スモークは Ollama Cloud の最小モデル1つだけを評価する
 models:
-  - provider: ollama:chat:qwen2.5:0.5b
-    alias: qwen05b
-    tier: local
-    price_in_per_mtok: 0.0    # ローカル実行なのでコストは0
+  - provider: ollama:chat:gpt-oss:20b
+    alias: gptoss20b
+    tier: small
+    # Ollama Cloud はサブスクリプション/無料枠ベースで従量単価がないため、
+    # 事前コスト概算は常に $0 になる（概算はスモークでは使わない）
+    price_in_per_mtok: 0.0
     price_out_per_mtok: 0.0
 
 run:
@@ -31,19 +34,19 @@ run:
   cost_warn_usd: 3.0
 
 judge:
-  # スモークでは評価対象と同一のローカルモデルをジャッジに使う（APIキー不要を優先）。
+  # スモークでは評価対象と同一モデルをジャッジに使う（追加モデル不要を優先）。
   # iron rule #2（judge == 被評価モデル）に該当するため、buildには
   # --allow-same-judge が必要（ci.yml側で明示的に渡している）。
   # ジャッジ品質は問わない — スモークの成否は output.json / meta.json の生成と
   # report 作成の成功で判定し、pass rate では判定しないため。
-  provider: ollama:chat:qwen2.5:0.5b
+  provider: ollama:chat:gpt-oss:20b
   threshold: 0.8
   agreement_threshold: 0.85
   rubric_file: prompts/base/judge_rubric.txt
 
 optimize:
   # スモークでは optimize は実行しない（スキーマ上の必須キーなので置いてあるだけ）
-  target_alias: qwen05b
+  target_alias: gptoss20b
   reflection_provider: anthropic/claude-opus-4-8
   auto: light
 
