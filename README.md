@@ -4,237 +4,170 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](pyproject.toml)
 
-LLM評価ハーネス。1つのタスクについて、ローカル小型モデルからフロンティアモデルまで
-同一条件で評価し、次の問いに答える。
+**English** | [日本語](README.ja.md)
 
-> **どのモデルが必要精度を満たすか。それはいくら（コスト）で達成できるか。**
+> This README is kept in sync with the Japanese original ([README.ja.md](README.ja.md)). If the two ever diverge, the Japanese version is authoritative.
 
-実行と判定は [promptfoo](https://www.promptfoo.dev/) に任せ、Python（`evalloop`）は
-データセット管理・ジャッジ校正・失敗分析・[dspy](https://dspy.ai/) GEPAによるプロンプト最適化・
-ブログ公開用エクスポートを担当する薄いグルーレイヤーとして実装されている。
+An LLM evaluation harness. It evaluates one task across models — from small local models to frontier models — under identical conditions, to answer a single question:
 
-個人プロジェクトとして開発している実験的なツールだが、git clone してそのまま使える状態を
-維持している（Windows実機・CIでの検証状況は後述）。issue / PR は歓迎 — 対応はベストエフォート。
-期待値と開発手順は [CONTRIBUTING.md](CONTRIBUTING.md) を参照。
+> **Which model meets the accuracy bar, and at what cost?**
 
-設計方針・データ仕様・鉄の掟など詳細な設計根拠は [docs/DESIGN.md](docs/DESIGN.md) を参照。
+Execution and grading are delegated to [promptfoo](https://www.promptfoo.dev/); the Python layer (`evalloop`) is a thin glue layer that owns dataset management, judge calibration, failure analysis, prompt optimization with [dspy](https://dspy.ai/) GEPA, and publish-guarded blog export.
 
-> **ポリシー**: このプロジェクトは `promptfoo share`（クラウドアップロード）を一切使用しない。
-> ローカル結果の閲覧には `evalloop view` を使う。
+This is an experimental personal project, but it is kept in a state you can `git clone` and use as-is (see the verification sections below for what has actually been exercised on real machines and in CI). Issues and PRs are welcome — support is best-effort. See [CONTRIBUTING.md](CONTRIBUTING.md) for expectations and the development workflow.
 
-## 必要環境
+For the design rationale, data specifications, and the project's non-negotiable "iron rules", see [docs/DESIGN.md](docs/DESIGN.md) (full design doc, Japanese).
 
-- **Node.js**: `^20.20.0` または `>=22.22.0`（21.x、22.0.0〜22.21.xは非対応。promptfoo自体が
-  この範囲外だと起動を拒否する。まず `node --version` で確認すること）
-- **promptfoo**: バージョンは `src/evalloop/run.py` の `PROMPTFOO_VERSION` で固定されており、
-  `npx promptfoo@<固定バージョン>` として実行される（`@latest` は使わない —
-  サプライチェーン露出と結果の再現性ドリフト対策）。更新するときは固定値を上げて
-  `evalloop doctor` と `run --limit` のスモークを通してからコミットする
-- **Python 3.11+** と [uv](https://docs.astral.sh/uv/)
-- **Ollama**（ローカル小型モデルを使う場合。`ollama pull qwen2.5:7b` など）
-- `ANTHROPIC_API_KEY`（必須。実行・LLMジャッジ・GEPAのreflectionに使用）。
-  `OPENAI_API_KEY` / `GEMINI_API_KEY` は使うモデルに応じて任意
+> **Policy**: this project never uses `promptfoo share` (cloud upload). Use `evalloop view` to browse local results.
 
-## セットアップ
+## Requirements
+
+- **Node.js**: `^20.20.0` or `>=22.22.0` (21.x and 22.0.0–22.21.x are NOT supported — promptfoo itself refuses to start outside this range; check `node --version` first)
+- **promptfoo**: the version is pinned in `src/evalloop/run.py` (`PROMPTFOO_VERSION`) and executed as `npx promptfoo@<pinned version>`. `@latest` is never used — that would mean supply-chain exposure and reproducibility drift. To upgrade: bump the pin, pass `evalloop doctor` plus a `run --limit` smoke, then commit
+- **Python 3.11+** and [uv](https://docs.astral.sh/uv/)
+- **Ollama** (only if you use local models, e.g. `ollama pull qwen2.5:7b`)
+- `ANTHROPIC_API_KEY` (required for real runs: evaluation, the LLM judge, and GEPA reflection). `OPENAI_API_KEY` / `GEMINI_API_KEY` are optional depending on which models you configure
+
+## Setup
 
 ```bash
-node --version                   # 上記レンジを満たすことを確認
+node --version                   # must satisfy the range above
 uv sync
-ollama pull qwen2.5:7b           # ローカルモデルを使う場合
+ollama pull qwen2.5:7b           # if using local models
 export ANTHROPIC_API_KEY=...
-uv run evalloop doctor           # Node/promptfoo/Ollama/APIキーの疎通確認。必ず最初に実行する
+uv run evalloop doctor           # connectivity check for Node/promptfoo/Ollama/API keys. Always run this first
 ```
 
-`doctor` は各providerに1件だけ極小のevalを流して疎通確認する（実際にAPIを呼ぶ）。
+`doctor` runs a single tiny eval against every configured provider (it calls real APIs).
 
-## クイックスタート
+## Quickstart
 
-`data/golden.jsonl`（現在アクティブなタスク）には CUAD v1（Contract Understanding Atticus
-Dataset、The Atticus Project発行・CC BY 4.0）から抽出した契約条項抽出タスクが100件
-（train 20 / test 80）入っている。answer_type=text で、LLMジャッジ（llm-rubric）を使って
-「契約書の抜粋から、指定カテゴリの条項を正しく抜き出せているか」を採点する。
-元のサンプルタスク（問い合わせ分類、answer_type=label）は `data/sample/` に保存されており、
-`config.yaml` の `task.*` と `data/golden.jsonl`/`prompts/base/*.txt` を差し替えれば
-いつでも戻せる（下記「自分のタスクに差し替える」参照）。
+`data/golden.jsonl` (the currently active task) contains 100 contract-clause-extraction cases (train 20 / test 80) extracted from CUAD v1 (Contract Understanding Atticus Dataset, published by The Atticus Project, CC BY 4.0). It is an `answer_type=text` task graded by an LLM judge (llm-rubric): "did the model correctly extract the clause of the specified category from the contract excerpt?"
+The previous sample task (inquiry classification, `answer_type=label`) is preserved under `data/sample/` and can be restored at any time by swapping `config.yaml`'s `task.*` together with `data/golden.jsonl` / `prompts/base/*.txt` (see "Bring your own task" below).
 
 ```bash
-uv run evalloop build --allow-same-judge       # golden.jsonl -> promptfoo設定一式を生成
-uv run evalloop run --limit 10                 # 先頭10件だけ試し打ち
-uv run evalloop report <表示されたrun_id>       # モデル×精度×コストのMarkdown表を生成
-uv run evalloop view                           # promptfooのローカルビューアで結果を見る
+uv run evalloop build --allow-same-judge       # golden.jsonl -> full set of promptfoo configs
+uv run evalloop run --limit 10                 # try just the first 10 cases
+uv run evalloop report <run_id printed above>  # Markdown table: model x accuracy x cost
+uv run evalloop view                           # browse results in promptfoo's local viewer
 ```
 
-> `--allow-same-judge` が必要なのは、同梱の `config.yaml` がjudge（sonnet46と同一provider）を
-> 評価対象5モデルの中に含めているため（sonnet46の行だけ自己採点になる既知のトレードオフ。
-> `config.yaml` のjudgeコメント参照）。judgeを評価対象外のモデルにすれば不要になる。
+> `--allow-same-judge` is required because the bundled `config.yaml` includes the judge (same provider as sonnet46) among the 5 evaluated models — a known, documented tradeoff in which only the sonnet46 row is self-graded (see the judge comment in `config.yaml`). Point the judge at a model outside the evaluated set and the flag becomes unnecessary.
 
-> API キーなしで試す場合: `config.local-verify.yaml` は Ollama (qwen2.5:7b) だけで
-> 実行・採点まで完結する検証専用configで、`ANTHROPIC_API_KEY` が無くても
+> Trying it without API keys: `config.local-verify.yaml` is a verification-only config that runs and grades entirely on Ollama (qwen2.5:7b). Without `ANTHROPIC_API_KEY`, you can exercise the whole pipeline with
 > `uv run evalloop build --config config.local-verify.yaml --allow-same-judge` →
-> `uv run evalloop run --config config.local-verify.yaml --limit 5` で
-> パイプライン全体を試せる（judgeが評価対象と同一モデルになるため
-> `--allow-same-judge` が必要。自己採点バイアスがある点に注意）。
+> `uv run evalloop run --config config.local-verify.yaml --limit 5`
+> (`--allow-same-judge` is required because the judge is the same model being evaluated; mind the self-grading bias).
 
-問題なければ `--limit` を外してフルセットで実行し、失敗分析・改善ループ・ブログ出力に進める。
+If everything looks good, drop `--limit` to run the full set, then continue into failure analysis, the improvement loop, and blog export.
 
 ```bash
-uv run evalloop run                                        # フルセットで実行
-uv run evalloop failures <run_id>                          # 失敗ケースを抽出、data/notes.csvにメモ欄を追加
-#   -> data/notes.csv の note 列に人手で失敗理由を書き込む
-uv run evalloop cluster                                    # LLMがカテゴリ案をdata/taxonomy.draft.yamlに提案
-#   -> 内容を確認し、data/taxonomy.yaml として保存（draftは自動では上書きしない）
-uv run evalloop pivot <run_id>                              # 失敗カテゴリ×モデルのクロス集計
-uv run evalloop calibrate --run-id <run_id>                 # LLMジャッジと人手ラベルの一致率を確認
-uv run evalloop optimize                                    # dspy GEPAでプロンプトを改善（train splitのみ使用）
-#   -> 最適化後、自動でrun/report/compare(直近のベースrunがあれば)まで実行される
-#   ※ optimizeはanswer_type=labelのタスク専用。現在のCUAD-100(text)ではエラーになる（既知の制約参照）
-uv run evalloop blog --runs <run_id>                        # ブログ用の図表・記事ドラフトをblog/に出力
+uv run evalloop run                                        # full set
+uv run evalloop failures <run_id>                          # extract failing cases, append note rows to data/notes.csv
+#   -> fill in the `note` column by hand with failure reasons
+uv run evalloop cluster                                    # an LLM drafts category proposals into data/taxonomy.draft.yaml
+#   -> review, then save as data/taxonomy.yaml (the draft never overwrites it automatically)
+uv run evalloop pivot <run_id>                              # failure-category x model cross-tab
+uv run evalloop calibrate --run-id <run_id>                 # agreement rate between the LLM judge and human labels
+uv run evalloop optimize                                    # improve the prompt with dspy GEPA (uses the train split only)
+#   -> afterwards run/report/compare (against the latest base run, if any) execute automatically
+#   NOTE: optimize only supports answer_type=label tasks; it errors on the current CUAD-100 (text) task (see Known constraints)
+uv run evalloop blog --runs <run_id>                        # figures/tables/article draft into blog/
 ```
 
-## 自分のタスクに差し替える
+## Bring your own task
 
-触るのは次の3点だけで済む構造になっている。
+Only three things need touching:
 
-1. `config.yaml` — タスク名・ラベル一覧・評価対象モデル・単価・ジャッジ設定
-2. `data/golden.jsonl` — 評価データセット（唯一のソース。フォーマットは [docs/DESIGN.md#5-データ仕様](docs/DESIGN.md#5-データ仕様)）
-3. `prompts/base/task.txt` — `{{input}}` プレースホルダを含むベースプロンプト
+1. `config.yaml` — task name, label list, evaluated models, prices, judge settings
+2. `data/golden.jsonl` — the eval dataset (single source of truth; format in [docs/DESIGN.md#5-データ仕様](docs/DESIGN.md#5-データ仕様), Japanese)
+3. `prompts/base/task.txt` — the base prompt containing the `{{input}}` placeholder
 
-`config.yaml` の `models[].provider` にはpromptfooの表記（例: `anthropic:messages:claude-...`,
-`ollama:chat:qwen2.5:7b`）、`optimize.reflection_provider` にはdspy/litellmの表記
-（例: `anthropic/claude-...`）を使う。**書式が異なる**ので注意。単価・provider IDはあくまで
-サンプル値なので、`doctor` が通らないIDは使わず、単価は使用時点の公式価格に更新すること。
+`config.yaml`'s `models[].provider` uses promptfoo notation (e.g. `anthropic:messages:claude-...`, `ollama:chat:qwen2.5:7b`), while `optimize.reflection_provider` uses dspy/litellm notation (e.g. `anthropic/claude-...`). **The two formats differ.** Prices and provider IDs in the bundled config are samples only: never use an ID that doesn't pass `doctor`, and update prices to the official pricing at the time of use.
 
-> **samplingパラメータを受け付けないモデルに注意**: `claude-opus-4-8` や `claude-fable-5` は
-> `temperature` 等のsamplingパラメータの指定を **HTTP 400で拒否**する。該当モデルには
-> `models[].supports_sampling_params: false` を設定すると、`evalloop build` が生成する
-> promptfoo設定からtemperatureが省略される（`max_tokens` は全モデルで送信される）。
-> 同梱の `config.yaml` ではopus48 / fable5に設定済み。
-> なお `claude-fable-5` はthinkingが常時有効なモデルのため、レイテンシ・出力トークン量が
-> 他モデルより大きくなりうる（コスト概算・レイテンシ比較の解釈時に注意）。
+> **Models that reject sampling parameters**: `claude-opus-4-8` and `claude-fable-5` reject `temperature` and other sampling parameters with **HTTP 400**. Set `models[].supports_sampling_params: false` for such models and `evalloop build` will omit temperature from the generated promptfoo config (`max_tokens` is always sent). The bundled `config.yaml` already sets this for opus48 / fable5.
+> Also note that `claude-fable-5` has always-on thinking, so its latency and output token counts can be larger than other models' (keep this in mind when interpreting cost estimates and latency comparisons).
 
-## CLIコマンド一覧
+## CLI commands
 
-| コマンド | 説明 |
+| Command | Description |
 |---|---|
-| `evalloop doctor` | Node/promptfoo/Ollama/APIキーの疎通確認 |
-| `evalloop build [--allow-same-judge] [--yes]` | golden.jsonl→promptfoo設定を生成、実行前コスト概算を表示 |
-| `evalloop run [--variant NAME] [--repeat N] [--limit N] [--no-cache]` | promptfoo evalを実行してresults/runs/{run_id}/に記録 |
-| `evalloop view` | promptfooのローカルビューア（`promptfoo view`のパススルー） |
-| `evalloop report RUN_ID` | モデル×精度×コスト×レイテンシのMarkdownレポート |
-| `evalloop calibrate [--run-id ID]` | LLMジャッジとhuman_labels.jsonlの一致率を算出 |
-| `evalloop failures RUN_ID` | 失敗ケース抽出、notes.csvにメモ欄を追記（冪等） |
-| `evalloop cluster [--notes PATH]` | notes.csvからLLMが失敗タクソノミー案を生成 |
-| `evalloop pivot RUN_ID` | 失敗カテゴリ×モデルのクロス集計 |
-| `evalloop optimize` | dspy GEPAでプロンプト最適化、自動でrun/report/compare |
-| `evalloop compare --runs A,B` | 2つのrunのbefore/after比較 |
-| `evalloop blog --runs A[,B] [--slug NAME]` | 公開ガード通過後にブログ用一式を生成 |
+| `evalloop doctor` | Connectivity check for Node/promptfoo/Ollama/API keys |
+| `evalloop build [--allow-same-judge] [--yes]` | golden.jsonl → promptfoo configs, with a pre-run cost estimate |
+| `evalloop run [--variant NAME] [--repeat N] [--limit N] [--no-cache]` | Run promptfoo eval and record results/runs/{run_id}/ |
+| `evalloop view` | promptfoo's local viewer (pass-through to `promptfoo view`) |
+| `evalloop report RUN_ID` | Markdown report: model × accuracy × cost × latency |
+| `evalloop calibrate [--run-id ID]` | Agreement rate between the LLM judge and human_labels.jsonl |
+| `evalloop failures RUN_ID` | Extract failing cases, append note rows to notes.csv (idempotent) |
+| `evalloop cluster [--notes PATH]` | An LLM drafts a failure taxonomy from notes.csv |
+| `evalloop pivot RUN_ID` | Failure-category × model cross-tab |
+| `evalloop optimize` | Prompt optimization with dspy GEPA, then automatic run/report/compare |
+| `evalloop compare --runs A,B` | Before/after comparison of two runs |
+| `evalloop blog --runs A[,B] [--slug NAME]` | Publish-guarded export of the blog bundle |
 
-## テスト / CI
+## Tests / CI
 
 ```bash
-uv run pytest        # ユニットテスト（promptfoo/GEPAは全てモック。APIキー・Node不要）
-uv run ruff check .  # リンタ（CIと同一チェック）
+uv run pytest        # unit tests (promptfoo/GEPA fully mocked; no API keys or Node needed)
+uv run ruff check .  # linter (the same check CI runs)
 ```
 
-label正規化・train/test split分離・output.jsonパーサ・ブログ公開ガードなど、鉄の掟に関わる
-ロジックは全てユニットテストでカバーされている（`tests/`）。テストは作業ツリーに何も
-書き込まない（`tests/conftest.py` の `isolated_artifact_paths` フィクスチャ参照）。
+Everything related to the iron rules — label normalization, train/test split separation, the output.json parser, the blog publish guards — is covered by unit tests (`tests/`). Tests never write into the checkout (see the `isolated_artifact_paths` fixture in [tests/conftest.py](tests/conftest.py)).
 
-CI（[.github/workflows/ci.yml](.github/workflows/ci.yml)）は push / PR ごとに
-Ubuntu / Windows × Python 3.11 / 3.12 で pytest + ruff を実行する。さらに master への
-push 時、Actions secrets に `OLLAMA_API_KEY` が設定されていれば、Ollama Cloud
-（gpt-oss:20b）で3ケースの実スモーク（build → run → report）を流す（未設定なら
-自動スキップ）。従量課金のAPIコストは発生しない。
+CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs pytest + ruff on Ubuntu / Windows × Python 3.11 / 3.12 for every push and PR. Additionally, on pushes to master, if the `OLLAMA_API_KEY` secret is configured, a 3-case live smoke (build → run → report) runs against Ollama Cloud (gpt-oss:20b); it is skipped automatically otherwise. No metered API cost is incurred.
 
-## Windows実地検証で見つかった問題と修正
+## Issues found (and fixed) during live Windows verification
 
-Windows 11 + Node.js + Ollama (qwen2.5:7b) の実機で `doctor`/`build`/`run`/`report`/`blog` を
-実際に動かして検証し、モック化したユニットテストだけでは見つからなかった以下の不具合を修正した。
+The commands `doctor`/`build`/`run`/`report`/`blog` were exercised on a real Windows 11 machine with Node.js and Ollama (qwen2.5:7b), which surfaced the following bugs that fully mocked unit tests had not caught:
 
-- **`subprocess.run(["npx", ...])` がWindowsで `FileNotFoundError`**: `npx` は実体が `npx.cmd`
-  で、シェルを介さない`subprocess`はPATHEXT解決をしない。`shutil.which("npx")` で解決するよう修正
-- **promptfooの実際のNode.js要件は `^20.20.0 || >=22.22.0`**: 21.x・22.0〜22.21.xは
-  promptfoo自身が起動時にハードエラーで拒否する（`node --version` だけでは分からない）
-- **`subprocess.run(..., text=True)` がcp932(日本語Windows既定コードページ)でクラッシュ**:
-  promptfooの出力にcp932で表現できない文字が含まれると `UnicodeDecodeError` で
-  読み取りスレッドが落ちる。`encoding="utf-8", errors="replace"` を明示して修正
-- **`llm-rubric` の `value: file://...` は `{{input}}`/`{{expected}}` が置換されない**:
-  実際のグレーディングプロンプトを確認したところ、file://参照のルーブリックはNunjucks
-  テンプレート処理を通らず、プレースホルダが文字通りジャッジに渡っていた
-  （インラインの`value`文字列は置換される）。ルーブリックファイルの中身を読み込んで
-  インライン文字列として埋め込むよう修正（`build.py`・`calibrate.py`）
-- CJKフォントを検出しても実際には`matplotlib`の`font.family`に設定していなかったため、
-  日本語グラフラベルの文字化けを引き起こしていた不具合も修正済み（M5実装時に発見）
+- **`subprocess.run(["npx", ...])` raises `FileNotFoundError` on Windows**: `npx` is actually `npx.cmd`, and `subprocess` without a shell does not apply PATHEXT resolution. Fixed by resolving through `shutil.which("npx")`
+- **promptfoo's actual Node.js requirement is `^20.20.0 || >=22.22.0`**: 21.x and 22.0–22.21.x are hard-rejected by promptfoo itself at startup (you can't tell from `node --version` alone)
+- **`subprocess.run(..., text=True)` crashes under cp932 (the default code page on Japanese Windows)**: when promptfoo's output contains characters not representable in cp932, the reader thread dies with `UnicodeDecodeError`. Fixed by specifying `encoding="utf-8", errors="replace"` explicitly
+- **`llm-rubric` with `value: file://...` does not substitute `{{input}}`/`{{expected}}`**: inspecting the actual grading prompt showed that file://-referenced rubrics bypass Nunjucks templating and the placeholders reach the judge verbatim (inline `value` strings ARE templated). Fixed by reading the rubric file's content and embedding it as an inline string (`build.py`, `calibrate.py`)
+- A bug where a detected CJK font was never actually set as matplotlib's `font.family`, causing garbled Japanese chart labels, was also fixed (found during the M5 implementation)
 
-これらはCUAD-100タスク（下記）を実際に評価してみて初めて表面化した問題であり、
-モックだけに頼ったテストの限界を示している。
+These issues only surfaced when actually evaluating the CUAD-100 task (below) — a demonstration of the limits of purely mock-based testing.
 
-## Windows + CUAD-100 での実地検証
+## Live verification on Windows + CUAD-100
 
-`config.local-verify.yaml`（Ollama qwen2.5:7bのみ、APIキー不要）を使い、Windows実機上で
-`build` → `run` → `report` → `blog` のフルパイプラインを実際に動かして検証した。
-5件のサブセットでは判定ロジック（llm-rubricジャッジ）が意味のある合否判定を返すことを確認済み
-（例: 「該当条項なし」という出力が、正解が実際に条項ありの場合はfail、正解も
-「該当条項なし」の場合はpassと正しく判定される）。全80件（testスプリット）での
-本実行はCPU律速のローカル推論のため長時間かかる（1件あたり実測約136秒 = 抽出+採点で
-モデル呼び出し2回）。
+Using `config.local-verify.yaml` (Ollama qwen2.5:7b only, no API keys), the full `build` → `run` → `report` → `blog` pipeline was executed on a real Windows machine. On a 5-case subset, the grading logic (llm-rubric judge) was confirmed to produce meaningful pass/fail verdicts (e.g. an output of "no applicable clause" is correctly failed when the gold answer contains a clause, and passed when the gold answer is also "no applicable clause"). A full run over all 80 test-split cases takes a long time due to CPU-bound local inference (measured ~136 seconds per case = two model calls: extraction + grading).
 
-## 生成物ポリシー（gitに追跡されないファイル）
+## Generated artifacts policy (files not tracked by git)
 
-`evalloop` の各コマンドが生成するファイルはすべてgitignoreされており、リポジトリには含まれない。
-fresh clone後はクイックスタートの手順どおり `uv run evalloop build` を最初に実行して
-`promptfoo/promptfooconfig.yaml` と `data/build/` を生成すること。
+Everything the `evalloop` commands generate is gitignored and not part of the repository. After a fresh clone, run `uv run evalloop build` first, as in the Quickstart, to generate `promptfoo/promptfooconfig.yaml` and `data/build/`.
 
-| コマンド | 生成物（すべてgit非追跡） |
+| Command | Artifacts (all untracked) |
 |---|---|
 | `evalloop build` | `data/build/`, `promptfoo/promptfooconfig.yaml` |
-| `evalloop run` | `results/runs/{run_id}/`, `results/index.jsonl`（マシンローカルの監査台帳） |
+| `evalloop run` | `results/runs/{run_id}/`, `results/index.jsonl` (machine-local audit ledger) |
 | `evalloop report` | `results/reports/` |
 | `evalloop failures` / `cluster` | `data/notes.csv`, `data/failures.jsonl`, `data/taxonomy.draft.yaml` |
-| `evalloop optimize` | `promptfoo/variants/`（`prompts/optimized/` は実験成果物として任意にコミット可） |
+| `evalloop optimize` | `promptfoo/variants/` (`prompts/optimized/` may optionally be committed as experiment artifacts) |
 | `evalloop blog` | `blog/` |
 
-run成果物の生出力（output.json / meta.json）にはローカル絶対パスやプロバイダのエラー
-ペイロードが含まれうるため、公開リポジトリにはコミットしない。人手でキュレーションする
-ファイル（`data/golden.jsonl`, `data/human_labels.jsonl`, `data/taxonomy.yaml`, `prompts/base/`,
-`config.yaml`）は通常どおり追跡対象。
+Raw run outputs (output.json / meta.json) can contain local absolute paths and provider error payloads, so they are never committed to the public repository. Hand-curated files (`data/golden.jsonl`, `data/human_labels.jsonl`, `data/taxonomy.yaml`, `prompts/base/`, `config.yaml`) are tracked as usual.
 
-## データ出自
+## Data provenance
 
-同梱データはすべて公開データセット由来、または本プロジェクトのために創作した合成データであり、
-**実在の顧客データ・業務データ・実際の問い合わせとは一切関係ない**。
+All bundled data comes from public datasets or was created synthetically for this project; **none of it is related to real customer data, business data, or actual inquiries**.
 
-- `data/golden.jsonl` — [CUAD v1](https://www.atticusprojectai.org/cuad)（The Atticus Project発行、
-  **CC BY 4.0**）から抽出した100件のサブセット。取得元は
-  Hugging Faceの `chenghao/cuad_qa` ミラー（`config.yaml` の `blog.allowed_sources` に出典表記あり）
-- `data/human_labels.jsonl` — 現在は意図的に空（CUAD-100への人手レビュー未実施のため。既知の制約参照）
-- `data/sample/golden.jsonl` — 旧サンプルタスク（問い合わせ4分類）の**自作ダミー20件**
-  （`meta.source: "self-made"`）。一般的なSaaS問い合わせを模した創作文で、実在の問い合わせの
-  引用・改変ではない
-- `data/sample/human_labels.jsonl` — ジャッジ校正デモ用の**合成フィクスチャ10件**。
-  `output_raw` は架空のモデル出力であり、実際のLLM実行結果ではない
+- `data/golden.jsonl` — a 100-case subset extracted from [CUAD v1](https://www.atticusprojectai.org/cuad) (published by The Atticus Project, **CC BY 4.0**), obtained via the `chenghao/cuad_qa` mirror on Hugging Face (source attribution in `config.yaml`'s `blog.allowed_sources`)
+- `data/human_labels.jsonl` — intentionally empty at the moment (no human review pass over CUAD-100 yet; see Known constraints)
+- `data/sample/golden.jsonl` — the previous sample task (4-way inquiry classification): **20 self-made dummy cases** (`meta.source: "self-made"`). Invented texts imitating generic SaaS inquiries; not quotes or adaptations of real inquiries
+- `data/sample/human_labels.jsonl` — **10 synthetic fixtures** for the judge-calibration demo. `output_raw` values are fictional model outputs, not real LLM results
 
-## 既知の制約
+## Known constraints
 
-- `evalloop optimize` は現状 `task.answer_type == "label"` のタスクのみ対応
-  （GEPAのmetricがラベル一致ロジックの移植版のみのため）。現在アクティブなCUAD-100タスクは
-  `answer_type=text` なので、`optimize` を試すには `data/sample/` のラベル分類タスクに
-  一時的に戻すか、text用のmetricを追加実装する必要がある
-- ローカル小型モデル（qwen2.5:7b）をジャッジに使うと、まれに英語・日本語以外の言語で
-  採点理由を返すなど、フロンティアモデルほど指示追従が安定しない。ジャッジには
-  極力、評価対象より十分強いモデルを使うことを推奨（`config.yaml`本来の設計どおり）
-- `data/human_labels.jsonl` はCUAD-100タスクに対する実際の人手ラベルがまだ無いため
-  意図的に空にしてある。`evalloop calibrate` を使うには先に人手レビューが必要
+- `evalloop optimize` currently supports only `task.answer_type == "label"` tasks (the GEPA metric is a port of the label-match logic only). The currently active CUAD-100 task is `answer_type=text`, so to try `optimize` you either temporarily switch back to the `data/sample/` label-classification task or implement a text metric
+- With a small local model (qwen2.5:7b) as judge, instruction following is less stable than with frontier models (e.g. it occasionally returns grading rationales in languages other than English/Japanese). Prefer a judge substantially stronger than the models being evaluated (as `config.yaml` is designed to do)
+- `data/human_labels.jsonl` is intentionally empty because there are no human labels for the CUAD-100 task yet. Using `evalloop calibrate` requires a human review pass first
 
-設計の背景・データ仕様・「鉄の掟」の詳細は [docs/DESIGN.md](docs/DESIGN.md) を参照。
+For design background, data specs, and the details of the "iron rules", see [docs/DESIGN.md](docs/DESIGN.md) (Japanese).
 
-## インストール方針
+## Installation policy
 
-本プロジェクトはPyPIには公開していない。**git clone + `uv sync` で利用する前提**
-（[セットアップ](#セットアップ)参照）。ソースツリー内のパス規約（`data/` `prompts/` `results/`等）に
-アンカーした設計のため、site-packagesへのwheelインストールはサポートしない。
+This project is not published to PyPI. **It is meant to be used via git clone + `uv sync`** (see [Setup](#setup)). The design is anchored to in-tree path conventions (`data/`, `prompts/`, `results/`, etc.), so wheel installation into site-packages is unsupported.
 
-## ライセンス
+## License
 
-[MIT License](LICENSE)。同梱データのライセンスは別途各ファイルの出典表記に従う
-（現在の `data/golden.jsonl` はCUAD v1由来・CC BY 4.0）。
+[MIT License](LICENSE). Bundled data follows the license stated in its provenance notes (the current `data/golden.jsonl` derives from CUAD v1, CC BY 4.0).
