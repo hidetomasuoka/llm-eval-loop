@@ -108,6 +108,55 @@ def test_run_total_failure_still_records_ledger_entry(isolated_root, monkeypatch
     assert not (run_dirs[0] / "output.json").exists()
 
 
+def test_run_timeout_records_ledger_entry_before_raising(isolated_root, monkeypatch):
+    """A --timeout kill loses all promptfoo progress (no incremental
+    output.json), but it must still land in meta.json/index.jsonl like any
+    other failure (iron rule #3) -- no silent orphan run directories."""
+    import subprocess
+
+    paths = TaskPaths(root=isolated_root, task="t1")
+    cfg = _make_config()
+    _prepare_env(monkeypatch, paths)
+
+    def fake_eval(config_path, output_path, **kwargs):
+        assert kwargs.get("timeout_s") == 42
+        raise subprocess.TimeoutExpired(cmd="npx promptfoo eval", timeout=42)
+
+    monkeypatch.setattr(run_mod, "run_promptfoo_eval", fake_eval)
+
+    with pytest.raises(run_mod.RunError):
+        run_mod.run(cfg, paths, timeout_s=42)
+
+    index_lines = paths.index.read_text(encoding="utf-8").strip().splitlines()
+    assert len(index_lines) == 1
+    entry = json.loads(index_lines[0])
+    assert entry["promptfoo_exit_code"] == -1
+
+    run_dirs = list(paths.runs_dir.iterdir())
+    assert len(run_dirs) == 1
+    meta = json.loads((run_dirs[0] / "meta.json").read_text(encoding="utf-8"))
+    assert "--timeout 42" in meta["promptfoo_stderr_tail"]
+
+
+def test_run_default_timeout_is_unlimited(isolated_root, monkeypatch):
+    # a 30-minute default was killing ~3-hour local CUAD runs and discarding
+    # everything; the default must be "wait indefinitely"
+    paths = TaskPaths(root=isolated_root, task="t1")
+    cfg = _make_config()
+    _prepare_env(monkeypatch, paths)
+    seen = {}
+
+    def fake_eval(config_path, output_path, **kwargs):
+        seen["timeout_s"] = kwargs.get("timeout_s")
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json.dumps({"results": {"results": []}}), encoding="utf-8")
+        return _FakeCompletedProcess(returncode=0)
+
+    monkeypatch.setattr(run_mod, "run_promptfoo_eval", fake_eval)
+    run_mod.run(cfg, paths)
+    assert seen["timeout_s"] is None
+
+
 def test_run_success_records_cost_and_returns_outcome(isolated_root, monkeypatch):
     paths = TaskPaths(root=isolated_root, task="t1")
     _prepare_env(monkeypatch, paths)

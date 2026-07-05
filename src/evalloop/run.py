@@ -123,11 +123,18 @@ def run_promptfoo_eval(
     limit: int | None = None,
     no_cache: bool = False,
     max_concurrency: int | None = None,
-    timeout_s: int = 1800,
+    timeout_s: int | None = None,
 ) -> subprocess.CompletedProcess:
     """Shared by `evalloop run` and `evalloop doctor` (doctor uses limit=1 on a
     throwaway config). Flags confirmed against promptfoo.dev CLI docs:
     -c/--config, -o/--output, --repeat, --filter-first-n, --no-cache, --no-share.
+
+    `timeout_s` defaults to None (wait indefinitely). There is no sensible
+    universal default: a full eval can be seconds (small cloud-model batch)
+    or hours (large local-model batch on CPU -- observed ~136s/case for
+    qwen2.5:7b on CUAD's long-context extraction task). promptfoo doesn't
+    write output.json incrementally, so a timeout here throws away all
+    progress; only set one if you specifically want a hard ceiling (e.g. CI).
     """
     output_path.parent.mkdir(parents=True, exist_ok=True)
     cmd = [
@@ -172,6 +179,7 @@ def run(
     repeat: int | None = None,
     limit: int | None = None,
     no_cache: bool = False,
+    timeout_s: int | None = None,
 ) -> RunOutcome:
     promptfoo_config_path = resolve_config_path(paths, variant)
     if not promptfoo_config_path.exists():
@@ -185,13 +193,31 @@ def run(
     output_path = run_dir / "output.json"
     meta_path = run_dir / "meta.json"
 
-    proc = run_promptfoo_eval(
-        promptfoo_config_path,
-        output_path,
-        repeat=effective_repeat,
-        limit=limit,
-        no_cache=no_cache,
-    )
+    try:
+        proc = run_promptfoo_eval(
+            promptfoo_config_path,
+            output_path,
+            repeat=effective_repeat,
+            limit=limit,
+            no_cache=no_cache,
+            timeout_s=timeout_s,
+        )
+    except subprocess.TimeoutExpired:
+        # promptfoo doesn't write output.json incrementally, so a timeout
+        # loses all progress made so far. Fall through to the same
+        # meta.json/index.jsonl recording path as a normal failure (iron
+        # rule #3) instead of raising immediately and leaving a silent,
+        # unlogged orphan run_id directory.
+        proc = subprocess.CompletedProcess(
+            args=[],
+            returncode=-1,
+            stdout="",
+            stderr=(
+                f"evalloop: promptfoo eval exceeded --timeout {timeout_s}s and was killed "
+                "(no partial results are recoverable). Pass a larger --timeout, or omit it "
+                "to wait indefinitely -- local-model evals with long contexts can take hours."
+            ),
+        )
 
     # Iron rule #3 (append-only ledger): even a total failure gets recorded in
     # meta.json/index.jsonl before we raise, so `results/` stays a complete

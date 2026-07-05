@@ -158,7 +158,9 @@ def _run_cluster_llm(
     try:
         with tempfile.TemporaryDirectory(prefix="evalloop-cluster-") as tmp_dir:
             output_path = Path(tmp_dir) / "cluster_output.json"
-            proc = run_mod.run_promptfoo_eval(tmp_config_path, output_path, repeat=1, no_cache=True, timeout_s=600)
+            # no timeout: a slow local judge model can legitimately take a
+            # while (see run.py's run_promptfoo_eval docstring)
+            proc = run_mod.run_promptfoo_eval(tmp_config_path, output_path, repeat=1, no_cache=True)
             if not output_path.exists():
                 raise AnalyzeError(f"cluster LLM call failed (exit {proc.returncode}).\nstderr:\n{proc.stderr}")
             parsed = parse_promptfoo_output(output_path)
