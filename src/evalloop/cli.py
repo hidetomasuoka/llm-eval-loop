@@ -98,6 +98,25 @@ def _load_task_or_exit(task: str | None, models: str | None = None):
         raise typer.Exit(1) from e
 
 
+@task_app.command("init")
+def task_init(
+    name: str = typer.Argument(..., help="New task name (lowercase alphanumerics and hyphens)"),
+    answer_type: str = typer.Option("label", "--answer-type", help="label / json / text"),
+) -> None:
+    """Scaffold tasks/<name>/ (task.yaml + prompts/ + PROVENANCE.md). golden.jsonl is up to you -- it stays out of git."""
+    try:
+        paths = paths_mod.init_task_workspace(name, answer_type=answer_type)
+    except (paths_mod.TaskExistsError, paths_mod.TaskNotFoundError, ValueError) as e:
+        console.print(f"[bold red]task init failed:[/bold red] {e}")
+        raise typer.Exit(1) from e
+    console.print(f"created {paths.task_dir}")
+    console.print("next steps:")
+    console.print(f"  1. edit {paths.task_config} (labels, models, judge)")
+    console.print(f"  2. edit {paths.prompt_file}" + (" and prompts/judge_rubric.txt" if answer_type == "text" else ""))
+    console.print(f"  3. put your dataset at {paths.golden} (gitignored -- document it in PROVENANCE.md)")
+    console.print(f"  4. uv run evalloop build --task {name}")
+
+
 @task_app.command("list")
 def task_list() -> None:
     """List task workspaces under tasks/ (with dataset presence and default marker)."""

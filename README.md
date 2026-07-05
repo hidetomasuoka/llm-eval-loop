@@ -86,7 +86,7 @@ uv run evalloop blog --runs <run_id>                        # figures/tables/art
 
 ## Bring your own task
 
-Adding a task never touches existing tasks — create a directory under `tasks/` with three files:
+Adding a task never touches existing tasks. `uv run evalloop task init <name>` scaffolds the workspace (task.yaml, prompts/, a PROVENANCE.md template), leaving essentially three files to fill in:
 
 1. `tasks/<name>/task.yaml` — answer_type, labels, judge/optimize settings, and (optionally) which registry models to evaluate (copy an existing task.yaml as a template)
 2. `tasks/<name>/golden.jsonl` — the eval dataset (single source of truth; format in [docs/DESIGN.md#5-データ仕様](docs/DESIGN.md#5-データ仕様), Japanese). Gitignored by default — add a `PROVENANCE.md` describing where it came from
@@ -177,4 +177,4 @@ This project is not published to PyPI. **It is meant to be used via git clone + 
 
 ## License
 
-[MIT License](LICENSE). Bundled data follows the license stated in its provenance notes (the current `data/golden.jsonl` derives from CUAD v1, CC BY 4.0).
+[MIT License](LICENSE). Bundled data follows the license stated in each task's `tasks/<name>/PROVENANCE.md`.
