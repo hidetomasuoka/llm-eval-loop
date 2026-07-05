@@ -13,7 +13,7 @@ llm-eval-loop is a **personal project**, maintained on a best-effort basis.
 
 ## Development setup
 
-Requirements (see [README](README.md#必要環境) for details):
+Requirements (see [README](README.md#requirements) for details):
 
 - **Node.js** `^20.20.0` or `>=22.22.0` — promptfoo itself hard-rejects versions outside this range
 - **Python 3.11+** and [uv](https://docs.astral.sh/uv/)
