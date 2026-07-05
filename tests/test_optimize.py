@@ -34,6 +34,46 @@ def test_provider_mapping_unknown_raises():
 
 
 # ---------------------------------------------------------------------------
+# sampling params on the dspy path (opus48/fable5 reject temperature with 400)
+# ---------------------------------------------------------------------------
+
+
+def test_dspy_temperature_none_when_sampling_unsupported():
+    # litellm drops None-valued params from the request, so None = "don't send"
+    assert optimize_mod._dspy_temperature(True, 0.0) == 0.0
+    assert optimize_mod._dspy_temperature(False, 0.0) is None
+
+
+def test_reflection_supports_sampling_matches_registry_by_dspy_string(isolated_root):
+    opus48 = {
+        "provider": "anthropic:messages:claude-opus-4-8",
+        "alias": "opus48",
+        "tier": "large",
+        "supports_sampling_params": False,
+    }
+    cfg, _paths = scaffold_task(
+        isolated_root,
+        global_models=[
+            {"provider": "ollama:chat:qwen2.5:7b", "alias": "qwen7b", "tier": "local"},
+            opus48,
+        ],
+        reflection_provider="anthropic/claude-opus-4-8",
+    )
+    # the bundled configs point reflection at opus48, which rejects temperature
+    assert optimize_mod._reflection_supports_sampling(cfg) is False
+
+
+def test_reflection_supports_sampling_defaults_true_for_unknown_provider(isolated_root):
+    cfg, _paths = scaffold_task(
+        isolated_root,
+        name="t2",
+        global_models=[{"provider": "ollama:chat:qwen2.5:7b", "alias": "qwen7b", "tier": "local"}],
+        reflection_provider="openai/gpt-5",  # no registry match -> keep sending temperature
+    )
+    assert optimize_mod._reflection_supports_sampling(cfg) is True
+
+
+# ---------------------------------------------------------------------------
 # template <-> instructions round-trip
 # ---------------------------------------------------------------------------
 

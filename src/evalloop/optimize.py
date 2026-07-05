@@ -71,6 +71,32 @@ def promptfoo_provider_to_dspy_lm(provider: str) -> str:
     )
 
 
+def _dspy_temperature(supports_sampling_params: bool, temperature: float) -> float | None:
+    """claude-opus-4-8 / claude-fable-5 reject sampling params with HTTP 400 on
+    the dspy/litellm path too, not just through promptfoo. litellm drops
+    None-valued params from the request (verified against the installed
+    litellm: get_optional_params(temperature=None) omits the key), so None is
+    how we avoid sending temperature to those models.
+    """
+    return temperature if supports_sampling_params else None
+
+
+def _reflection_supports_sampling(cfg: Config) -> bool:
+    """optimize.reflection_provider is a dspy/litellm string; if it corresponds
+    to a registry model marked supports_sampling_params=false, temperature must
+    not be sent to it either (the bundled configs point reflection at
+    anthropic/claude-opus-4-8, which 400s on it). Providers with no registry
+    match default to True (send temperature, the historical behavior).
+    """
+    for m in cfg.models:
+        try:
+            if promptfoo_provider_to_dspy_lm(m.provider) == cfg.optimize.reflection_provider:
+                return m.supports_sampling_params
+        except OptimizeError:
+            continue  # registry entries with unmapped provider prefixes can't match
+    return True
+
+
 # ---------------------------------------------------------------------------
 # prompt template <-> dspy instructions round-trip
 # ---------------------------------------------------------------------------
@@ -412,10 +438,14 @@ def optimize(config: Config, paths: TaskPaths) -> OptimizeOutcome:
     target_model = cfg.model_by_alias(cfg.optimize.target_alias)
     task_lm = dspy.LM(
         promptfoo_provider_to_dspy_lm(target_model.provider),
-        temperature=cfg.run.temperature,
+        temperature=_dspy_temperature(target_model.supports_sampling_params, cfg.run.temperature),
         max_tokens=cfg.run.max_tokens,
     )
-    reflection_lm = dspy.LM(cfg.optimize.reflection_provider, temperature=1.0, max_tokens=32000)
+    reflection_lm = dspy.LM(
+        cfg.optimize.reflection_provider,
+        temperature=_dspy_temperature(_reflection_supports_sampling(cfg), 1.0),
+        max_tokens=32000,
+    )
     dspy.configure(lm=task_lm)
 
     original_template = (REPO_ROOT / cfg.task.prompt_file).read_text(encoding="utf-8")
