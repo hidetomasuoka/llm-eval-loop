@@ -151,7 +151,9 @@ def _judge_verdicts_fresh(
     try:
         with tempfile.TemporaryDirectory(prefix="evalloop-calibrate-") as tmp_dir:
             output_path = Path(tmp_dir) / "calibrate_output.json"
-            proc = run_mod.run_promptfoo_eval(tmp_config_path, output_path, repeat=1, no_cache=True, timeout_s=600)
+            # no timeout: re-grading many labels through a slow local judge can
+            # legitimately take a while (see run.py's run_promptfoo_eval docstring)
+            proc = run_mod.run_promptfoo_eval(tmp_config_path, output_path, repeat=1, no_cache=True)
             if not output_path.exists():
                 raise CalibrateError(
                     f"fresh judge re-grading failed (exit {proc.returncode}); "
