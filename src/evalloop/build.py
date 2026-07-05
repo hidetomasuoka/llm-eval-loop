@@ -1,12 +1,10 @@
-"""golden.jsonl + config.yaml -> data/build/tests_*.yaml + promptfoo/promptfooconfig.yaml.
+"""tasks/<name>/golden.jsonl + task.yaml -> data/build/<name>/tests_*.yaml +
+promptfoo/<name>/promptfooconfig.yaml.
 
-Fixed project-convention paths (not configurable — see README.md section 4):
-    data/golden.jsonl                      single source of truth for cases
-    data/build/tests_test.yaml             promptfoo tests, split=="test" only
-    data/build/tests_train.yaml            GEPA-only, NEVER referenced by promptfoo
-    promptfoo/promptfooconfig.yaml         generated eval config
+All task-scoped paths come from paths.TaskPaths (issue #47) -- this module
+holds no per-task path constants.
 
-Iron rules enforced here (README.md section 11):
+Iron rules enforced here:
     1. split separation: tests_train.yaml can never end up referenced by the
        generated promptfooconfig.yaml, and train/test ids are asserted disjoint.
     2. an llm-rubric judge must never silently grade the same model it judges;
@@ -23,16 +21,10 @@ from pathlib import Path
 
 import yaml
 
-from evalloop.schemas import Config, GoldenCase, assert_split_disjoint, load_config, load_golden_jsonl
+from evalloop.paths import REPO_ROOT, TaskPaths
+from evalloop.schemas import Config, GoldenCase, assert_split_disjoint, load_golden_jsonl
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-GOLDEN_PATH = REPO_ROOT / "data" / "golden.jsonl"
-BUILD_DIR = REPO_ROOT / "data" / "build"
-TESTS_TEST_PATH = BUILD_DIR / "tests_test.yaml"
-TESTS_TRAIN_PATH = BUILD_DIR / "tests_train.yaml"
-PROMPTFOO_DIR = REPO_ROOT / "promptfoo"
-PROMPTFOO_CONFIG_PATH = PROMPTFOO_DIR / "promptfooconfig.yaml"
-ASSERTS_DIR = REPO_ROOT / "src" / "evalloop" / "asserts"
+ASSERTS_DIR = Path(__file__).resolve().parent / "asserts"
 LABEL_MATCH_JS = ASSERTS_DIR / "label_match.js"
 JSON_FIELD_MATCH_JS = ASSERTS_DIR / "json_field_match.js"
 
@@ -48,9 +40,9 @@ class BuildError(RuntimeError):
     pass
 
 
-def to_promptfoo_relpath(target: Path) -> str:
+def to_promptfoo_relpath(target: Path, start: Path) -> str:
     """promptfoo resolves file:// paths relative to the config file's own directory."""
-    rel = os.path.relpath(target, start=PROMPTFOO_DIR)
+    rel = os.path.relpath(target, start=start)
     return rel.replace(os.sep, "/")
 
 
@@ -97,24 +89,25 @@ def _write_tests_yaml(path: Path, cases: list[GoldenCase]) -> None:
         yaml.safe_dump(entries, f, allow_unicode=True, sort_keys=False)
 
 
-def _build_default_test(config: Config, allow_same_judge: bool) -> dict:
+def _build_default_test(config: Config, allow_same_judge: bool, paths: TaskPaths) -> dict:
     answer_type = config.task.answer_type
+    promptfoo_dir = paths.promptfoo_dir
     default_test: dict = {"vars": {}, "assert": []}
 
     if answer_type == "label":
         default_test["vars"]["labels"] = config.task.labels
         default_test["assert"] = [
-            {"type": "javascript", "value": f"file://{to_promptfoo_relpath(LABEL_MATCH_JS)}"}
+            {"type": "javascript", "value": f"file://{to_promptfoo_relpath(LABEL_MATCH_JS, promptfoo_dir)}"}
         ]
 
     elif answer_type == "json":
         is_json_assert: dict = {"type": "is-json"}
         if config.task.json_schema_file:
             schema_path = REPO_ROOT / config.task.json_schema_file
-            is_json_assert["value"] = f"file://{to_promptfoo_relpath(schema_path)}"
+            is_json_assert["value"] = f"file://{to_promptfoo_relpath(schema_path, promptfoo_dir)}"
         default_test["assert"] = [
             is_json_assert,
-            {"type": "javascript", "value": f"file://{to_promptfoo_relpath(JSON_FIELD_MATCH_JS)}"},
+            {"type": "javascript", "value": f"file://{to_promptfoo_relpath(JSON_FIELD_MATCH_JS, promptfoo_dir)}"},
         ]
 
     elif answer_type == "text":
@@ -150,7 +143,7 @@ def _build_default_test(config: Config, allow_same_judge: bool) -> dict:
     return default_test
 
 
-def _build_promptfoo_config(config: Config, allow_same_judge: bool) -> dict:
+def _build_promptfoo_config(config: Config, allow_same_judge: bool, paths: TaskPaths) -> dict:
     prompt_path = REPO_ROOT / config.task.prompt_file
     providers = []
     for m in config.models:
@@ -166,9 +159,9 @@ def _build_promptfoo_config(config: Config, allow_same_judge: bool) -> dict:
     return {
         "description": config.task.name,
         "providers": providers,
-        "prompts": [f"file://{to_promptfoo_relpath(prompt_path)}"],
-        "defaultTest": _build_default_test(config, allow_same_judge),
-        "tests": f"file://{to_promptfoo_relpath(TESTS_TEST_PATH)}",
+        "prompts": [f"file://{to_promptfoo_relpath(prompt_path, paths.promptfoo_dir)}"],
+        "defaultTest": _build_default_test(config, allow_same_judge, paths),
+        "tests": f"file://{to_promptfoo_relpath(paths.tests_test, paths.promptfoo_dir)}",
     }
 
 
@@ -182,7 +175,8 @@ def _assert_config_never_references_train(promptfoo_config_text: str) -> None:
 
 
 def build(
-    config_path: str | Path = REPO_ROOT / "config.yaml",
+    config: Config,
+    paths: TaskPaths,
     allow_same_judge: bool = False,
     yes: bool = False,
     confirm_fn=None,
@@ -191,8 +185,12 @@ def build(
 
     `confirm_fn` is injectable for tests; defaults to `typer.confirm` at the CLI layer.
     """
-    config = load_config(config_path)
-    cases = load_golden_jsonl(GOLDEN_PATH)
+    if not paths.golden.exists():
+        raise BuildError(
+            f"task {paths.task!r} has no dataset at {paths.golden}. Task data is not tracked in git "
+            f"(issue #47 data policy) -- see {paths.task_dir / 'PROVENANCE.md'} for how to obtain it."
+        )
+    cases = load_golden_jsonl(paths.golden)
 
     if config.task.answer_type == "label":
         bad = sorted(
@@ -212,21 +210,21 @@ def build(
     test_ids = {c.id for c in test_cases}
     assert_split_disjoint(train_ids, test_ids)
 
-    _write_tests_yaml(TESTS_TEST_PATH, test_cases)
-    _write_tests_yaml(TESTS_TRAIN_PATH, train_cases)
+    _write_tests_yaml(paths.tests_test, test_cases)
+    _write_tests_yaml(paths.tests_train, train_cases)
 
-    promptfoo_config = _build_promptfoo_config(config, allow_same_judge)
-    PROMPTFOO_DIR.mkdir(parents=True, exist_ok=True)
+    promptfoo_config = _build_promptfoo_config(config, allow_same_judge, paths)
+    paths.promptfoo_dir.mkdir(parents=True, exist_ok=True)
     config_text = yaml.safe_dump(promptfoo_config, allow_unicode=True, sort_keys=False)
     _assert_config_never_references_train(config_text)
-    PROMPTFOO_CONFIG_PATH.write_text(config_text, encoding="utf-8")
+    paths.promptfoo_config.write_text(config_text, encoding="utf-8")
 
     prompt_template = (REPO_ROOT / config.task.prompt_file).read_text(encoding="utf-8")
     estimate = estimate_cost(config, test_cases, prompt_template)
 
-    print(f"[build] {len(train_cases)} train / {len(test_cases)} test cases from {GOLDEN_PATH}")
-    print(f"[build] wrote {TESTS_TEST_PATH} and {TESTS_TRAIN_PATH}")
-    print(f"[build] wrote {PROMPTFOO_CONFIG_PATH}")
+    print(f"[build] {len(train_cases)} train / {len(test_cases)} test cases from {paths.golden}")
+    print(f"[build] wrote {paths.tests_test} and {paths.tests_train}")
+    print(f"[build] wrote {paths.promptfoo_config}")
     print("[build] estimated pre-run cost (repeat=%d):" % config.run.repeat)
     for alias, usd in estimate.per_model_usd.items():
         print(f"[build]   {alias}: ${usd:.4f}")

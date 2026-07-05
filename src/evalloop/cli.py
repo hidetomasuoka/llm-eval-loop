@@ -1,4 +1,9 @@
-"""evalloop CLI entry point (`uv run evalloop ...`). See README.md section 7."""
+"""evalloop CLI entry point (`uv run evalloop ...`). See README.md.
+
+Every task-scoped command takes `--task NAME` (falling back to the
+EVALLOOP_TASK env var, then config.yaml's default_task). Tasks live under
+tasks/<name>/ -- see issue #47.
+"""
 
 from __future__ import annotations
 
@@ -15,22 +20,28 @@ from rich.console import Console
 from rich.table import Table
 
 from evalloop import build as build_mod
+from evalloop import paths as paths_mod
 from evalloop import report as report_mod
 from evalloop import run as run_mod
-from evalloop.schemas import Config, SchemaError, load_config, parse_promptfoo_output
+from evalloop.schemas import Config, SchemaError, load_task, parse_promptfoo_output, restrict_models
 
 app = typer.Typer(
     add_completion=False,
     help=(
         "llm-eval-loop: promptfoo runs+grades multi-model evals; evalloop owns dataset "
-        "safety, judge calibration, failure analysis, GEPA optimization, blog export.\n\n"
+        "safety, judge calibration, failure analysis, GEPA optimization, blog export. "
+        "Tasks are self-contained workspaces under tasks/<name>/ (select with --task).\n\n"
         "NOTE: `promptfoo share` (cloud upload) is never used by this project - use "
         "`evalloop view` to browse local results instead."
     ),
 )
+task_app = typer.Typer(help="Manage task workspaces under tasks/")
+app.add_typer(task_app, name="task")
 console = Console()
 
-DEFAULT_CONFIG_PATH = "config.yaml"
+_TASK_OPTION = typer.Option(
+    None, "--task", help="Task workspace under tasks/ (default: $EVALLOOP_TASK, then config.yaml default_task)"
+)
 
 _REQUIRED_ENV_BY_PREFIX = {
     "anthropic:": "ANTHROPIC_API_KEY",
@@ -75,22 +86,55 @@ def _node_version_ok(version_str: str) -> bool | None:
     return False
 
 
-def _load_config_or_exit(config_path: str) -> Config:
+def _load_task_or_exit(task: str | None, models: str | None = None):
+    """Resolve --task into (Config, TaskPaths), optionally narrowing models."""
     try:
-        return load_config(config_path)
-    except SchemaError as e:
+        cfg, paths = load_task(task)
+        if models:
+            cfg = restrict_models(cfg, [a.strip() for a in models.split(",") if a.strip()])
+        return cfg, paths
+    except (SchemaError, paths_mod.TaskNotFoundError) as e:
         console.print(f"[bold red]config error:[/bold red] {e}")
         raise typer.Exit(1) from e
 
 
+@task_app.command("list")
+def task_list() -> None:
+    """List task workspaces under tasks/ (with dataset presence and default marker)."""
+    try:
+        from evalloop.schemas import load_global_config
+
+        global_config = load_global_config(paths_mod.REPO_ROOT / "config.yaml")
+        default_task = global_config.default_task
+    except SchemaError:
+        default_task = None
+
+    names = paths_mod.list_tasks()
+    if not names:
+        console.print("no tasks found under tasks/")
+        return
+    table = Table(title="tasks")
+    table.add_column("task", overflow="fold")
+    table.add_column("dataset", overflow="fold")
+    table.add_column("default", overflow="fold")
+    for name in names:
+        tp = paths_mod.TaskPaths(root=paths_mod.REPO_ROOT, task=name)
+        if tp.golden.exists():
+            dataset = "[green]present[/green]"
+        else:
+            dataset = "[yellow]missing (see PROVENANCE.md)[/yellow]"
+        table.add_row(name, dataset, "*" if name == default_task else "")
+    console.print(table)
+
+
 @app.command()
-def doctor(config: str = typer.Option(DEFAULT_CONFIG_PATH, help="Path to config.yaml")) -> None:
+def doctor(task: str = _TASK_OPTION) -> None:
     """Check Node/promptfoo/Ollama/API-key connectivity; run one tiny eval per provider."""
     console.print(
         "[bold yellow]policy reminder:[/bold yellow] this project never runs `promptfoo share` "
         "(no cloud upload). Use `evalloop view` for local results.\n"
     )
-    cfg = _load_config_or_exit(config)
+    cfg, _paths = _load_task_or_exit(task)
 
     node_version = run_mod.get_node_version()
     ok = _node_version_ok(node_version)
@@ -186,16 +230,21 @@ def _smoke_test_providers(cfg: Config) -> None:
 
 @app.command()
 def build(
-    config: str = typer.Option(DEFAULT_CONFIG_PATH, help="Path to config.yaml"),
+    task: str = _TASK_OPTION,
+    models: str = typer.Option(
+        None, help="Comma-separated alias subset of this task's models (e.g. CI smoke: --models gptoss20b)"
+    ),
     allow_same_judge: bool = typer.Option(
         False, help="Iron rule #2 override: allow llm-rubric judge == an evaluated model"
     ),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip the cost-estimate confirmation prompt"),
 ) -> None:
-    """golden.jsonl + config.yaml -> data/build/tests_*.yaml + promptfoo/promptfooconfig.yaml."""
+    """tasks/<name>/golden.jsonl + task.yaml -> data/build/<name>/ + promptfoo/<name>/promptfooconfig.yaml."""
+    cfg, paths = _load_task_or_exit(task, models)
     try:
         build_mod.build(
-            config_path=config,
+            cfg,
+            paths,
             allow_same_judge=allow_same_judge,
             yes=yes,
             confirm_fn=lambda msg: typer.confirm(msg),
@@ -207,15 +256,16 @@ def build(
 
 @app.command()
 def run(
-    variant: str = typer.Option(None, help="Name of a promptfoo/variants/{name}.yaml to run instead of the base config"),
-    repeat: int = typer.Option(None, help="Override run.repeat from config.yaml"),
+    task: str = _TASK_OPTION,
+    variant: str = typer.Option(None, help="Name of a promptfoo/<task>/variants/{name}.yaml to run instead of the base config"),
+    repeat: int = typer.Option(None, help="Override run.repeat from the config"),
     limit: int = typer.Option(None, help="Only run the first N test cases (maps to promptfoo --filter-first-n)"),
     no_cache: bool = typer.Option(False, "--no-cache", help="Disable promptfoo's disk cache for this run"),
-    config: str = typer.Option(DEFAULT_CONFIG_PATH, help="Path to config.yaml"),
 ) -> None:
-    """Run `npx promptfoo eval` against the built config and record results/runs/{run_id}/."""
+    """Run `npx promptfoo eval` against the built config and record results/<task>/runs/{run_id}/."""
+    cfg, paths = _load_task_or_exit(task)
     try:
-        run_mod.run(variant=variant, repeat=repeat, limit=limit, no_cache=no_cache, config_path=config)
+        run_mod.run(cfg, paths, variant=variant, repeat=repeat, limit=limit, no_cache=no_cache)
     except (SchemaError, run_mod.RunError) as e:
         console.print(f"[bold red]run failed:[/bold red] {e}")
         raise typer.Exit(1) from e
@@ -231,10 +281,14 @@ def view(
 
 
 @app.command()
-def report(run_id: str = typer.Argument(..., help="run_id under results/runs/")) -> None:
-    """results/runs/{run_id}/output.json -> results/reports/{run_id}.md"""
+def report(
+    run_id: str = typer.Argument(..., help="run_id under results/<task>/runs/"),
+    task: str = _TASK_OPTION,
+) -> None:
+    """results/<task>/runs/{run_id}/output.json -> results/<task>/reports/{run_id}.md"""
+    _cfg, paths = _load_task_or_exit(task)
     try:
-        report_mod.report(run_id)
+        report_mod.report(run_id, paths)
     except report_mod.ReportError as e:
         console.print(f"[bold red]report failed:[/bold red] {e}")
         raise typer.Exit(1) from e
@@ -242,26 +296,31 @@ def report(run_id: str = typer.Argument(..., help="run_id under results/runs/"))
 
 @app.command()
 def calibrate(
-    config: str = typer.Option(DEFAULT_CONFIG_PATH, help="Path to config.yaml"),
+    task: str = _TASK_OPTION,
     run_id: str = typer.Option(None, help="If set, cross-check this run's gradingResults instead of re-grading"),
 ) -> None:
-    """Compare the LLM judge against data/human_labels.jsonl; warn below judge.agreement_threshold."""
+    """Compare the LLM judge against the task's human_labels.jsonl; warn below judge.agreement_threshold."""
     from evalloop import calibrate as calibrate_mod
 
+    cfg, paths = _load_task_or_exit(task)
     try:
-        calibrate_mod.calibrate(config_path=config, run_id=run_id)
+        calibrate_mod.calibrate(cfg, paths, run_id=run_id)
     except (SchemaError, calibrate_mod.CalibrateError) as e:
         console.print(f"[bold red]calibrate failed:[/bold red] {e}")
         raise typer.Exit(1) from e
 
 
 @app.command()
-def failures(run_id: str = typer.Argument(..., help="run_id under results/runs/")) -> None:
-    """Extract failing cases from a run into failures.jsonl + a notes.csv template."""
+def failures(
+    run_id: str = typer.Argument(..., help="run_id under results/<task>/runs/"),
+    task: str = _TASK_OPTION,
+) -> None:
+    """Extract failing cases from a run into failures.jsonl + the task's notes.csv template."""
     from evalloop import analyze as analyze_mod
 
+    _cfg, paths = _load_task_or_exit(task)
     try:
-        analyze_mod.failures(run_id)
+        analyze_mod.failures(run_id, paths)
     except analyze_mod.AnalyzeError as e:
         console.print(f"[bold red]failures failed:[/bold red] {e}")
         raise typer.Exit(1) from e
@@ -269,54 +328,64 @@ def failures(run_id: str = typer.Argument(..., help="run_id under results/runs/"
 
 @app.command()
 def cluster(
-    notes: str = typer.Option("data/notes.csv", help="Path to notes.csv"),
-    config: str = typer.Option(DEFAULT_CONFIG_PATH, help="Path to config.yaml"),
+    task: str = _TASK_OPTION,
+    notes: str = typer.Option(None, help="Path to notes.csv (default: the task's notes.csv)"),
 ) -> None:
-    """LLM-draft a failure taxonomy from notes.csv into data/taxonomy.draft.yaml (never overwrites taxonomy.yaml)."""
+    """LLM-draft a failure taxonomy from notes.csv into the task's taxonomy.draft.yaml (never overwrites taxonomy.yaml)."""
     from evalloop import analyze as analyze_mod
 
+    cfg, paths = _load_task_or_exit(task)
     try:
-        analyze_mod.cluster(notes_path=notes, config_path=config)
+        analyze_mod.cluster(cfg, paths, notes_path=notes)
     except analyze_mod.AnalyzeError as e:
         console.print(f"[bold red]cluster failed:[/bold red] {e}")
         raise typer.Exit(1) from e
 
 
 @app.command()
-def pivot(run_id: str = typer.Argument(..., help="run_id under results/runs/")) -> None:
-    """Failure category x model cross-tab -> reports/pivot_{run_id}.md."""
+def pivot(
+    run_id: str = typer.Argument(..., help="run_id under results/<task>/runs/"),
+    task: str = _TASK_OPTION,
+) -> None:
+    """Failure category x model cross-tab -> results/<task>/reports/pivot_{run_id}.md."""
     from evalloop import analyze as analyze_mod
 
+    _cfg, paths = _load_task_or_exit(task)
     try:
-        analyze_mod.pivot(run_id)
+        analyze_mod.pivot(run_id, paths)
     except analyze_mod.AnalyzeError as e:
         console.print(f"[bold red]pivot failed:[/bold red] {e}")
         raise typer.Exit(1) from e
 
 
 @app.command()
-def optimize(config: str = typer.Option(DEFAULT_CONFIG_PATH, help="Path to config.yaml")) -> None:
+def optimize(task: str = _TASK_OPTION) -> None:
     """Run dspy GEPA on split=='train' only; then run/report/compare on the optimized variant."""
     from evalloop import optimize as optimize_mod
 
+    cfg, paths = _load_task_or_exit(task)
     try:
-        optimize_mod.optimize(config_path=config)
+        optimize_mod.optimize(cfg, paths)
     except optimize_mod.OptimizeError as e:
         console.print(f"[bold red]optimize failed:[/bold red] {e}")
         raise typer.Exit(1) from e
 
 
 @app.command()
-def compare(runs: str = typer.Option(..., help="Two run_ids, comma-separated: A,B")) -> None:
-    """before/after comparison of two runs -> reports/compare_A_B.md."""
+def compare(
+    runs: str = typer.Option(..., help="Two run_ids, comma-separated: A,B"),
+    task: str = _TASK_OPTION,
+) -> None:
+    """before/after comparison of two runs -> results/<task>/reports/compare_A_B.md."""
     from evalloop import optimize as optimize_mod
 
+    _cfg, paths = _load_task_or_exit(task)
     run_ids = [r.strip() for r in runs.split(",")]
     if len(run_ids) != 2:
         console.print("[bold red]compare failed:[/bold red] --runs must be exactly 'A,B'")
         raise typer.Exit(1)
     try:
-        optimize_mod.compare(run_ids[0], run_ids[1])
+        optimize_mod.compare(run_ids[0], run_ids[1], paths)
     except optimize_mod.OptimizeError as e:
         console.print(f"[bold red]compare failed:[/bold red] {e}")
         raise typer.Exit(1) from e
@@ -325,15 +394,16 @@ def compare(runs: str = typer.Option(..., help="Two run_ids, comma-separated: A,
 @app.command()
 def blog(
     runs: str = typer.Option(..., help="One or two run_ids, comma-separated: A or A,B"),
-    slug: str = typer.Option(None, help="Override blog.slug_prefix from config.yaml"),
-    config: str = typer.Option(DEFAULT_CONFIG_PATH, help="Path to config.yaml"),
+    slug: str = typer.Option(None, help="Override blog.slug_prefix from the task config"),
+    task: str = _TASK_OPTION,
 ) -> None:
-    """Publish-guarded export of figures/tables/conditions/article draft -> blog/{date}_{slug}/."""
+    """Publish-guarded export of figures/tables/conditions/article draft -> blog/<task>/{date}_{slug}/."""
     from evalloop import blog as blog_mod
 
+    cfg, paths = _load_task_or_exit(task)
     run_ids = [r.strip() for r in runs.split(",")]
     try:
-        blog_mod.blog(run_ids=run_ids, slug=slug, config_path=config)
+        blog_mod.blog(cfg, paths, run_ids=run_ids, slug=slug)
     except (SchemaError, blog_mod.BlogGuardError) as e:
         console.print(f"[bold red]blog failed:[/bold red] {e}")
         raise typer.Exit(1) from e

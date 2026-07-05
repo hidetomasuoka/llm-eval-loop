@@ -3,11 +3,18 @@ import json
 import pytest
 import yaml
 
-from evalloop import build as build_mod
 from evalloop import calibrate as calibrate_mod
 from evalloop import run as run_mod
-
-REPO_ROOT = build_mod.REPO_ROOT
+from evalloop.paths import REPO_ROOT, TaskPaths
+from evalloop.schemas import (
+    BlogConfig,
+    Config,
+    JudgeConfig,
+    ModelConfig,
+    OptimizeConfig,
+    RunConfig,
+    TaskConfig,
+)
 
 
 def _write_golden(path, cases):
@@ -22,14 +29,33 @@ def _write_human_labels(path, labels):
             f.write(json.dumps(label, ensure_ascii=False) + "\n")
 
 
+def _make_config(rubric_file):
+    return Config(
+        task=TaskConfig(name="t1", answer_type="text", prompt_file="tasks/sample-inquiry/prompts/task.txt"),
+        models=[
+            ModelConfig(provider="ollama:chat:qwen2.5:7b", alias="qwen7b", tier="local"),
+            ModelConfig(provider="anthropic:messages:claude-haiku-4-5-20251001", alias="haiku45", tier="small"),
+        ],
+        run=RunConfig(),
+        judge=JudgeConfig(
+            provider="anthropic:messages:claude-sonnet-4-6",
+            threshold=0.8,
+            agreement_threshold=0.85,
+            rubric_file=str(rubric_file),
+        ),
+        optimize=OptimizeConfig(target_alias="qwen7b", reflection_provider="r"),
+        blog=BlogConfig(),
+        path=REPO_ROOT / "config.yaml",
+    )
+
+
 @pytest.fixture
-def calibrate_env(tmp_path, monkeypatch):
-    golden_path = tmp_path / "golden.jsonl"
-    human_labels_path = tmp_path / "human_labels.jsonl"
-    runs_dir = tmp_path / "runs"
+def calibrate_env(isolated_root):
+    paths = TaskPaths(root=isolated_root, task="t1")
+    paths.task_dir.mkdir(parents=True)
 
     _write_golden(
-        golden_path,
+        paths.golden,
         [
             {"id": "case-0001", "input": "x", "expected": "契約照会", "split": "test", "meta": {"category": "基本", "source": "self-made"}},
             {"id": "case-0002", "input": "y", "expected": "障害報告", "split": "test", "meta": {"category": "基本", "source": "self-made"}},
@@ -37,18 +63,16 @@ def calibrate_env(tmp_path, monkeypatch):
         ],
     )
 
-    monkeypatch.setattr(build_mod, "GOLDEN_PATH", golden_path)
-    monkeypatch.setattr(calibrate_mod, "HUMAN_LABELS_PATH", human_labels_path)
-    monkeypatch.setattr(run_mod, "RUNS_DIR", runs_dir)
-    # fresh re-grading writes its throwaway _calibrate_*.yaml into
-    # PROMPTFOO_DIR; keep even that transient write out of the real checkout
-    monkeypatch.setattr(build_mod, "PROMPTFOO_DIR", tmp_path / "promptfoo")
+    # fresh re-grading reads the rubric via cfg.judge.rubric_file; scaffold one
+    # with the {{input}}/{{expected}} placeholders promptfoo would substitute
+    paths.rubric_file.parent.mkdir(parents=True)
+    paths.rubric_file.write_text("問い合わせ: {{input}}\n期待: {{expected}}\nを採点してください。\n", encoding="utf-8")
 
-    return {"golden_path": golden_path, "human_labels_path": human_labels_path, "runs_dir": runs_dir}
+    return {"paths": paths, "cfg": _make_config(paths.rubric_file)}
 
 
-def _write_run_output(runs_dir, run_id, rows):
-    run_dir = runs_dir / run_id
+def _write_run_output(paths, run_id, rows):
+    run_dir = paths.runs_dir / run_id
     run_dir.mkdir(parents=True)
     (run_dir / "output.json").write_text(json.dumps({"results": {"results": rows}}), encoding="utf-8")
     (run_dir / "meta.json").write_text(
@@ -68,8 +92,9 @@ def _row(case_id, alias, passed):
 
 
 def test_calibrate_run_id_mode_high_agreement(calibrate_env):
+    paths, cfg = calibrate_env["paths"], calibrate_env["cfg"]
     _write_human_labels(
-        calibrate_env["human_labels_path"],
+        paths.human_labels,
         [
             {"case_id": "case-0001", "model_label": "haiku45", "output_raw": "契約照会", "human_verdict": "pass"},
             {"case_id": "case-0002", "model_label": "haiku45", "output_raw": "障害報告", "human_verdict": "pass"},
@@ -77,7 +102,7 @@ def test_calibrate_run_id_mode_high_agreement(calibrate_env):
         ],
     )
     _write_run_output(
-        calibrate_env["runs_dir"],
+        paths,
         "run-1",
         [
             _row("case-0001", "haiku45", True),
@@ -86,20 +111,21 @@ def test_calibrate_run_id_mode_high_agreement(calibrate_env):
         ],
     )
 
-    result = calibrate_mod.calibrate(config_path=REPO_ROOT / "config.yaml", run_id="run-1")
+    result = calibrate_mod.calibrate(cfg, paths, run_id="run-1")
 
     assert result.n_compared == 3
     assert result.agreement_rate == pytest.approx(1.0)
     assert result.status == "calibrated"
 
-    meta = json.loads((calibrate_env["runs_dir"] / "run-1" / "meta.json").read_text(encoding="utf-8"))
+    meta = json.loads((paths.runs_dir / "run-1" / "meta.json").read_text(encoding="utf-8"))
     assert meta["judge"]["calibration_status"] == "calibrated"
     assert meta["judge"]["agreement_rate"] == pytest.approx(1.0)
 
 
 def test_calibrate_run_id_mode_low_agreement_warns(calibrate_env):
+    paths, cfg = calibrate_env["paths"], calibrate_env["cfg"]
     _write_human_labels(
-        calibrate_env["human_labels_path"],
+        paths.human_labels,
         [
             {"case_id": "case-0001", "model_label": "haiku45", "output_raw": "契約照会", "human_verdict": "pass"},
             {"case_id": "case-0002", "model_label": "haiku45", "output_raw": "障害報告", "human_verdict": "fail"},
@@ -108,7 +134,7 @@ def test_calibrate_run_id_mode_low_agreement_warns(calibrate_env):
     )
     # judge disagrees with human on 2 of 3
     _write_run_output(
-        calibrate_env["runs_dir"],
+        paths,
         "run-2",
         [
             _row("case-0001", "haiku45", True),
@@ -117,23 +143,24 @@ def test_calibrate_run_id_mode_low_agreement_warns(calibrate_env):
         ],
     )
 
-    result = calibrate_mod.calibrate(config_path=REPO_ROOT / "config.yaml", run_id="run-2")
+    result = calibrate_mod.calibrate(cfg, paths, run_id="run-2")
 
     assert result.agreement_rate == pytest.approx(1 / 3)
     assert result.status == "low_agreement"
 
-    meta = json.loads((calibrate_env["runs_dir"] / "run-2" / "meta.json").read_text(encoding="utf-8"))
+    meta = json.loads((paths.runs_dir / "run-2" / "meta.json").read_text(encoding="utf-8"))
     assert meta["judge"]["calibration_status"] == "low_agreement"
 
 
 def test_calibrate_skips_case_missing_from_golden(calibrate_env):
+    paths, cfg = calibrate_env["paths"], calibrate_env["cfg"]
     _write_human_labels(
-        calibrate_env["human_labels_path"],
+        paths.human_labels,
         [{"case_id": "case-9999", "model_label": "haiku45", "output_raw": "x", "human_verdict": "pass"}],
     )
-    _write_run_output(calibrate_env["runs_dir"], "run-3", [])
+    _write_run_output(paths, "run-3", [])
 
-    result = calibrate_mod.calibrate(config_path=REPO_ROOT / "config.yaml", run_id="run-3")
+    result = calibrate_mod.calibrate(cfg, paths, run_id="run-3")
 
     assert result.n_compared == 0
     assert result.n_skipped == 1
@@ -141,40 +168,44 @@ def test_calibrate_skips_case_missing_from_golden(calibrate_env):
 
 
 def test_calibrate_skips_case_missing_judge_verdict(calibrate_env):
+    paths, cfg = calibrate_env["paths"], calibrate_env["cfg"]
     _write_human_labels(
-        calibrate_env["human_labels_path"],
+        paths.human_labels,
         [
             {"case_id": "case-0001", "model_label": "haiku45", "output_raw": "契約照会", "human_verdict": "pass"},
             {"case_id": "case-0002", "model_label": "haiku45", "output_raw": "障害報告", "human_verdict": "pass"},
         ],
     )
     # only case-0001 has a matching judge verdict in the run
-    _write_run_output(calibrate_env["runs_dir"], "run-4", [_row("case-0001", "haiku45", True)])
+    _write_run_output(paths, "run-4", [_row("case-0001", "haiku45", True)])
 
-    result = calibrate_mod.calibrate(config_path=REPO_ROOT / "config.yaml", run_id="run-4")
+    result = calibrate_mod.calibrate(cfg, paths, run_id="run-4")
 
     assert result.n_compared == 1
     assert result.n_skipped == 1
 
 
 def test_calibrate_missing_run_raises(calibrate_env):
+    paths, cfg = calibrate_env["paths"], calibrate_env["cfg"]
     _write_human_labels(
-        calibrate_env["human_labels_path"],
+        paths.human_labels,
         [{"case_id": "case-0001", "model_label": "haiku45", "output_raw": "x", "human_verdict": "pass"}],
     )
     with pytest.raises(calibrate_mod.CalibrateError):
-        calibrate_mod.calibrate(config_path=REPO_ROOT / "config.yaml", run_id="does-not-exist")
+        calibrate_mod.calibrate(cfg, paths, run_id="does-not-exist")
 
 
 def test_calibrate_empty_human_labels_raises(calibrate_env):
-    calibrate_env["human_labels_path"].write_text("", encoding="utf-8")
+    paths, cfg = calibrate_env["paths"], calibrate_env["cfg"]
+    paths.human_labels.write_text("", encoding="utf-8")
     with pytest.raises(calibrate_mod.CalibrateError):
-        calibrate_mod.calibrate(config_path=REPO_ROOT / "config.yaml", run_id="whatever")
+        calibrate_mod.calibrate(cfg, paths, run_id="whatever")
 
 
 def test_judge_verdicts_from_run_majority_vote_across_repeats(calibrate_env):
+    paths = calibrate_env["paths"]
     _write_run_output(
-        calibrate_env["runs_dir"],
+        paths,
         "run-5",
         [
             _row("case-0001", "haiku45", True),
@@ -182,7 +213,7 @@ def test_judge_verdicts_from_run_majority_vote_across_repeats(calibrate_env):
             _row("case-0001", "haiku45", False),
         ],
     )
-    verdicts = calibrate_mod._judge_verdicts_from_run("run-5")
+    verdicts = calibrate_mod._judge_verdicts_from_run("run-5", paths)
     assert verdicts[("case-0001", "haiku45")] is True
 
 
@@ -192,8 +223,9 @@ def test_fresh_mode_two_models_same_case_counted_independently(calibrate_env, mo
     each other (the last result row won for both keys). Verdicts must join on
     the (case_id, model_label) composite key.
     """
+    paths, cfg = calibrate_env["paths"], calibrate_env["cfg"]
     _write_human_labels(
-        calibrate_env["human_labels_path"],
+        paths.human_labels,
         [
             # 同一case-0001を2モデルでラベル: haiku45は正解(pass)、qwen7bは不正解(fail)
             {"case_id": "case-0001", "model_label": "haiku45", "output_raw": "契約照会", "human_verdict": "pass"},
@@ -227,7 +259,7 @@ def test_fresh_mode_two_models_same_case_counted_independently(calibrate_env, mo
 
     monkeypatch.setattr(run_mod, "run_promptfoo_eval", fake_eval)
 
-    result = calibrate_mod.calibrate(config_path=REPO_ROOT / "config.yaml", run_id=None)
+    result = calibrate_mod.calibrate(cfg, paths, run_id=None)
 
     # 2ラベルとも独立に判定される: judge=pass/human=pass と judge=fail/human=fail で一致率100%
     assert result.n_compared == 2
@@ -239,15 +271,16 @@ def test_fresh_mode_two_models_same_case_counted_independently(calibrate_env, mo
 
 def test_run_id_mode_two_models_same_case_counted_independently(calibrate_env):
     """Cross-check mode already joins on (case_id, alias); pin that behavior."""
+    paths, cfg = calibrate_env["paths"], calibrate_env["cfg"]
     _write_human_labels(
-        calibrate_env["human_labels_path"],
+        paths.human_labels,
         [
             {"case_id": "case-0001", "model_label": "haiku45", "output_raw": "契約照会", "human_verdict": "pass"},
             {"case_id": "case-0001", "model_label": "qwen7b", "output_raw": "その他", "human_verdict": "fail"},
         ],
     )
     _write_run_output(
-        calibrate_env["runs_dir"],
+        paths,
         "run-6",
         [
             _row("case-0001", "haiku45", True),
@@ -255,7 +288,7 @@ def test_run_id_mode_two_models_same_case_counted_independently(calibrate_env):
         ],
     )
 
-    result = calibrate_mod.calibrate(config_path=REPO_ROOT / "config.yaml", run_id="run-6")
+    result = calibrate_mod.calibrate(cfg, paths, run_id="run-6")
 
     assert result.n_compared == 2
     assert result.agreement_rate == pytest.approx(1.0)
@@ -266,8 +299,9 @@ def test_fresh_judge_config_uses_echo_provider_and_pinned_judge(calibrate_env, m
     pin must flow into the throwaway echo-replay config, without ever calling
     a real API (run_promptfoo_eval is monkeypatched out).
     """
+    paths, cfg = calibrate_env["paths"], calibrate_env["cfg"]
     _write_human_labels(
-        calibrate_env["human_labels_path"],
+        paths.human_labels,
         [{"case_id": "case-0001", "model_label": "haiku45", "output_raw": "契約照会", "human_verdict": "pass"}],
     )
 
@@ -303,7 +337,7 @@ def test_fresh_judge_config_uses_echo_provider_and_pinned_judge(calibrate_env, m
 
     monkeypatch.setattr(run_mod, "run_promptfoo_eval", fake_eval)
 
-    result = calibrate_mod.calibrate(config_path=REPO_ROOT / "config.yaml", run_id=None)
+    result = calibrate_mod.calibrate(cfg, paths, run_id=None)
 
     assert captured["config"]["providers"] == [{"id": "echo", "label": "echo"}]
     assert captured["config"]["prompts"] == ["{{output_raw}}"]
@@ -313,4 +347,16 @@ def test_fresh_judge_config_uses_echo_provider_and_pinned_judge(calibrate_env, m
     assert result.n_compared == 1
     assert result.agreement_rate == pytest.approx(1.0)
     # the throwaway config must not be left behind
-    assert not list(build_mod.PROMPTFOO_DIR.glob("_calibrate_*.yaml"))
+    assert not list(paths.promptfoo_dir.glob("_calibrate_*.yaml"))
+
+
+def test_fresh_mode_missing_rubric_raises_clear_error(calibrate_env):
+    paths, cfg = calibrate_env["paths"], calibrate_env["cfg"]
+    _write_human_labels(
+        paths.human_labels,
+        [{"case_id": "case-0001", "model_label": "haiku45", "output_raw": "契約照会", "human_verdict": "pass"}],
+    )
+    paths.rubric_file.unlink()
+
+    with pytest.raises(calibrate_mod.CalibrateError, match=r"rubric file not found: [\s\S]*--run-id"):
+        calibrate_mod.calibrate(cfg, paths, run_id=None)

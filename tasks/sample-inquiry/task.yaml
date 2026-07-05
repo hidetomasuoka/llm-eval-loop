@@ -1,0 +1,34 @@
+# =============================================================================
+# サンプルタスク: 問い合わせ4分類（合成データ）
+#
+# fresh clone で即動く唯一のタスク。golden.jsonl / human_labels.jsonl は
+# 自作の合成データ（meta.source: self-made）のため、データポリシー
+# （issue #47: タスクデータは既定でgitignore）の例外としてgit追跡に
+# オプトインしている（.gitignore の否定パターン参照）。
+# クイックスタートと CI スモークのデータ源。
+# =============================================================================
+
+task:
+  answer_type: label
+  labels: ["契約照会", "障害報告", "機能要望", "その他"]
+  json_schema_file: null
+
+# 省略 = グローバル registry の全モデル（CIスモークは --models gptoss20b で絞る）
+
+judge:
+  # answer_type=label は決定的assert（label_match.js）で採点するためジャッジは
+  # 実際には呼ばれないが、スキーマ上必須のため明示しておく
+  provider: anthropic:messages:claude-sonnet-4-6
+  threshold: 0.8
+  agreement_threshold: 0.85
+
+optimize:
+  target_alias: qwen7b
+  reflection_provider: anthropic/claude-opus-4-8
+  auto: light
+
+blog:
+  jpy_per_usd: 150
+  slug_prefix: llm-eval
+  allowed_sources:
+    - "self-made"

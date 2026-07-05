@@ -22,39 +22,44 @@ node_modules/
 Thumbs.db
 
 # ---------------------------------------------------------------------------
+# タスクデータ（issue #47 データポリシー: 既定でコミット禁止）
+#
+# 多数の私有データセットをこの基盤で管理する前提のため、データ本体と
+# データ由来の人手アノテーションはリポジトリにコミットしない。追跡するのは
+# タスクの「コード」（task.yaml / prompts/ / PROVENANCE.md）のみ。
+# ---------------------------------------------------------------------------
+tasks/*/golden.jsonl
+tasks/*/human_labels.jsonl
+tasks/*/notes.csv
+tasks/*/taxonomy.yaml
+tasks/*/taxonomy.draft.yaml
+tasks/*/failures.jsonl
+
+# 例外: 合成デモデータの sample-inquiry のみオプトイン追跡
+# （PROVENANCE.md にライセンス明記済みの公開・合成データに限る）
+!tasks/sample-inquiry/golden.jsonl
+!tasks/sample-inquiry/human_labels.jsonl
+
+# ---------------------------------------------------------------------------
 # evalloopの生成物（コミット禁止）
 #
 # run成果物の生出力（output.json / meta.json）にはローカル絶対パスや
 # プロバイダのエラーペイロードが含まれうる。ブログ公開ガードのシークレット
 # スキャンは blog/ ステージングにしか走らないため、これらを誤コミットするのが
-# 最有力のリーク経路になる。生成物ポリシーの全体像は README を参照。
+# 最有力のリーク経路になる。生成物はすべてタスク別サブツリー。
 # ---------------------------------------------------------------------------
 
-# evalloop build の生成物（config.yaml + golden.jsonl から常に再生成できる）
-data/build/*
-!data/build/.gitkeep
-promptfoo/promptfooconfig.yaml
+# evalloop build の生成物（task.yaml + golden.jsonl から常に再生成できる）
+data/build/
 
-# evalloop optimize が生成するvariant config
-promptfoo/variants/*
-!promptfoo/variants/.gitkeep
-
-# evalloop calibrate の一時config（正常時は自動削除。クラッシュ時の残骸対策）
-promptfoo/_calibrate_*.yaml
+# promptfoo設定一式（build/optimize/calibrateが生成。全て再生成可能）
+promptfoo/
 
 # run成果物（マシンローカルの監査証跡。台帳index.jsonlも追記型のローカルファイル）
-results/runs/*
-!results/runs/.gitkeep
-results/reports/*
-!results/reports/.gitkeep
-results/index.jsonl
+results/
 
-# 失敗分析のローカル作業ファイル
-# （人手キュレーション済みの data/taxonomy.yaml は追跡対象のまま）
-data/notes.csv
-data/failures.jsonl
-data/taxonomy.draft.yaml
+# GEPA成果物は tasks/<name>/optimized/ に置かれ、実験成果物として任意にコミット可
+# （ignoreしない）
 
 # ブログ用エクスポート出力（公開ガード通過後の一式。記事側で利用する）
-blog/*
-!blog/.gitkeep
+blog/

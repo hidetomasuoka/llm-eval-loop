@@ -4,10 +4,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-from evalloop import analyze as analyze_mod
 from evalloop import blog as blog_mod
-from evalloop import build as build_mod
-from evalloop import run as run_mod
+from evalloop.paths import REPO_ROOT, TaskPaths
 from evalloop.schemas import (
     BlogConfig,
     Config,
@@ -18,8 +16,6 @@ from evalloop.schemas import (
     RunConfig,
     TaskConfig,
 )
-
-REPO_ROOT = build_mod.REPO_ROOT
 
 
 def _case(id_, source="self-made"):
@@ -103,9 +99,9 @@ def test_labels_english_fallback_when_no_cjk_font():
 def _mk_config(answer_type, judge_provider, model_provider):
     return Config(
         task=TaskConfig(
-            name="t",
+            name="t1",
             answer_type=answer_type,
-            prompt_file="prompts/base/task.txt",
+            prompt_file="tasks/sample-inquiry/prompts/task.txt",
             labels=["契約照会", "解約"] if answer_type == "label" else [],
         ),
         models=[ModelConfig(provider=model_provider, alias="m1", tier="small")],
@@ -121,9 +117,10 @@ def _mk_run_data(run_id="run-1", answer_type="label", judge_provider="j", model_
     models = [{"provider": p, "alias": f"m{i}", "tier": "small"} for i, p in enumerate(model_providers or [])]
     meta = {
         "run_id": run_id,
+        "task": "t1",
         "answer_type": answer_type,
         "repeat": 1,
-        "prompt_file": "prompts/base/task.txt",
+        "prompt_file": "tasks/t1/prompts/task.txt",
         "prompt_sha256": "a" * 64,
         "models": models,
         "promptfoo_version": "0.0.0-test",
@@ -139,14 +136,14 @@ def test_conditions_reproduce_adds_allow_same_judge_for_same_judge_text_config()
     config = _mk_config("text", judge_provider="p:shared", model_provider="p:shared")
     run = _mk_run_data(answer_type="text", judge_provider="p:shared", model_providers=["p:shared"])
     md = blog_mod.render_conditions_md([run], config, fig03_written=False)
-    assert "evalloop build --allow-same-judge" in md
+    assert "evalloop build --task t1 --allow-same-judge" in md
 
 
 def test_conditions_reproduce_plain_build_when_judge_is_independent():
     config = _mk_config("text", judge_provider="p:judge", model_provider="p:model")
     run = _mk_run_data(answer_type="text", judge_provider="p:judge", model_providers=["p:model"])
     md = blog_mod.render_conditions_md([run], config, fig03_written=False)
-    assert "evalloop build\n" in md
+    assert "evalloop build --task t1\n" in md
     assert "--allow-same-judge" not in md
 
 
@@ -169,11 +166,15 @@ def test_conditions_reproduce_same_judge_uses_meta_not_config():
     assert "--allow-same-judge" not in md
 
 
-def test_conditions_reproduce_report_uses_positional_run_id():
+def test_conditions_reproduce_commands_are_task_scoped():
+    # the reproduce block derives --task from the run snapshot's meta["task"]
     config = _mk_config("label", judge_provider="p:judge", model_provider="p:model")
     md = blog_mod.render_conditions_md([_mk_run_data("run-xyz")], config, fig03_written=False)
-    assert "evalloop report run-xyz" in md
-    assert "--run" not in md
+    assert "evalloop build --task t1" in md
+    assert "evalloop run --task t1 --repeat 1" in md
+    assert "evalloop report --task t1 run-xyz" in md
+    assert "--run" not in md  # report takes a positional run_id, not --run
+    assert "--config" not in md  # per-task workspaces replaced --config flags
 
 
 # ---------------------------------------------------------------------------
@@ -182,18 +183,27 @@ def test_conditions_reproduce_report_uses_positional_run_id():
 
 
 @pytest.fixture
-def blog_env(tmp_path, monkeypatch):
-    golden_path = tmp_path / "golden.jsonl"
-    runs_dir = tmp_path / "runs"
-    blog_dir = tmp_path / "blog"
-    taxonomy_path = tmp_path / "taxonomy.yaml"
-
-    monkeypatch.setattr(build_mod, "GOLDEN_PATH", golden_path)
-    monkeypatch.setattr(run_mod, "RUNS_DIR", runs_dir)
-    monkeypatch.setattr(blog_mod, "BLOG_DIR", blog_dir)
-    monkeypatch.setattr(analyze_mod, "TAXONOMY_PATH", taxonomy_path)
-
-    return {"golden_path": golden_path, "runs_dir": runs_dir, "blog_dir": blog_dir, "taxonomy_path": taxonomy_path}
+def blog_env(isolated_root):
+    paths = TaskPaths(root=isolated_root, task="t1")
+    paths.task_dir.mkdir(parents=True)
+    cfg = Config(
+        task=TaskConfig(
+            name="t1",
+            answer_type="label",
+            prompt_file="tasks/sample-inquiry/prompts/task.txt",
+            labels=["契約照会", "障害報告", "機能要望", "その他"],
+        ),
+        models=[
+            ModelConfig(provider="ollama:chat:qwen2.5:7b", alias="qwen7b", tier="local"),
+            ModelConfig(provider="anthropic:messages:claude-haiku-4-5-20251001", alias="haiku45", tier="small"),
+        ],
+        run=RunConfig(),
+        judge=JudgeConfig(provider="anthropic:messages:claude-sonnet-4-6"),
+        optimize=OptimizeConfig(target_alias="qwen7b", reflection_provider="r"),
+        blog=BlogConfig(),
+        path=REPO_ROOT / "config.yaml",
+    )
+    return {"paths": paths, "cfg": cfg}
 
 
 def _write_golden(path, sources):
@@ -234,11 +244,12 @@ def _write_run(runs_dir, run_id, aliases, variant=None):
         json.dumps(
             {
                 "run_id": run_id,
-                "task_name": "sample-inquiry-classification",
+                "task": "t1",
+                "task_name": "t1",
                 "answer_type": "label",
                 "variant": variant,
                 "repeat": 1,
-                "prompt_file": "prompts/base/task.txt",
+                "prompt_file": "tasks/t1/prompts/task.txt",
                 "prompt_sha256": "a" * 64,
                 "models": [{"alias": a, "provider": f"p:{a}", "tier": "small"} for a in aliases],
                 "promptfoo_version": "0.0.0-test",
@@ -250,21 +261,24 @@ def _write_run(runs_dir, run_id, aliases, variant=None):
 
 
 def test_blog_aborts_on_source_guard_violation(blog_env):
-    _write_golden(blog_env["golden_path"], ["self-made", "scraped"])
-    _write_run(blog_env["runs_dir"], "run-1", ["haiku45"])
+    paths, cfg = blog_env["paths"], blog_env["cfg"]
+    _write_golden(paths.golden, ["self-made", "scraped"])
+    _write_run(paths.runs_dir, "run-1", ["haiku45"])
 
     with pytest.raises(blog_mod.BlogGuardError):
-        blog_mod.blog(run_ids=["run-1"], config_path=REPO_ROOT / "config.yaml")
+        blog_mod.blog(cfg, paths, run_ids=["run-1"])
 
-    assert not blog_env["blog_dir"].exists()
+    assert not paths.blog_dir.exists()
 
 
 def test_blog_success_writes_expected_files(blog_env):
-    _write_golden(blog_env["golden_path"], ["self-made", "self-made"])
-    _write_run(blog_env["runs_dir"], "run-1", ["qwen7b", "haiku45"])
+    paths, cfg = blog_env["paths"], blog_env["cfg"]
+    _write_golden(paths.golden, ["self-made", "self-made"])
+    _write_run(paths.runs_dir, "run-1", ["qwen7b", "haiku45"])
 
-    out_dir = blog_mod.blog(run_ids=["run-1"], slug="unit-test", config_path=REPO_ROOT / "config.yaml")
+    out_dir = blog_mod.blog(cfg, paths, run_ids=["run-1"], slug="unit-test")
 
+    assert paths.blog_dir in out_dir.parents
     assert (out_dir / "fig01_accuracy_by_model.png").exists()
     assert (out_dir / "fig01_accuracy_by_model.svg").exists()
     assert (out_dir / "fig02_cost_vs_accuracy.png").exists()
@@ -274,8 +288,8 @@ def test_blog_success_writes_expected_files(blog_env):
     assert "haiku45" in tables and "qwen7b" in tables
 
     conditions = (out_dir / "conditions.md").read_text(encoding="utf-8")
-    assert "evalloop build" in conditions
-    assert "evalloop run" in conditions
+    assert "evalloop build --task t1" in conditions
+    assert "evalloop run --task t1" in conditions
 
     article = (out_dir / "article_draft.md").read_text(encoding="utf-8")
     assert blog_mod.REVIEW_COMMENT in article
@@ -283,47 +297,51 @@ def test_blog_success_writes_expected_files(blog_env):
 
 
 def test_blog_two_runs_produces_comparison_arrows_without_crashing(blog_env):
-    _write_golden(blog_env["golden_path"], ["self-made"])
-    _write_run(blog_env["runs_dir"], "before", ["qwen7b"])
-    _write_run(blog_env["runs_dir"], "after", ["qwen7b"], variant="qwen7b_opt")
+    paths, cfg = blog_env["paths"], blog_env["cfg"]
+    _write_golden(paths.golden, ["self-made"])
+    _write_run(paths.runs_dir, "before", ["qwen7b"])
+    _write_run(paths.runs_dir, "after", ["qwen7b"], variant="qwen7b_opt")
 
-    out_dir = blog_mod.blog(run_ids=["before", "after"], slug="ab", config_path=REPO_ROOT / "config.yaml")
+    out_dir = blog_mod.blog(cfg, paths, run_ids=["before", "after"], slug="ab")
     assert (out_dir / "fig02_cost_vs_accuracy.png").exists()
     tables = (out_dir / "tables.md").read_text(encoding="utf-8")
     assert "before" in tables and "after" in tables
 
 
 def test_blog_includes_fig03_when_taxonomy_defined(blog_env):
-    _write_golden(blog_env["golden_path"], ["self-made"])
-    _write_run(blog_env["runs_dir"], "run-1", ["qwen7b"])
-    blog_env["taxonomy_path"].write_text(
+    paths, cfg = blog_env["paths"], blog_env["cfg"]
+    _write_golden(paths.golden, ["self-made"])
+    _write_run(paths.runs_dir, "run-1", ["qwen7b"])
+    paths.taxonomy.write_text(
         yaml.safe_dump({"categories": [{"id": "c1", "name": "カテゴリ1", "definition": "d"}], "assignments": {}}),
         encoding="utf-8",
     )
     # make case-0001 actually fail so the heatmap has something to plot
-    run_dir = blog_env["runs_dir"] / "run-1"
+    run_dir = paths.runs_dir / "run-1"
     data = json.loads((run_dir / "output.json").read_text(encoding="utf-8"))
     data["results"]["results"][0]["gradingResult"]["pass"] = False
     data["results"]["results"][0]["success"] = False
     (run_dir / "output.json").write_text(json.dumps(data), encoding="utf-8")
 
-    out_dir = blog_mod.blog(run_ids=["run-1"], slug="withfig3", config_path=REPO_ROOT / "config.yaml")
+    out_dir = blog_mod.blog(cfg, paths, run_ids=["run-1"], slug="withfig3")
     assert (out_dir / "fig03_failure_heatmap.png").exists()
 
 
 def test_blog_rejects_more_than_two_runs(blog_env):
-    _write_golden(blog_env["golden_path"], ["self-made"])
+    paths, cfg = blog_env["paths"], blog_env["cfg"]
+    _write_golden(paths.golden, ["self-made"])
     with pytest.raises(blog_mod.BlogGuardError):
-        blog_mod.blog(run_ids=["a", "b", "c"], config_path=REPO_ROOT / "config.yaml")
+        blog_mod.blog(cfg, paths, run_ids=["a", "b", "c"])
 
 
 def test_blog_rerun_same_slug_regenerates_not_accumulates(blog_env):
-    _write_golden(blog_env["golden_path"], ["self-made"])
-    _write_run(blog_env["runs_dir"], "run-1", ["qwen7b"])
+    paths, cfg = blog_env["paths"], blog_env["cfg"]
+    _write_golden(paths.golden, ["self-made"])
+    _write_run(paths.runs_dir, "run-1", ["qwen7b"])
 
-    out_dir_1 = blog_mod.blog(run_ids=["run-1"], slug="dup", config_path=REPO_ROOT / "config.yaml")
+    out_dir_1 = blog_mod.blog(cfg, paths, run_ids=["run-1"], slug="dup")
     (out_dir_1 / "stale_extra_file.txt").write_text("should be gone after regen", encoding="utf-8")
 
-    out_dir_2 = blog_mod.blog(run_ids=["run-1"], slug="dup", config_path=REPO_ROOT / "config.yaml")
+    out_dir_2 = blog_mod.blog(cfg, paths, run_ids=["run-1"], slug="dup")
     assert out_dir_1 == out_dir_2
     assert not (out_dir_2 / "stale_extra_file.txt").exists()

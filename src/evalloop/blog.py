@@ -32,13 +32,10 @@ import matplotlib.font_manager as fm
 import matplotlib.pyplot as plt
 
 from evalloop import analyze as analyze_mod
-from evalloop import build as build_mod
 from evalloop import report as report_mod
-from evalloop import run as run_mod
-from evalloop.schemas import load_config, load_golden_jsonl, parse_promptfoo_output
+from evalloop.paths import REPO_ROOT, TaskPaths
+from evalloop.schemas import Config, load_golden_jsonl, parse_promptfoo_output
 
-REPO_ROOT = build_mod.REPO_ROOT
-BLOG_DIR = REPO_ROOT / "blog"
 REVIEW_COMMENT = "<!-- 公開前に固有情報がないか目視確認 -->"
 
 ALLOWED_SOURCES_DEFAULT = {"self-made"}
@@ -153,12 +150,12 @@ class RunData:
     stats: list  # list[report_mod.AliasStats]
 
 
-def _load_run_data(run_id: str) -> RunData:
-    run_dir = run_mod.RUNS_DIR / run_id
+def _load_run_data(run_id: str, paths: TaskPaths) -> RunData:
+    run_dir = paths.runs_dir / run_id
     output_path = run_dir / "output.json"
     meta_path = run_dir / "meta.json"
     if not output_path.exists() or not meta_path.exists():
-        raise BlogGuardError(f"run {run_id!r} not found under {run_mod.RUNS_DIR}")
+        raise BlogGuardError(f"run {run_id!r} not found under {paths.runs_dir}")
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
     parsed = parse_promptfoo_output(output_path)
     stats = report_mod.compute_alias_stats(parsed.results)
@@ -249,15 +246,15 @@ def make_fig02_cost_vs_accuracy(runs: list[RunData], out_dir: Path, labels: Labe
     _save_fig(fig, out_dir, "fig02_cost_vs_accuracy")
 
 
-def make_fig03_failure_heatmap(run: RunData, out_dir: Path, labels: Labels) -> bool:
+def make_fig03_failure_heatmap(run: RunData, out_dir: Path, labels: Labels, paths: TaskPaths) -> bool:
     try:
-        taxonomy = analyze_mod.load_taxonomy()
+        taxonomy = analyze_mod.load_taxonomy(paths.taxonomy)
     except analyze_mod.AnalyzeError:
         return False
     if not taxonomy.get("categories"):
         return False
 
-    parsed = parse_promptfoo_output(run_mod.RUNS_DIR / run.run_id / "output.json")
+    parsed = parse_promptfoo_output(paths.runs_dir / run.run_id / "output.json")
     assignments = taxonomy["assignments"]
     category_names = {c["id"]: c.get("name", c["id"]) for c in taxonomy["categories"]}
     aliases = sorted({s.alias for s in run.stats})
@@ -346,7 +343,7 @@ def render_conditions_md(runs: list[RunData], config, fig03_written: bool) -> st
         "## reproduce",
         "```bash",
     ]
-    config_flag = f" --config {primary.meta['config_path']}" if primary.meta.get("config_path", "config.yaml") != "config.yaml" else ""
+    task_flag = f" --task {primary.meta['task']}" if primary.meta.get("task") else ""
     # mirror build.py's iron-rule-#2 check: for a same-judge text config the
     # copy-pasted command aborts unless --allow-same-judge is included.
     # Use primary.meta (the run snapshot) so that the flag matches the actual
@@ -358,14 +355,12 @@ def render_conditions_md(runs: list[RunData], config, fig03_written: bool) -> st
         and any(m.get("provider") == _meta_judge_provider for m in _meta_models)
     )
     same_judge_flag = " --allow-same-judge" if same_judge else ""
-    lines.append(f"evalloop build{config_flag}{same_judge_flag}")
+    lines.append(f"evalloop build{task_flag}{same_judge_flag}")
     for run in runs:
         variant_flag = f" --variant {run.meta.get('variant')}" if run.meta.get("variant") else ""
-        run_config_flag = (
-            f" --config {run.meta['config_path']}" if run.meta.get("config_path", "config.yaml") != "config.yaml" else ""
-        )
-        lines.append(f"evalloop run{run_config_flag}{variant_flag} --repeat {run.meta.get('repeat')}")
-    lines += ["evalloop report " + primary.run_id, "```", ""]
+        run_task_flag = f" --task {run.meta['task']}" if run.meta.get("task") else ""
+        lines.append(f"evalloop run{run_task_flag}{variant_flag} --repeat {run.meta.get('repeat')}")
+    lines += [f"evalloop report{task_flag} " + primary.run_id, "```", ""]
     return "\n".join(lines)
 
 
@@ -439,18 +434,18 @@ def render_article_draft(runs: list[RunData], config, fig03_written: bool) -> st
 
 
 def blog(
+    config: Config,
+    paths: TaskPaths,
     run_ids: list[str],
     slug: str | None = None,
-    config_path: str | Path = REPO_ROOT / "config.yaml",
 ) -> Path:
     if not run_ids or len(run_ids) > 2:
         raise BlogGuardError("--runs must name exactly 1 or 2 run_ids")
 
-    config = load_config(config_path)
-    golden_cases = load_golden_jsonl(build_mod.GOLDEN_PATH)
+    golden_cases = load_golden_jsonl(paths.golden)
     check_source_guard(golden_cases, allowed_sources=frozenset(config.blog.allowed_sources))  # guard 1
 
-    runs = [_load_run_data(rid) for rid in run_ids]
+    runs = [_load_run_data(rid, paths) for rid in run_ids]
     found_font = find_cjk_font()
     has_cjk_font = found_font is not None
     if has_cjk_font:
@@ -468,9 +463,9 @@ def blog(
 
         make_fig01_accuracy_by_model(runs, staging_dir, labels)
         make_fig02_cost_vs_accuracy(runs, staging_dir, labels)
-        fig03_written = make_fig03_failure_heatmap(runs[-1], staging_dir, labels)
+        fig03_written = make_fig03_failure_heatmap(runs[-1], staging_dir, labels, paths)
         if not fig03_written:
-            print("[blog] fig03 skipped: data/taxonomy.yaml not defined yet (run `evalloop cluster` then merge it)")
+            print(f"[blog] fig03 skipped: {paths.taxonomy} not defined yet (run `evalloop cluster` then merge it)")
 
         (staging_dir / "tables.md").write_text(render_tables_md(runs), encoding="utf-8")
         (staging_dir / "conditions.md").write_text(render_conditions_md(runs, config, fig03_written), encoding="utf-8")
@@ -480,10 +475,10 @@ def blog(
 
         slug_name = slug or config.blog.slug_prefix
         date_str = datetime.now().strftime("%Y%m%d")
-        final_dir = BLOG_DIR / f"{date_str}_{slug_name}"
+        final_dir = paths.blog_dir / f"{date_str}_{slug_name}"
         if final_dir.exists():
             shutil.rmtree(final_dir)  # re-running blog for the same day/slug regenerates, doesn't accumulate stale files
-        BLOG_DIR.mkdir(parents=True, exist_ok=True)
+        paths.blog_dir.mkdir(parents=True, exist_ok=True)
         shutil.copytree(staging_dir, final_dir)
 
     print(f"[blog] wrote {final_dir}")

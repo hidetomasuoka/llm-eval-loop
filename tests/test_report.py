@@ -3,6 +3,7 @@ import json
 import pytest
 
 from evalloop import report as report_mod
+from evalloop.paths import TaskPaths
 from evalloop.schemas import CaseResult
 
 
@@ -125,7 +126,7 @@ def test_render_markdown_includes_warnings_and_table():
     md = report_mod.render_markdown(
         "20260101-000000-abcd",
         {"task_name": "t", "answer_type": "label", "created_at": "now", "repeat": 1, "limit": None,
-         "promptfoo_config_path": "promptfoo/promptfooconfig.yaml", "promptfoo_version": "0.1.0"},
+         "promptfoo_config_path": "promptfoo/t1/promptfooconfig.yaml", "promptfoo_version": "0.1.0"},
         stats,
         ["uncalibrated/low-agreement judge: run `evalloop calibrate`"],
     )
@@ -134,14 +135,10 @@ def test_render_markdown_includes_warnings_and_table():
     assert "| alias |" in md
 
 
-def test_report_end_to_end(tmp_path, monkeypatch):
-    runs_dir = tmp_path / "runs"
-    reports_dir = tmp_path / "reports"
-    monkeypatch.setattr(report_mod, "RUNS_DIR", runs_dir)
-    monkeypatch.setattr(report_mod, "REPORTS_DIR", reports_dir)
-
+def test_report_end_to_end(isolated_root):
+    paths = TaskPaths(root=isolated_root, task="t1")
     run_id = "20260101-000000-abcd"
-    run_dir = runs_dir / run_id
+    run_dir = paths.runs_dir / run_id
     run_dir.mkdir(parents=True)
 
     output = {
@@ -167,17 +164,17 @@ def test_report_end_to_end(tmp_path, monkeypatch):
         encoding="utf-8",
     )
 
-    report_path = report_mod.report(run_id)
+    report_path = report_mod.report(run_id, paths)
 
     assert report_path.exists()
+    assert report_path.parent == paths.reports_dir
     content = report_path.read_text(encoding="utf-8")
     assert "haiku45" in content
     # answer_type=label -> no judge used -> no calibration warning expected
     assert "uncalibrated" not in content
 
 
-def test_report_missing_run_raises(tmp_path, monkeypatch):
-    monkeypatch.setattr(report_mod, "RUNS_DIR", tmp_path / "runs")
-    monkeypatch.setattr(report_mod, "REPORTS_DIR", tmp_path / "reports")
+def test_report_missing_run_raises(isolated_root):
+    paths = TaskPaths(root=isolated_root, task="t1")
     with pytest.raises(report_mod.ReportError):
-        report_mod.report("does-not-exist")
+        report_mod.report("does-not-exist", paths)
