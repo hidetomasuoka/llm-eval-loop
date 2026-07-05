@@ -71,7 +71,7 @@ uv run evalloop pivot <run_id>                              # failure-category x
 uv run evalloop calibrate --run-id <run_id>                 # agreement rate between the LLM judge and human labels
 uv run evalloop optimize                                    # improve the prompt with dspy GEPA (uses the train split only)
 #   -> afterwards run/report/compare (against the latest base run, if any) execute automatically
-#   NOTE: optimize only supports answer_type=label tasks; it errors on the current CUAD-100 (text) task (see Known constraints)
+#   NOTE: GEPA trains against a deterministic proxy metric (token F1 for text tasks); the final eval stays llm-rubric (see Known constraints)
 uv run evalloop blog --runs <run_id>                        # figures/tables/article draft into blog/
 ```
 
@@ -158,7 +158,7 @@ All bundled data comes from public datasets or was created synthetically for thi
 
 ## Known constraints
 
-- `evalloop optimize` currently supports only `task.answer_type == "label"` tasks (the GEPA metric is a port of the label-match logic only). The currently active CUAD-100 task is `answer_type=text`, so to try `optimize` you either temporarily switch back to the `data/sample/` label-classification task or implement a text metric
+- `evalloop optimize` supports all three answer types, but the GEPA **training metric is a deterministic proxy, not the final evaluation**: `label` uses the label-match port, `text` (e.g. the active CUAD-100 task) uses SQuAD-style token F1 against the gold span(s), and `json` uses a deep-equality port. For text tasks the final promptfoo evaluation still uses the llm-rubric judge, so training metric and final grading can diverge — measuring that divergence is part of the GEPA case study
 - With a small local model (qwen2.5:7b) as judge, instruction following is less stable than with frontier models (e.g. it occasionally returns grading rationales in languages other than English/Japanese). Prefer a judge substantially stronger than the models being evaluated (as `config.yaml` is designed to do)
 - `data/human_labels.jsonl` is intentionally empty because there are no human labels for the CUAD-100 task yet. Using `evalloop calibrate` requires a human review pass first
 
