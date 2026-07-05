@@ -1,5 +1,7 @@
 # llm-eval-loop
 
+[![CI](https://github.com/hidetomasuoka/llm-eval-loop/actions/workflows/ci.yml/badge.svg)](https://github.com/hidetomasuoka/llm-eval-loop/actions/workflows/ci.yml)
+
 個人開発用のLLM評価ハーネス。1つのタスクについて、ローカル小型モデルからフロンティアモデルまで
 同一条件で評価し、次の問いに答える。
 
@@ -121,14 +123,22 @@ uv run evalloop blog --runs <run_id>                        # ブログ用の図
 | `evalloop compare --runs A,B` | 2つのrunのbefore/after比較 |
 | `evalloop blog --runs A[,B] [--slug NAME]` | 公開ガード通過後にブログ用一式を生成 |
 
-## テスト
+## テスト / CI
 
 ```bash
-uv run pytest
+uv run pytest        # ユニットテスト（promptfoo/GEPAは全てモック。APIキー・Node不要）
+uv run ruff check .  # リンタ（CIと同一チェック）
 ```
 
 label正規化・train/test split分離・output.jsonパーサ・ブログ公開ガードなど、鉄の掟に関わる
-ロジックは全てユニットテストでカバーされている（`tests/`）。
+ロジックは全てユニットテストでカバーされている（`tests/`）。テストは作業ツリーに何も
+書き込まない（`tests/conftest.py` の `isolated_artifact_paths` フィクスチャ参照）。
+
+CI（[.github/workflows/ci.yml](.github/workflows/ci.yml)）は push / PR ごとに
+Ubuntu / Windows × Python 3.11 / 3.12 で pytest + ruff を実行する。さらに master への
+push 時、Actions secrets に `OLLAMA_API_KEY` が設定されていれば、Ollama Cloud
+（gpt-oss:20b）で3ケースの実スモーク（build → run → report）を流す（未設定なら
+自動スキップ）。従量課金のAPIコストは発生しない。
 
 ## Windows実地検証で見つかった問題と修正
 

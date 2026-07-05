@@ -1,0 +1,83 @@
+# CI (issue #21):
+#   test  -- pytest + ruff。全push/PRで実行。テストはpromptfoo/GEPAを全てモック
+#            しているためAPIキー不要。run.pyがWindowsのnpx.cmd解決を明示的に
+#            扱っているので、Ubuntu/Windows両方のマトリクスで検証する。
+#   smoke -- masterへのpush時のみ、Ollama Cloud（https://ollama.com）で
+#            build -> run --limit 3 -> report の実疎通を確認。Actions secrets の
+#            OLLAMA_API_KEY がある場合のみ実行（無ければスキップしてgreenのまま）。
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+
+  smoke:
+    # パイプライン疎通確認（精度測定ではない）。promptfoo の ollama provider は
+    # OLLAMA_BASE_URL をホストに、OLLAMA_API_KEY を Bearer 認証に使う
+    # （pinned 0.121.17 の dist で確認済み）ため、env を設定するだけで
+    # Ollama Cloud に接続できる。ランナーへの Ollama インストールは不要。
+    # 対象は先頭3ケース（各2,500字未満）× gpt-oss:20b。Ollama Cloud は
+    # サブスクリプション/無料枠ベースなので従量課金は発生しない。
+    #
+    # 成否は「output.json / meta.json が生成され report が作れること」で判定する。
+    # promptfoo の exit code 100 は「assert失敗あり」であって異常終了ではない
+    # （evalloop run は output.json が生成されなかった場合のみ exit 1 になる）。
+    name: live smoke eval (ollama cloud gpt-oss:20b, 3 cases)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+      OLLAMA_BASE_URL: https://ollama.com
+    steps:
+      # secretsはif:条件で直接参照できないため、env経由でステップ内判定する
+      - name: Detect API key
+        id: key
+        run: |
+          if [ -n "$OLLAMA_API_KEY" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::OLLAMA_API_KEY secret is not set; skipping the live smoke eval."
+          fi
+      - uses: actions/checkout@v4
+        if: steps.key.outputs.present == 'true'
+      - uses: astral-sh/setup-uv@v5
+        if: steps.key.outputs.present == 'true'
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        if: steps.key.outputs.present == 'true'
+        with:
+          # promptfooの要求範囲は ^20.20.0 || >=22.22.0（run.py / README参照）
+          node-version: "22"
+      - name: Install dependencies
+        if: steps.key.outputs.present == 'true'
+        run: uv sync
+      - name: Build (ollama cloud smoke config)
+        if: steps.key.outputs.present == 'true'
+        # config.ci-smoke.yaml は評価対象とllm-rubricジャッジが同一モデルのため、
+        # iron rule #2 の明示オーバーライドが必要（スモークは精度を測らない）
+        run: uv run evalloop build --yes --allow-same-judge --config config.ci-smoke.yaml
+      - name: Run 3-case eval
+        if: steps.key.outputs.present == 'true'
+        run: uv run evalloop run --limit 3 --repeat 1 --config config.ci-smoke.yaml
+      - name: Generate report for the smoke run
+        if: steps.key.outputs.present == 'true'
+        run: |
+          RUN_ID=$(uv run python -c "import json; print(json.loads(open('results/index.jsonl', encoding='utf-8').readlines()[-1])['run_id'])")
+          uv run evalloop report "$RUN_ID"
+          test -f "results/reports/${RUN_ID}.md"

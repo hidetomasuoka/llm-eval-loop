@@ -35,7 +35,14 @@ import yaml
 
 from evalloop import build as build_mod
 from evalloop import run as run_mod
-from evalloop.schemas import GoldenCase, HumanLabel, load_config, load_golden_jsonl, load_human_labels, parse_promptfoo_output
+from evalloop.schemas import (
+    GoldenCase,
+    HumanLabel,
+    load_config,
+    load_golden_jsonl,
+    load_human_labels,
+    parse_promptfoo_output,
+)
 
 REPO_ROOT = build_mod.REPO_ROOT
 HUMAN_LABELS_PATH = REPO_ROOT / "data" / "human_labels.jsonl"

@@ -3,6 +3,10 @@ __pycache__/
 *.pyc
 .venv/
 .pytest_cache/
+# tests/conftest.py の isolated_artifact_paths が使う隔離ツリー
+# （teardownで削除される。クラッシュ時の残骸対策としてignoreしておく）
+.pytest_isolated/
+.ruff_cache/
 *.egg-info/
 dist/
 /build/

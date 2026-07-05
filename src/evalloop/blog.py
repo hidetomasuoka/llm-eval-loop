@@ -33,7 +33,6 @@ import matplotlib.pyplot as plt
 
 from evalloop import analyze as analyze_mod
 from evalloop import build as build_mod
-from evalloop import optimize as optimize_mod
 from evalloop import report as report_mod
 from evalloop import run as run_mod
 from evalloop.schemas import load_config, load_golden_jsonl, parse_promptfoo_output
