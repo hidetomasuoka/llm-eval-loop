@@ -40,6 +40,9 @@ def calibrate_env(tmp_path, monkeypatch):
     monkeypatch.setattr(build_mod, "GOLDEN_PATH", golden_path)
     monkeypatch.setattr(calibrate_mod, "HUMAN_LABELS_PATH", human_labels_path)
     monkeypatch.setattr(run_mod, "RUNS_DIR", runs_dir)
+    # fresh re-grading writes its throwaway _calibrate_*.yaml into
+    # PROMPTFOO_DIR; keep even that transient write out of the real checkout
+    monkeypatch.setattr(build_mod, "PROMPTFOO_DIR", tmp_path / "promptfoo")
 
     return {"golden_path": golden_path, "human_labels_path": human_labels_path, "runs_dir": runs_dir}
 

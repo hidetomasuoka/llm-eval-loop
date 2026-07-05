@@ -23,7 +23,7 @@ from pathlib import Path
 
 import yaml
 
-from evalloop.schemas import Config, GoldenCase, SchemaError, assert_split_disjoint, load_config, load_golden_jsonl
+from evalloop.schemas import Config, GoldenCase, assert_split_disjoint, load_config, load_golden_jsonl
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 GOLDEN_PATH = REPO_ROOT / "data" / "golden.jsonl"

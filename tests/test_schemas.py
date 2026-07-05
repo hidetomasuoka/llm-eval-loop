@@ -186,13 +186,13 @@ def test_load_human_labels_parses_real_project_file():
     # CalibrateError if it's empty, which is the correct signal here.
     labels = load_human_labels(REPO_ROOT / "data" / "human_labels.jsonl")
     assert isinstance(labels, list)
-    assert {l.human_verdict for l in labels} <= {"pass", "fail"}
+    assert {label.human_verdict for label in labels} <= {"pass", "fail"}
 
 
 def test_load_human_labels_parses_sample_demo_file():
     labels = load_human_labels(REPO_ROOT / "data" / "sample" / "human_labels.jsonl")
     assert len(labels) == 10
-    assert {l.human_verdict for l in labels} <= {"pass", "fail"}
+    assert {label.human_verdict for label in labels} <= {"pass", "fail"}
 
 
 def test_load_human_labels_rejects_bad_verdict(tmp_path):

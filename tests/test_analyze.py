@@ -26,6 +26,9 @@ def analyze_env(tmp_path, monkeypatch):
     monkeypatch.setattr(analyze_mod, "TAXONOMY_DRAFT_PATH", taxonomy_draft_path)
     monkeypatch.setattr(analyze_mod, "REPORTS_DIR", reports_dir)
     monkeypatch.setattr(build_mod, "GOLDEN_PATH", golden_path)
+    # cluster() writes its throwaway _cluster_tmp.yaml into PROMPTFOO_DIR;
+    # keep even that transient write out of the real checkout
+    monkeypatch.setattr(build_mod, "PROMPTFOO_DIR", tmp_path / "promptfoo")
 
     return {
         "runs_dir": runs_dir,

@@ -1,0 +1,50 @@
+# =============================================================================
+# CI スモークテスト専用 config（.github/workflows/ci.yml の smoke ジョブが使用）
+#
+# 目的は build -> run -> report のパイプライン疎通確認であって精度測定ではない。
+# 最安の haiku45 単独 + `evalloop run --limit 3` で1回あたり $0.05 未満に抑える。
+#
+# 注意: task セクションは config.yaml（本番タスク）のミラー。本タスクを
+#       差し替えたときはこのファイルの task も追随させること。
+# =============================================================================
+
+task:
+  name: cuad100-clause-extraction
+  answer_type: text
+  prompt_file: prompts/base/task.txt
+  labels: []
+  json_schema_file: null
+
+# スモークは最安モデル1つだけを評価する
+models:
+  - provider: anthropic:messages:claude-haiku-4-5-20251001
+    alias: haiku45
+    tier: small
+    price_in_per_mtok: 1.0
+    price_out_per_mtok: 5.0
+
+run:
+  repeat: 1
+  temperature: 0.0
+  max_tokens: 1024
+  cost_warn_usd: 3.0
+
+judge:
+  # 被評価モデル（haiku45）と別providerなので --allow-same-judge は不要
+  provider: anthropic:messages:claude-sonnet-4-6
+  threshold: 0.8
+  agreement_threshold: 0.85
+  rubric_file: prompts/base/judge_rubric.txt
+
+optimize:
+  # スモークでは optimize は実行しない（スキーマ上の必須キーなので置いてあるだけ）
+  target_alias: haiku45
+  reflection_provider: anthropic/claude-opus-4-8
+  auto: light
+
+blog:
+  jpy_per_usd: 150
+  slug_prefix: llm-eval
+  allowed_sources:
+    - "self-made"
+    - "CUAD v1 (The Atticus Project, CC BY 4.0) via chenghao/cuad_qa mirror on Hugging Face"

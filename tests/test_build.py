@@ -202,7 +202,7 @@ def test_to_promptfoo_relpath_uses_forward_slashes():
 # ---------------------------------------------------------------------------
 
 
-def test_build_end_to_end_against_real_sample():
+def test_build_end_to_end_against_real_sample(isolated_artifact_paths):
     real_cases = load_golden_jsonl(build_mod.GOLDEN_PATH)
     expected_test_count = sum(1 for c in real_cases if c.split == "test")
     expected_train_count = sum(1 for c in real_cases if c.split == "train")

@@ -1,0 +1,90 @@
+# CI (issue #21):
+#   test  -- pytest + ruff。全push/PRで実行。テストはpromptfoo/GEPAを全てモック
+#            しているためAPIキー不要。run.pyがWindowsのnpx.cmd解決を明示的に
+#            扱っているので、Ubuntu/Windows両方のマトリクスで検証する。
+#   smoke -- masterへのpush時のみ、ANTHROPIC_API_KEY secretがある場合に限り、
+#            haiku45単独configで build -> run --limit 3 -> report の実疎通を確認。
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  test:
+    name: pytest + ruff (${{ matrix.os }}, py${{ matrix.python-version }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.11", "3.12"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install dependencies
+        run: uv sync --extra dev
+      - name: Lint (ruff check)
+        # TODO: `uv run ruff format --check .` もここに追加する。ただし現状は
+        # 13ファイルがリポジトリ全体の再フォーマット対象になり、並行開発中の
+        # ブランチと衝突するため、それらのマージ後に別PRで導入する。
+        run: uv run ruff check .
+      - name: Run tests
+        # test_label_normalization.pyのJS側テストはランナー同梱のNodeで実行される
+        # （node不在の環境ではskipifで自動スキップ）
+        run: uv run pytest
+
+  smoke:
+    # パイプライン疎通確認（精度測定ではない）。config.ci-smoke.yaml は最安の
+    # haiku45 単独 + --limit 3 なので、判定用の sonnet46 ジャッジ3回分を含めても
+    # 1回あたり $0.05 未満の想定（build時のコスト概算: haiku45 100件で$0.55）。
+    #
+    # 成否は「output.json / meta.json が生成され report が作れること」で判定する。
+    # promptfoo の exit code 100 は「assert失敗あり」であって異常終了ではない
+    # （evalloop run は output.json が生成されなかった場合のみ exit 1 になる）。
+    name: live smoke eval (haiku45, 3 cases)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    needs: test
+    runs-on: ubuntu-latest
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    steps:
+      # secretsはif:条件で直接参照できないため、env経由でステップ内判定する
+      - name: Detect API key
+        id: key
+        run: |
+          if [ -n "$ANTHROPIC_API_KEY" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::ANTHROPIC_API_KEY secret is not set; skipping the live smoke eval."
+          fi
+      - uses: actions/checkout@v4
+        if: steps.key.outputs.present == 'true'
+      - uses: astral-sh/setup-uv@v5
+        if: steps.key.outputs.present == 'true'
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        if: steps.key.outputs.present == 'true'
+        with:
+          # promptfooの要求範囲は ^20.20.0 || >=22.22.0（run.py / README参照）
+          node-version: "22"
+      - name: Install dependencies
+        if: steps.key.outputs.present == 'true'
+        run: uv sync
+      - name: Build (haiku45-only smoke config)
+        if: steps.key.outputs.present == 'true'
+        run: uv run evalloop build --yes --config config.ci-smoke.yaml
+      - name: Run 3-case eval
+        if: steps.key.outputs.present == 'true'
+        run: uv run evalloop run --limit 3 --repeat 1 --config config.ci-smoke.yaml
+      - name: Generate report for the smoke run
+        if: steps.key.outputs.present == 'true'
+        run: |
+          RUN_ID=$(uv run python -c "import json; print(json.loads(open('results/index.jsonl', encoding='utf-8').readlines()[-1])['run_id'])")
+          uv run evalloop report "$RUN_ID"
+          test -f "results/reports/${RUN_ID}.md"
