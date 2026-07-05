@@ -112,6 +112,12 @@ def _judge_verdicts_fresh(
         return {}
 
     rubric_path = REPO_ROOT / cfg.judge.rubric_file
+    if not rubric_path.exists():
+        raise CalibrateError(
+            f"rubric file not found: {rubric_path}\n"
+            "Fresh re-grading requires a judge rubric file. "
+            "If this task is not graded by an LLM judge, pass --run-id to cross-check an existing run instead."
+        )
     promptfoo_config = {
         "description": "evalloop calibrate (echo replay)",
         "providers": [{"id": "echo", "label": "echo"}],

@@ -348,3 +348,15 @@ def test_fresh_judge_config_uses_echo_provider_and_pinned_judge(calibrate_env, m
     assert result.agreement_rate == pytest.approx(1.0)
     # the throwaway config must not be left behind
     assert not list(paths.promptfoo_dir.glob("_calibrate_*.yaml"))
+
+
+def test_fresh_mode_missing_rubric_raises_clear_error(calibrate_env):
+    paths, cfg = calibrate_env["paths"], calibrate_env["cfg"]
+    _write_human_labels(
+        paths.human_labels,
+        [{"case_id": "case-0001", "model_label": "haiku45", "output_raw": "契約照会", "human_verdict": "pass"}],
+    )
+    paths.rubric_file.unlink()
+
+    with pytest.raises(calibrate_mod.CalibrateError, match=r"rubric file not found: [\s\S]*--run-id"):
+        calibrate_mod.calibrate(cfg, paths, run_id=None)
