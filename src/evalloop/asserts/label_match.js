@@ -6,8 +6,11 @@
 //
 // Signature per https://www.promptfoo.dev/docs/configuration/expected-outputs/javascript/ :
 //   module.exports = (output, context) => GradingResult
-// context.vars must contain `expected` (string) and `labels` (string[]),
-// both injected by evalloop build.py (labels via defaultTest.vars, expected per-test).
+// context.vars must contain `expected` (string) and `labels` (a JSON-encoded
+// string[], NOT a real array), both injected by evalloop build.py (labels via
+// defaultTest.vars, expected per-test). `labels` is JSON-encoded because promptfoo
+// expands any array-valued var into a test matrix (one test per element) — a real
+// array here would silently multiply every test case by len(labels).
 
 // Must stay in lockstep with _normalize_label() in optimize.py (GEPA's
 // in-process training metric). tests/test_label_normalization.py pins both
@@ -29,7 +32,7 @@ function normalizeLabel(value) {
 module.exports = (output, context) => {
   const vars = context.vars || {};
   const expectedRaw = vars.expected;
-  const labelsRaw = vars.labels || [];
+  const labelsRaw = vars.labels;
 
   if (typeof expectedRaw !== 'string') {
     return {
@@ -53,7 +56,18 @@ module.exports = (output, context) => {
   // Fallback: the model wrapped the label in extra text. Accept it only if
   // exactly one label from the configured label set appears in the output,
   // to avoid rewarding an output that lists multiple/all candidate labels.
-  const labels = Array.isArray(labelsRaw) ? labelsRaw : [];
+  let labels = [];
+  if (typeof labelsRaw === 'string') {
+    try {
+      const parsed = JSON.parse(labelsRaw);
+      if (Array.isArray(parsed)) labels = parsed;
+    } catch (e) {
+      labels = [];
+    }
+  } else if (Array.isArray(labelsRaw)) {
+    // tolerate a real array too, in case a caller ever passes one directly
+    labels = labelsRaw;
+  }
   const normLabels = labels.map(normalizeLabel);
   const containedLabels = normLabels.filter((l) => l.length > 0 && normOutput.includes(l));
   const uniqueContained = Array.from(new Set(containedLabels));

@@ -28,6 +28,11 @@ models:
     tier: local
     price_in_per_mtok: 0.0      # ローカル実行なのでコストは0
     price_out_per_mtok: 0.0
+  - provider: ollama:chat:qwen3:4b
+    alias: qwen4b
+    tier: local
+    price_in_per_mtok: 0.0      # ローカル実行なのでコストは0
+    price_out_per_mtok: 0.0
   - provider: anthropic:messages:claude-haiku-4-5-20251001
     alias: haiku45
     tier: small
@@ -38,6 +43,11 @@ models:
     tier: mid
     price_in_per_mtok: 3.0
     price_out_per_mtok: 15.0
+  - provider: anthropic:messages:claude-sonnet-5
+    alias: sonnet5
+    tier: mid
+    price_in_per_mtok: 2.0      # 2026-07時点の導入価格（$2/$10、2026-08-31まで。以降 $3/$15 に戻る）
+    price_out_per_mtok: 10.0
   - provider: anthropic:messages:claude-opus-4-8
     alias: opus48
     tier: large

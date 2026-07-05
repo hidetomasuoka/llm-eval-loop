@@ -1,0 +1,37 @@
+# =============================================================================
+# livedoor ニュース9カテゴリ分類タスク
+#
+# データ（golden.jsonl）は git 管理外（issue #47 のデータポリシー）。
+# 出典・ライセンス（CC BY-ND 2.1 JP）・再取得手順は PROVENANCE.md を参照。
+# feature/livedoor-news-eval ブランチから tasks/ 構成へ移植したもの。
+# =============================================================================
+
+task:
+  answer_type: label
+  # livedoorニュースコーパスのカテゴリディレクトリ名そのもの（9カテゴリ）
+  labels:
+    ["dokujo-tsushin", "it-life-hack", "kaden-channel", "livedoor-homme",
+     "movie-enter", "peachy", "smax", "sports-watch", "topic-news"]
+  json_schema_file: null
+
+# グローバル registry（config.yaml）からの alias 選択
+models: [qwen4b, haiku45, sonnet5, opus48, fable5]
+
+judge:
+  # answer_type=label は決定的assert（label_match.js）で採点するためジャッジは
+  # 実際には呼ばれないが、スキーマ上必須のため明示しておく
+  provider: anthropic:messages:claude-sonnet-5
+  threshold: 0.8
+  agreement_threshold: 0.85
+
+optimize:
+  target_alias: qwen4b                               # GEPAで最適化する対象モデル
+  reflection_provider: anthropic/claude-opus-4-8      # dspy側の表記（大型モデル）
+  auto: light
+
+blog:
+  jpy_per_usd: 150
+  slug_prefix: llm-eval
+  # CC BY-ND のため記事本文の全文転載は不可 — ブログでは短い引用+出典リンクに
+  # 留めること（このホワイトリストは公開ガードの機械的強制に使われる）
+  allowed_sources: ["self-made", "livedoor-news-corpus-cc-by-nd"]
