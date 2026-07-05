@@ -198,7 +198,20 @@ def make_fig01_accuracy_by_model(runs: list[RunData], out_dir: Path, labels: Lab
         colors = [_TIER_COLORS.get(_tier_for_alias(run.meta, a), "#333333") for a in aliases]
         xs = [x + i * width for x in range(len(aliases))]
         alpha = 1.0 if i == len(runs) - 1 else 0.5
-        ax.bar(xs, values, width=width, color=colors, alpha=alpha, label=run.run_id)
+
+        # Wilson 95% CI error bars (issue #11) -- zero-length when a stat has
+        # no CI (e.g. nothing graded), so the bar still renders
+        def _err(alias: str, side: str) -> float:
+            s = by_alias.get(alias)
+            if s is None or s.pass_rate is None or s.pass_ci_low is None or s.pass_ci_high is None:
+                return 0.0
+            return (s.pass_rate - s.pass_ci_low) if side == "low" else (s.pass_ci_high - s.pass_rate)
+
+        yerr = [[_err(a, "low") for a in aliases], [_err(a, "high") for a in aliases]]
+        ax.bar(
+            xs, values, width=width, color=colors, alpha=alpha, label=run.run_id,
+            yerr=yerr, capsize=3, error_kw={"ecolor": "#333333", "alpha": 0.7},
+        )
     ax.set_xticks([x + width * (len(runs) - 1) / 2 for x in range(len(aliases))])
     ax.set_xticklabels(aliases, rotation=30, ha="right")
     ax.set_ylabel(labels.accuracy)

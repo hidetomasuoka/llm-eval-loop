@@ -121,3 +121,28 @@ def test_parse_row_missing_case_id_warns_but_keeps_row(tmp_path):
     assert len(parsed.results) == 1
     assert parsed.results[0].case_id is None
     assert any("case_id" in w for w in parsed.warnings)
+
+
+def test_repeat_index_counts_per_case_and_provider(tmp_path):
+    # a multi-provider run interleaves providers for the same case; the repeat
+    # counter must be per (case, alias) or one provider's repeats would spread
+    # across indices and break report.py's per-repeat aggregation
+    rows = []
+    for _repeat in range(2):
+        for label in ("haiku45", "qwen7b"):
+            rows.append(
+                {
+                    "vars": {"case_id": "case-0001", "expected": "x", "category": "基本"},
+                    "provider": {"id": label, "label": label},
+                    "response": {"output": "x"},
+                    "gradingResult": {"pass": True, "score": 1},
+                    "success": True,
+                }
+            )
+    p = tmp_path / "output.json"
+    p.write_text(json.dumps({"results": {"results": rows}}, ensure_ascii=False), encoding="utf-8")
+
+    parsed = parse_promptfoo_output(p)
+
+    seq = [(r.alias, r.repeat_index) for r in parsed.results]
+    assert seq == [("haiku45", 0), ("qwen7b", 0), ("haiku45", 1), ("qwen7b", 1)]
