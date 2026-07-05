@@ -20,6 +20,12 @@ def _patch_dirs(monkeypatch, tmp_path):
     monkeypatch.setattr(run_mod, "INDEX_PATH", tmp_path / "results" / "index.jsonl")
     monkeypatch.setattr(run_mod, "get_promptfoo_version", lambda: "0.0.0-test")
     monkeypatch.setattr(run_mod, "get_node_version", lambda: "v22.22.0")
+    # run() refuses to start without a built promptfoo config. Point it at a
+    # dummy file instead of the real (gitignored, generated) one -- on a fresh
+    # CI clone promptfoo/promptfooconfig.yaml doesn't exist.
+    fake_config = tmp_path / "promptfooconfig.yaml"
+    fake_config.write_text("providers: []\n", encoding="utf-8")
+    monkeypatch.setattr(run_mod, "PROMPTFOO_CONFIG_PATH", fake_config)
 
 
 def test_npx_base_cmd_uses_pinned_version_not_latest(monkeypatch):

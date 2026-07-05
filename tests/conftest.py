@@ -1,3 +1,6 @@
+import shutil
+import uuid
+
 import pytest
 
 from evalloop import build as build_mod
@@ -7,17 +10,24 @@ from evalloop import run as run_mod
 
 
 @pytest.fixture
-def isolated_artifact_paths(tmp_path, monkeypatch):
+def isolated_artifact_paths(monkeypatch):
     """Redirect every artifact path that build()/optimize()/run()/report()
-    write through to tmp_path. Without this, tests that exercise the real
-    orchestration pollute the developer's checkout (and CI workspace):
-    entries appended to results/index.jsonl, junk results/runs/ and
-    prompts/optimized/ dirs, and promptfoo/promptfooconfig.yaml silently
+    write through to an isolated throwaway tree. Without this, tests that
+    exercise the real orchestration pollute the developer's checkout (and CI
+    workspace): entries appended to results/index.jsonl, junk results/runs/
+    and prompts/optimized/ dirs, and promptfoo/promptfooconfig.yaml silently
     replaced -- which also makes a second consecutive pytest run non-idempotent.
+
+    The isolated tree lives INSIDE the repo (.pytest_isolated/, gitignored)
+    rather than in pytest's tmp_path: build/optimize compute os.path.relpath
+    between these dirs and repo files like prompts/base/task.txt, and on
+    GitHub's Windows runners the workspace (D:) and temp (C:) are different
+    drives, where a cross-drive relpath raises ValueError.
     """
-    build_dir = tmp_path / "data" / "build"
-    promptfoo_dir = tmp_path / "promptfoo"
-    results_dir = tmp_path / "results"
+    root = build_mod.REPO_ROOT / ".pytest_isolated" / uuid.uuid4().hex[:12]
+    build_dir = root / "data" / "build"
+    promptfoo_dir = root / "promptfoo"
+    results_dir = root / "results"
 
     monkeypatch.setattr(build_mod, "BUILD_DIR", build_dir)
     monkeypatch.setattr(build_mod, "TESTS_TEST_PATH", build_dir / "tests_test.yaml")
@@ -31,6 +41,9 @@ def isolated_artifact_paths(tmp_path, monkeypatch):
     monkeypatch.setattr(run_mod, "INDEX_PATH", results_dir / "index.jsonl")
     monkeypatch.setattr(report_mod, "RUNS_DIR", results_dir / "runs")
     monkeypatch.setattr(report_mod, "REPORTS_DIR", results_dir / "reports")
-    monkeypatch.setattr(optimize_mod, "OPTIMIZED_DIR", tmp_path / "prompts" / "optimized")
+    monkeypatch.setattr(optimize_mod, "OPTIMIZED_DIR", root / "prompts" / "optimized")
     monkeypatch.setattr(optimize_mod, "VARIANTS_DIR", promptfoo_dir / "variants")
-    return tmp_path
+
+    yield root
+
+    shutil.rmtree(root, ignore_errors=True)
