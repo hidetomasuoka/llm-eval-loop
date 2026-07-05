@@ -149,3 +149,114 @@ def list_tasks(root: Path = REPO_ROOT) -> list[str]:
     if not tasks_dir.exists():
         return []
     return sorted(d.name for d in tasks_dir.iterdir() if d.is_dir() and (d / "task.yaml").exists())
+
+
+class TaskExistsError(RuntimeError):
+    pass
+
+
+_TASK_YAML_TEMPLATE = """\
+# =============================================================================
+# {name} タスク設定（`evalloop task init` が生成した雛形）
+#
+# データ（golden.jsonl / human_labels.jsonl 等）は git 管理外（issue #47 の
+# データポリシー）。出典・再取得手順は PROVENANCE.md に記録すること。
+# プロンプトは prompts/task.txt（textタスクは prompts/judge_rubric.txt も）に規約固定。
+# =============================================================================
+
+task:
+  answer_type: {answer_type}
+{labels_block}  json_schema_file: null
+
+# グローバル registry（config.yaml）からの alias 選択。省略時 = 全モデル
+# models: [qwen7b, haiku45]
+
+judge:
+  # answer_type=text（llm-rubric）のときの grader。label/json では実際には
+  # 呼ばれないが、スキーマ上必須のため明示しておく
+  provider: anthropic:messages:claude-sonnet-4-6
+  threshold: 0.8
+  agreement_threshold: 0.85
+
+optimize:
+  target_alias: qwen7b                               # GEPAで最適化する対象モデル
+  reflection_provider: anthropic/claude-opus-4-8      # dspy側の表記
+  auto: light
+
+blog:
+  jpy_per_usd: 150
+  slug_prefix: llm-eval
+  allowed_sources: ["self-made"]   # 公開ガードが許可する meta.source の値
+"""
+
+_TASK_PROMPT_TEMPLATE = """\
+ここにタスクの指示を書く（このファイルはgit追跡される）。
+出力形式の指定まで含めて、モデルに与える指示のすべてをここに書くこと。
+
+入力:
+{{input}}
+"""
+
+_RUBRIC_TEMPLATE = """\
+ここに llm-rubric ジャッジ用の採点基準を書く。
+{{input}} と {{expected}} のプレースホルダは promptfoo が実行時に置換する。
+
+入力: {{input}}
+期待される答え: {{expected}}
+"""
+
+_PROVENANCE_TEMPLATE = """\
+# {name} — データ出自と再取得手順
+
+このタスクのデータ（`golden.jsonl` 等）は **git 管理外**（issue #47 のデータポリシー:
+タスクデータは既定でコミット禁止）。以下を必ず埋めること。
+
+## 出典
+
+- **Source**: （配布元・URL・アーカイブ名）
+- **License**: （ライセンスと、公開時の制約があれば明記）
+- **Retrieved**: （取得日と取得方法）
+
+## サンプリング方法（再現用）
+
+（元データからどう抽出したか。乱数シード・件数・train/test分割を再現可能に書く）
+
+## ファイル指紋（検証用）
+
+- `golden.jsonl` sha256: （`python -c "import hashlib;print(hashlib.sha256(open('tasks/{name}/golden.jsonl','rb').read()).hexdigest())"`）
+
+## 再取得
+
+（データを失ったとき、上記だけで復元できる手順）
+"""
+
+
+def init_task_workspace(name: str, root: Path = REPO_ROOT, answer_type: str = "label") -> TaskPaths:
+    """Scaffold tasks/<name>/ (task.yaml + prompts/ + PROVENANCE.md).
+
+    golden.jsonl is deliberately NOT created: the data policy keeps it out of
+    git, and an empty file would only defer the real error from build time.
+    """
+    validate_task_name(name)
+    # keep in sync with schemas.VALID_ANSWER_TYPES (importing it here would be circular)
+    if answer_type not in {"label", "json", "text"}:
+        raise ValueError(f"unknown answer_type {answer_type!r} (expected label/json/text)")
+    paths = TaskPaths(root=root, task=name)
+    if paths.task_dir.exists():
+        raise TaskExistsError(f"task directory already exists: {paths.task_dir}")
+
+    (paths.task_dir / "prompts").mkdir(parents=True)
+    labels_block = (
+        '  labels: ["ラベルA", "ラベルB"]   # answer_type=label では必須。実際のラベルに置き換えること\n'
+        if answer_type == "label"
+        else "  labels: []\n"
+    )
+    paths.task_config.write_text(
+        _TASK_YAML_TEMPLATE.format(name=name, answer_type=answer_type, labels_block=labels_block),
+        encoding="utf-8",
+    )
+    paths.prompt_file.write_text(_TASK_PROMPT_TEMPLATE, encoding="utf-8")
+    if answer_type == "text":
+        paths.rubric_file.write_text(_RUBRIC_TEMPLATE, encoding="utf-8")
+    (paths.task_dir / "PROVENANCE.md").write_text(_PROVENANCE_TEMPLATE.format(name=name), encoding="utf-8")
+    return paths

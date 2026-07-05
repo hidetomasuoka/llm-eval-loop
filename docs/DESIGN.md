@@ -6,6 +6,23 @@
 > promptfoo / dspy のAPI詳細は公式ドキュメント（promptfoo.dev / dspy.ai）を正とする。
 > 実装時に確認した値（Node.jsバージョン要件など）は本ドキュメントにも反映済み。
 
+> **⚠ 2026-07-05 追記 — 複数タスクワークスペース構成（issue #47）**:
+> 本書のパス規約（`data/golden.jsonl`・`prompts/base/`・`promptfoo/promptfooconfig.yaml`・
+> `results/runs/` 等の単一タスク前提の固定パス）は **`tasks/<name>/` ワークスペース構成に
+> 置き換えられた**。現行の正は以下のとおり（詳細設計は issue #47、使い方は README）:
+> - 1タスク = `tasks/<name>/`（task.yaml / golden.jsonl / prompts/ / human_labels /
+>   taxonomy / notes / optimized/ / PROVENANCE.md）。生成物はタスク別サブツリー
+>   （`data/build/<t>/`・`promptfoo/<t>/`・`results/<t>/`・`blog/<t>/`）
+> - ルート `config.yaml` はモデルregistry＋runデフォルト＋default_taskのみ。タスク選択は
+>   `--task` / `EVALLOOP_TASK` / default_task。パス解決は `src/evalloop/paths.py` の
+>   `TaskPaths` に一元化。タスクの新規作成は `evalloop task init NAME`
+> - **データポリシー**: タスクのデータ（golden/human_labels/notes/taxonomy）は既定で
+>   gitignore。追跡は task.yaml / prompts/ / PROVENANCE.md のみ（合成データの
+>   sample-inquiry だけオプトイン追跡）
+> - 鉄の掟（責務分担・split分離・append-only台帳・公開ガード等）は**タスク単位でそのまま
+>   有効**。本書の設計根拠・データ仕様（セクション5のレコード形式）・鉄の掟の記述は
+>   引き続き正であり、置き換わったのはパスレイアウトと設定ファイルの分割のみ。
+
 ---
 
 ## 1. 目的

@@ -113,7 +113,8 @@ uv run evalloop blog --runs <run_id>                        # ブログ用の図
 
 ## 自分のタスクを追加する
 
-タスクの追加は既存タスクに一切触れない。`tasks/` にディレクトリを切って3ファイル置くだけ:
+タスクの追加は既存タスクに一切触れない。`uv run evalloop task init <name>` で雛形
+（task.yaml・prompts/・PROVENANCE.md のテンプレート）が生成されるので、埋めるのは実質3ファイル:
 
 1. `tasks/<name>/task.yaml` — answer_type・ラベル・judge/optimize設定・使用モデルのalias選択（既存タスクのtask.yamlをテンプレートにコピー）
 2. `tasks/<name>/golden.jsonl` — 評価データセット（唯一のソース。フォーマットは [docs/DESIGN.md#5-データ仕様](docs/DESIGN.md#5-データ仕様)）。既定でgitignoreされるため、出典を書いた `PROVENANCE.md` を添えること
@@ -261,4 +262,4 @@ run成果物の生出力（output.json / meta.json）にはローカル絶対パ
 ## ライセンス
 
 [MIT License](LICENSE)。同梱データのライセンスは別途各ファイルの出典表記に従う
-（現在の `data/golden.jsonl` はCUAD v1由来・CC BY 4.0）。
+（各タスクの `tasks/<name>/PROVENANCE.md` にライセンスを明記する）。
