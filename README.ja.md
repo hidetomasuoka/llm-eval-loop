@@ -91,7 +91,7 @@ uv run evalloop pivot <run_id>                              # 失敗カテゴリ
 uv run evalloop calibrate --run-id <run_id>                 # LLMジャッジと人手ラベルの一致率を確認
 uv run evalloop optimize                                    # dspy GEPAでプロンプトを改善（train splitのみ使用）
 #   -> 最適化後、自動でrun/report/compare(直近のベースrunがあれば)まで実行される
-#   ※ optimizeはanswer_type=labelのタスク専用。現在のCUAD-100(text)ではエラーになる（既知の制約参照）
+#   ※ GEPAの学習は決定的な代理メトリクス（textタスクはトークンF1）で行い、最終評価はllm-rubricのまま（既知の制約参照）
 uv run evalloop blog --runs <run_id>                        # ブログ用の図表・記事ドラフトをblog/に出力
 ```
 
@@ -220,10 +220,12 @@ run成果物の生出力（output.json / meta.json）にはローカル絶対パ
 
 ## 既知の制約
 
-- `evalloop optimize` は現状 `task.answer_type == "label"` のタスクのみ対応
-  （GEPAのmetricがラベル一致ロジックの移植版のみのため）。現在アクティブなCUAD-100タスクは
-  `answer_type=text` なので、`optimize` を試すには `data/sample/` のラベル分類タスクに
-  一時的に戻すか、text用のmetricを追加実装する必要がある
+- `evalloop optimize` は3つのanswer_typeすべてに対応しているが、GEPAの**学習メトリクスは
+  決定的な代理指標であり、最終評価とは別物**: `label` はラベル一致ロジックの移植、
+  `text`（現在アクティブなCUAD-100タスク等）は正解スパンとのSQuAD方式トークンF1、
+  `json` はdeep-equalityの移植を使う。textタスクの最終評価（promptfoo側）は従来どおり
+  llm-rubricジャッジのままなので、学習メトリクスと最終採点は乖離しうる —
+  その乖離の計測自体がGEPAケーススタディの対象である
 - ローカル小型モデル（qwen2.5:7b）をジャッジに使うと、まれに英語・日本語以外の言語で
   採点理由を返すなど、フロンティアモデルほど指示追従が安定しない。ジャッジには
   極力、評価対象より十分強いモデルを使うことを推奨（`config.yaml`本来の設計どおり）

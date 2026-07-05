@@ -1,0 +1,21 @@
+{
+  "description": "Shared verdict table for asserts/json_field_match.js (final promptfoo grading) and optimize.py json_score_and_feedback (GEPA training metric). `output` is the raw model output string, `expected` the golden value, `pass` the verdict both implementations must produce. tests/test_json_field_match.py runs this table through both and fails on any drift. Extend this table whenever either implementation changes.",
+  "cases": [
+    {"name": "exact-object", "output": "{\"a\": 1, \"b\": \"x\"}", "expected": {"a": 1, "b": "x"}, "pass": true},
+    {"name": "key-order-insensitive", "output": "{\"b\": \"x\", \"a\": 1}", "expected": {"a": 1, "b": "x"}, "pass": true},
+    {"name": "array-order-sensitive", "output": "[1, 2]", "expected": [2, 1], "pass": false},
+    {"name": "array-equal", "output": "[{\"a\": 1}, {\"b\": 2}]", "expected": [{"a": 1}, {"b": 2}], "pass": true},
+    {"name": "nested-value-mismatch", "output": "{\"a\": {\"b\": 1}}", "expected": {"a": {"b": 2}}, "pass": false},
+    {"name": "missing-key", "output": "{\"a\": 1}", "expected": {"a": 1, "b": 2}, "pass": false},
+    {"name": "extra-key", "output": "{\"a\": 1, \"b\": 2}", "expected": {"a": 1}, "pass": false},
+    {"name": "int-float-same-number", "output": "{\"a\": 1}", "expected": {"a": 1.0}, "pass": true},
+    {"name": "bool-is-not-number", "output": "{\"a\": true}", "expected": {"a": 1}, "pass": false},
+    {"name": "null-equal", "output": "{\"a\": null}", "expected": {"a": null}, "pass": true},
+    {"name": "null-is-not-zero", "output": "{\"a\": null}", "expected": {"a": 0}, "pass": false},
+    {"name": "string-number-distinct", "output": "{\"a\": \"1\"}", "expected": {"a": 1}, "pass": false},
+    {"name": "unicode-value", "output": "{\"label\": \"契約照会\"}", "expected": {"label": "契約照会"}, "pass": true},
+    {"name": "invalid-json", "output": "not json at all", "expected": {"a": 1}, "pass": false},
+    {"name": "code-fenced-json-is-invalid", "output": "```json\n{\"a\": 1}\n```", "expected": {"a": 1}, "pass": false},
+    {"name": "empty-object", "output": "{}", "expected": {}, "pass": true}
+  ]
+}

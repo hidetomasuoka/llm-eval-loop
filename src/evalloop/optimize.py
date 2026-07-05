@@ -13,10 +13,20 @@ Iron rules enforced here:
        to train on are disjoint from data/build/tests_test.yaml's case IDs
        before spending a single GEPA rollout.
 
-Scope note: the metric below ports label_match.js's normalization logic to
-Python (GEPA needs a fast in-process metric; it cannot shell out to promptfoo
-per candidate). Only answer_type=="label" is supported for now -- json/text
-would need their own metric ports; see the guard in optimize().
+Scope note: GEPA needs a fast in-process metric -- it cannot shell out to
+promptfoo per candidate rollout, and the iron rule "Python never calls a model
+provider directly" rules out an in-process LLM judge. Training therefore uses
+a deterministic proxy metric per answer_type:
+
+    label -- port of asserts/label_match.js (identical verdict to the final
+             promptfoo grading; pinned by tests/fixtures/label_normalization_cases.json)
+    text  -- SQuAD-style token F1 against the gold span(s). The FINAL
+             evaluation stays promptfoo's llm-rubric: training proxy and
+             final judge are deliberately different things, and their
+             divergence is a measurement target of the GEPA case study,
+             not something this module hides
+    json  -- port of asserts/json_field_match.js deep-equality (pinned by
+             tests/fixtures/json_field_match_cases.json)
 """
 
 from __future__ import annotations
@@ -24,6 +34,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -142,6 +153,168 @@ def label_score_and_feedback(output: str, expected: str, labels: list[str]) -> t
 
 
 # ---------------------------------------------------------------------------
+# metric: answer_type=text (extractive tasks, e.g. CUAD clause extraction).
+# Deterministic SQuAD-style token F1 -- see the module docstring for why the
+# training metric is a proxy and not the llm-rubric judge.
+# ---------------------------------------------------------------------------
+
+# prompts/base/task.txt instructs the model to answer exactly this string when
+# no clause of the requested category exists in the excerpt
+NO_CLAUSE_ANSWER = "該当条項なし"
+
+_EN_ARTICLES = {"a", "an", "the"}
+
+
+def _f1_tokens(text: str) -> list[str]:
+    """SQuAD-style normalization: lowercase, strip punctuation, drop English
+    articles, whitespace-tokenize. Gold spans in CUAD are English contract
+    text, so whitespace tokenization is adequate; a Japanese-answer task
+    would need a real tokenizer here.
+    """
+    s = re.sub(r"[^\w\s]", " ", text.lower())
+    return [t for t in s.split() if t not in _EN_ARTICLES]
+
+
+def _token_f1(pred: str, gold: str) -> float:
+    pred_tokens = _f1_tokens(pred)
+    gold_tokens = _f1_tokens(gold)
+    if not pred_tokens or not gold_tokens:
+        return 1.0 if pred_tokens == gold_tokens else 0.0
+    overlap = sum((Counter(pred_tokens) & Counter(gold_tokens)).values())
+    if overlap == 0:
+        return 0.0
+    precision = overlap / len(pred_tokens)
+    recall = overlap / len(gold_tokens)
+    return 2 * precision * recall / (precision + recall)
+
+
+def _split_spans(text: str) -> list[str]:
+    """The task prompt instructs semicolon-separated listing of multiple hits.
+    Clause text itself can legitimately contain semicolons (it does in the
+    real CUAD data), but the model must quote verbatim, so both sides fragment
+    at the same places and the greedy alignment below still pairs fragments up.
+    """
+    spans = [s.strip() for s in re.split(r"[;；]", text) if s.strip()]
+    return spans or [""]
+
+
+def _span_set_f1(output: str, expected: str) -> float:
+    """Greedy max-F1 alignment between output spans and gold spans; the
+    denominator is the larger span count, so missing and spurious spans both
+    cost score. Reduces to plain token F1 when both sides are a single span.
+    """
+    out_spans = _split_spans(output)
+    exp_spans = _split_spans(expected)
+    remaining = list(out_spans)
+    matched_total = 0.0
+    for exp_span in exp_spans:
+        if not remaining:
+            break
+        scores = [_token_f1(out_span, exp_span) for out_span in remaining]
+        best_i = max(range(len(scores)), key=lambda i: scores[i])
+        matched_total += scores[best_i]
+        remaining.pop(best_i)
+    return matched_total / max(len(exp_spans), len(out_spans))
+
+
+def text_score_and_feedback(output, expected) -> tuple[float, str]:
+    """Continuous score in [0, 1] (GEPA accepts float scores; the gradient of
+    a partial-overlap F1 gives the optimizer more signal than thresholding
+    to 0/1 would).
+    """
+    out_text = output if isinstance(output, str) else ""
+    exp_text = expected if isinstance(expected, str) else ""
+    # _normalize_label strips wrapping quotes/trailing punctuation, so
+    # 「該当条項なし。」 still counts as the no-clause answer
+    out_is_no_clause = _normalize_label(out_text) == NO_CLAUSE_ANSWER
+    exp_is_no_clause = _normalize_label(exp_text) == NO_CLAUSE_ANSWER
+
+    if exp_is_no_clause and out_is_no_clause:
+        return 1.0, f'output correctly answered "{NO_CLAUSE_ANSWER}" (gold agrees no clause applies).'
+    if exp_is_no_clause:
+        return 0.0, (
+            f'output extracted text but the gold answer is "{NO_CLAUSE_ANSWER}" (no applicable clause). '
+            f'output was: "{out_text[:160]}". Rewrite the instructions so the model answers exactly '
+            f'"{NO_CLAUSE_ANSWER}" when the excerpt contains no clause of the requested category.'
+        )
+    if out_is_no_clause:
+        return 0.0, (
+            f'output answered "{NO_CLAUSE_ANSWER}" but the gold answer contains a clause: "{exp_text[:160]}". '
+            "Rewrite the instructions so the model searches the excerpt more thoroughly before "
+            "concluding that no clause applies."
+        )
+
+    f1 = _span_set_f1(out_text, exp_text)
+    if f1 >= 1.0:
+        return 1.0, "output token-matches the gold span(s) exactly (token F1 1.00)."
+    return f1, (
+        f"output overlaps the gold span(s) at token F1 {f1:.2f}. "
+        f'gold: "{exp_text[:160]}" / output: "{out_text[:160]}". '
+        "Rewrite the instructions so the model quotes the exact clause text verbatim -- "
+        "no paraphrasing, no commentary, no partial extraction."
+    )
+
+
+# ---------------------------------------------------------------------------
+# metric: answer_type=json (Python port of asserts/json_field_match.js).
+# Must stay in lockstep with deepEqual() there --
+# tests/fixtures/json_field_match_cases.json pins both implementations.
+# ---------------------------------------------------------------------------
+
+
+def _json_deep_equal(a, b) -> bool:
+    # Python's == alone would treat True == 1 as equal, but JS's === keeps
+    # booleans and numbers distinct -- check bools explicitly. Cross int/float
+    # comparison stays allowed (JS has a single number type: 1 === 1.0).
+    if isinstance(a, bool) or isinstance(b, bool):
+        return isinstance(a, bool) and isinstance(b, bool) and a == b
+    if isinstance(a, dict) and isinstance(b, dict):
+        return a.keys() == b.keys() and all(_json_deep_equal(a[k], b[k]) for k in a)
+    if isinstance(a, list) and isinstance(b, list):
+        return len(a) == len(b) and all(_json_deep_equal(x, y) for x, y in zip(a, b))
+    if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+        return a == b
+    return type(a) is type(b) and a == b
+
+
+def json_score_and_feedback(output, expected) -> tuple[float, str]:
+    try:
+        parsed = json.loads(output) if isinstance(output, str) else output
+    except json.JSONDecodeError as e:
+        return 0.0, (
+            f'output is not valid JSON ({e}). output was: "{str(output)[:160]}". '
+            "Rewrite the instructions so the model emits exactly one JSON object and nothing else "
+            "(no code fences, no explanations)."
+        )
+    if _json_deep_equal(parsed, expected):
+        return 1.0, "parsed JSON deep-equals the expected object."
+    got = json.dumps(parsed, ensure_ascii=False)
+    want = json.dumps(expected, ensure_ascii=False)
+    return 0.0, (
+        f"parsed JSON does not match expected. got={got[:200]} expected={want[:200]}. "
+        "Rewrite the instructions to pin down the exact field names and value formats."
+    )
+
+
+def _score_fn_for(cfg):
+    """Return the (output, expected) -> (score, feedback) training metric for
+    the task's answer_type. This is the GEPA training proxy, NOT the final
+    evaluation -- promptfoo still grades text tasks with llm-rubric (see the
+    module docstring).
+    """
+    if cfg.task.answer_type == "label":
+        labels = cfg.task.labels
+        return lambda output, expected: label_score_and_feedback(output, expected, labels)
+    if cfg.task.answer_type == "text":
+        return text_score_and_feedback
+    if cfg.task.answer_type == "json":
+        return json_score_and_feedback
+    # unreachable while TaskConfig validates answer_type, but fail loudly if
+    # a new type is added there without a metric here
+    raise OptimizeError(f"no GEPA training metric for answer_type {cfg.task.answer_type!r}")
+
+
+# ---------------------------------------------------------------------------
 # variant config generation (reroots every file:// reference one level
 # deeper, since promptfoo/variants/{name}.yaml lives one directory below
 # promptfoo/promptfooconfig.yaml)
@@ -230,11 +403,7 @@ def run_gepa(student, trainset, metric, reflection_lm, auto: str, seed: int = 0)
 
 def optimize(config_path: str | Path = REPO_ROOT / "config.yaml") -> OptimizeOutcome:
     cfg = load_config(config_path)
-    if cfg.task.answer_type != "label":
-        raise OptimizeError(
-            f"optimize() currently only supports task.answer_type=='label' (got {cfg.task.answer_type!r}); "
-            "the GEPA metric is a Python port of label_match.js only -- see optimize.py TODO"
-        )
+    score_fn = _score_fn_for(cfg)  # resolve the training metric first: fail fast on unsupported types
 
     test_ids = _load_test_ids()
     cases = load_golden_jsonl(build_mod.GOLDEN_PATH)
@@ -258,10 +427,8 @@ def optimize(config_path: str | Path = REPO_ROOT / "config.yaml") -> OptimizeOut
     signature = dspy.Signature("input -> output", instructions=base_instructions)
     student = dspy.Predict(signature)
 
-    labels = cfg.task.labels
-
     def metric(gold, pred, trace=None, pred_name=None, pred_trace=None):
-        score, feedback = label_score_and_feedback(getattr(pred, "output", ""), gold.expected, labels)
+        score, feedback = score_fn(getattr(pred, "output", ""), gold.expected)
         return dspy.Prediction(score=score, feedback=feedback)
 
     trainset = [dspy.Example(input=c.input, expected=c.expected).with_inputs("input") for c in train_cases]

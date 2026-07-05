@@ -103,6 +103,78 @@ def test_label_metric_no_known_label_scores_zero():
 
 
 # ---------------------------------------------------------------------------
+# text metric (SQuAD-style token F1; the final eval stays llm-rubric)
+# ---------------------------------------------------------------------------
+
+
+GOLD_SPAN = "This Agreement shall be governed by the laws of the State of New York."
+
+
+def test_text_metric_verbatim_extraction_scores_one():
+    score, _ = optimize_mod.text_score_and_feedback(GOLD_SPAN, GOLD_SPAN)
+    assert score == 1.0
+
+
+def test_text_metric_ignores_case_punctuation_and_articles():
+    output = "this agreement shall be governed by laws of state of new york"
+    score, _ = optimize_mod.text_score_and_feedback(output, GOLD_SPAN)
+    assert score == 1.0
+
+
+def test_text_metric_partial_overlap_scores_between_zero_and_one():
+    score, feedback = optimize_mod.text_score_and_feedback("governed by the laws of the State of New York", GOLD_SPAN)
+    assert 0.0 < score < 1.0
+    assert "F1" in feedback
+
+
+def test_text_metric_disjoint_scores_zero():
+    score, _ = optimize_mod.text_score_and_feedback("completely unrelated text here", GOLD_SPAN)
+    assert score == 0.0
+
+
+def test_text_metric_empty_output_scores_zero():
+    score, _ = optimize_mod.text_score_and_feedback("", GOLD_SPAN)
+    assert score == 0.0
+
+
+def test_text_metric_no_clause_both_sides_scores_one():
+    # wrapping quotes / trailing punctuation must not break the sentinel match
+    score, _ = optimize_mod.text_score_and_feedback("「該当条項なし。」", "該当条項なし")
+    assert score == 1.0
+
+
+def test_text_metric_no_clause_output_but_gold_has_clause():
+    score, feedback = optimize_mod.text_score_and_feedback("該当条項なし", GOLD_SPAN)
+    assert score == 0.0
+    assert "該当条項なし" in feedback
+
+
+def test_text_metric_extraction_when_gold_says_no_clause():
+    score, feedback = optimize_mod.text_score_and_feedback(GOLD_SPAN, "該当条項なし")
+    assert score == 0.0
+    assert "該当条項なし" in feedback
+
+
+def test_text_metric_multi_span_order_insensitive():
+    expected = "Span one about indemnity; Span two about termination"
+    output = "Span two about termination; Span one about indemnity"
+    score, _ = optimize_mod.text_score_and_feedback(output, expected)
+    assert score == 1.0
+
+
+def test_text_metric_spurious_extra_span_is_penalized():
+    output = f"{GOLD_SPAN}; Some unrelated extra clause the model invented"
+    score, _ = optimize_mod.text_score_and_feedback(output, GOLD_SPAN)
+    assert 0.0 < score < 1.0
+
+
+def test_text_metric_missing_span_is_penalized():
+    expected = f"{GOLD_SPAN}; A second clause about termination fees"
+    score, _ = optimize_mod.text_score_and_feedback(GOLD_SPAN, expected)
+    assert 0.0 < score < 1.0
+
+
+# ---------------------------------------------------------------------------
 # variant config re-rooting
 # ---------------------------------------------------------------------------
 
@@ -314,11 +386,96 @@ def test_optimize_end_to_end_with_stubbed_gepa_and_promptfoo(isolated_artifact_p
     assert outcome.compare_path is None
 
 
-def test_optimize_rejects_non_label_answer_type(monkeypatch, tmp_path):
+def _text_type_config_path(tmp_path):
+    """A text-type config mirroring the live CUAD-100 setup (answer_type=text,
+    llm-rubric judge). The judge provider shares a provider with models[], so
+    build needs allow_same_judge=True, exactly like the real config.yaml.
+    """
     raw = yaml.safe_load((REPO_ROOT / "config.yaml").read_text(encoding="utf-8"))
-    raw["task"]["answer_type"] = "text"  # explicit, regardless of the live config's current task type
-    bad_config = tmp_path / "config.yaml"
-    bad_config.write_text(yaml.safe_dump(raw, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    raw["task"]["answer_type"] = "text"
+    raw["task"]["labels"] = []
+    path = tmp_path / "config.text-test.yaml"
+    path.write_text(yaml.safe_dump(raw, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    return path
 
-    with pytest.raises(optimize_mod.OptimizeError):
-        optimize_mod.optimize(config_path=bad_config)
+
+def _write_text_type_golden(path):
+    spans = [
+        "This Agreement shall be governed by the laws of the State of New York.",
+        "Either party may terminate upon thirty days written notice.",
+        "該当条項なし",
+    ]
+    with path.open("w", encoding="utf-8") as f:
+        for i in range(6):
+            row = {
+                "id": f"case-{i + 1:04d}",
+                "input": f"CONTRACT EXCERPT {i + 1} ...",
+                "expected": spans[i % len(spans)],
+                "split": "train",
+                "meta": {"category": "governing-law", "source": "self-made"},
+            }
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        for i in range(6):
+            row = {
+                "id": f"case-{i + 100:04d}",
+                "input": f"CONTRACT EXCERPT {i + 100} ...",
+                "expected": spans[i % len(spans)],
+                "split": "test",
+                "meta": {"category": "governing-law", "source": "self-made"},
+            }
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def test_optimize_end_to_end_with_text_task(isolated_artifact_paths, monkeypatch, tmp_path):
+    """answer_type=text no longer trips a guard (issue #17): the CUAD-style
+    live config must reach GEPA training and the downstream run/report.
+    """
+    synthetic_golden = tmp_path / "golden.jsonl"
+    _write_text_type_golden(synthetic_golden)
+    monkeypatch.setattr(build_mod, "GOLDEN_PATH", synthetic_golden)
+
+    config_path = _text_type_config_path(tmp_path)
+    build_mod.build(config_path=config_path, yes=True, allow_same_judge=True)
+
+    captured = {}
+
+    def fake_gepa(student, trainset, metric, reflection_lm, auto, seed=0):
+        # exercise the real metric wiring with one plausible rollout per case
+        captured["scores"] = [
+            metric(gold, types.SimpleNamespace(output=gold.expected)).score for gold in trainset
+        ]
+        return types.SimpleNamespace(signature=types.SimpleNamespace(instructions="optimized text instructions"))
+
+    monkeypatch.setattr(optimize_mod, "run_gepa", fake_gepa)
+
+    def fake_eval(config_path, output_path, **kwargs):
+        cfg = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        rows = [
+            {
+                "vars": {"case_id": f"case-{i:04d}", "expected": "x", "category": "governing-law"},
+                "provider": {"id": p["id"], "label": p["label"]},
+                "response": {"output": "x"},
+                "gradingResult": {"pass": True, "score": 1},
+                "success": True,
+                "cost": 0.0,
+            }
+            for i, p in enumerate(cfg["providers"], start=1)
+        ]
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json.dumps({"results": {"results": rows}}), encoding="utf-8")
+
+        class _P:
+            returncode = 0
+            stderr = ""
+
+        return _P()
+
+    monkeypatch.setattr(run_mod, "run_promptfoo_eval", fake_eval)
+
+    outcome = optimize_mod.optimize(config_path=config_path)
+
+    assert outcome.task_path.exists()
+    assert "optimized text instructions" in outcome.task_path.read_text(encoding="utf-8")
+    # a rollout that echoes the gold answer must score 1.0 through the real
+    # metric wiring (incl. the 該当条項なし sentinel case)
+    assert captured["scores"] == [1.0] * 6
