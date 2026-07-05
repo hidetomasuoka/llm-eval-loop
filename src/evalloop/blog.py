@@ -335,8 +335,15 @@ def render_conditions_md(runs: list[RunData], config, fig03_written: bool) -> st
     ]
     config_flag = f" --config {primary.meta['config_path']}" if primary.meta.get("config_path", "config.yaml") != "config.yaml" else ""
     # mirror build.py's iron-rule-#2 check: for a same-judge text config the
-    # copy-pasted command aborts unless --allow-same-judge is included
-    same_judge = config.task.answer_type == "text" and any(m.provider == config.judge.provider for m in config.models)
+    # copy-pasted command aborts unless --allow-same-judge is included.
+    # Use primary.meta (the run snapshot) so that the flag matches the actual
+    # config that was used for the run, not the config passed to blog().
+    _meta_judge_provider = primary.meta.get("judge", {}).get("provider", "")
+    _meta_models = primary.meta.get("models", [])
+    same_judge = (
+        primary.meta.get("answer_type") == "text"
+        and any(m.get("provider") == _meta_judge_provider for m in _meta_models)
+    )
     same_judge_flag = " --allow-same-judge" if same_judge else ""
     lines.append(f"evalloop build{config_flag}{same_judge_flag}")
     for run in runs:
