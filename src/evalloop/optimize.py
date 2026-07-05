@@ -104,12 +104,17 @@ def render_optimized_template(instructions: str, original_template: str) -> str:
 
 
 def _normalize_label(value) -> str:
+    # Must stay in lockstep with normalizeLabel() in asserts/label_match.js,
+    # or GEPA trains against a different verdict than promptfoo's final
+    # grading. tests/test_label_normalization.py pins both implementations to
+    # the same fixture table -- extend that fixture when changing either side.
     if not isinstance(value, str):
         return ""
     s = value.strip()
     s = "".join(chr(ord(ch) - 0xFEE0) if "！" <= ch <= "～" else ch for ch in s)
-    s = s.strip("\"'「『[]」』")
-    s = re.sub(r"[。.，,]+$", "", s)
+    s = re.sub(r"^[\"'「『\[]+", "", s)
+    s = re.sub(r"[\"'」』\]]+$", "", s)
+    s = re.sub(r"[。.、,]+$", "", s)
     return s.strip()
 
 

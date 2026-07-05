@@ -335,7 +335,11 @@ def render_conditions_md(runs: list[RunData], config, fig03_written: bool) -> st
         "```bash",
     ]
     config_flag = f" --config {primary.meta['config_path']}" if primary.meta.get("config_path", "config.yaml") != "config.yaml" else ""
-    lines.append(f"evalloop build{config_flag}")
+    # mirror build.py's iron-rule-#2 check: for a same-judge text config the
+    # copy-pasted command aborts unless --allow-same-judge is included
+    same_judge = config.task.answer_type == "text" and any(m.provider == config.judge.provider for m in config.models)
+    same_judge_flag = " --allow-same-judge" if same_judge else ""
+    lines.append(f"evalloop build{config_flag}{same_judge_flag}")
     for run in runs:
         variant_flag = f" --variant {run.meta.get('variant')}" if run.meta.get("variant") else ""
         run_config_flag = (

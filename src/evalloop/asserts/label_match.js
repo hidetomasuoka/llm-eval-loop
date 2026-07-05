@@ -9,6 +9,10 @@
 // context.vars must contain `expected` (string) and `labels` (string[]),
 // both injected by evalloop build.py (labels via defaultTest.vars, expected per-test).
 
+// Must stay in lockstep with _normalize_label() in optimize.py (GEPA's
+// in-process training metric). tests/test_label_normalization.py pins both
+// implementations to the same fixture table -- extend that fixture when
+// changing either side.
 function normalizeLabel(value) {
   if (typeof value !== 'string') return '';
   let s = value.trim();
@@ -78,3 +82,7 @@ module.exports = (output, context) => {
       `(ambiguous or no known label found; labels=${JSON.stringify(labels)})`,
   };
 };
+
+// exposed for tests/test_label_normalization.py only; promptfoo calls the
+// default export above
+module.exports.normalizeLabel = normalizeLabel;
