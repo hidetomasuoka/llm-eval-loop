@@ -6,12 +6,17 @@ never reimplements judging in Python. Two modes:
 
   - `run_id` given: cross-check `gradingResult.pass` already recorded in that
     run's output.json against each human_labels.jsonl case. No new API calls.
-  - `run_id` omitted: re-grade fresh via a throwaway promptfoo eval that
-    replays each human_labels.jsonl `output_raw` string through promptfoo's
-    built-in `echo` provider (https://www.promptfoo.dev/docs/providers/echo/,
-    "returns the prompt as-is... useful ... to evaluate existing outputs
-    without re-generating them") into the *same* llm-rubric assert build.py
-    would generate. This still delegates grading to promptfoo.
+  - `run_id` omitted, answer_type=text: re-grade fresh via a throwaway
+    promptfoo eval that replays each human_labels.jsonl `output_raw` string
+    through promptfoo's built-in `echo` provider
+    (https://www.promptfoo.dev/docs/providers/echo/, "returns the prompt
+    as-is... useful ... to evaluate existing outputs without re-generating
+    them") into the *same* llm-rubric assert build.py would generate. This
+    still delegates grading to promptfoo.
+  - `run_id` omitted, answer_type=label/json: production grading is a
+    deterministic assert, so output_raw is replayed through the pinned Python
+    ports of label_match.js / json_field_match.js instead -- no promptfoo
+    round-trip, no LLM call, and no rubric file needed (issue #50).
 
 In both modes, judge verdicts are joined back to human labels on the
 (case_id, model_label) composite key -- never on case_id alone, since the
@@ -175,6 +180,31 @@ def _judge_verdicts_fresh(
     return verdicts
 
 
+def _judge_verdicts_deterministic(
+    labels: list[HumanLabel], golden_by_id: dict[str, GoldenCase], cfg: Config
+) -> dict[tuple[str, str], bool]:
+    """Fresh mode for label/json tasks: production grading is a deterministic
+    assert (label_match.js / json_field_match.js), so replaying output_raw
+    through the pinned Python ports of those asserts IS the judge -- no
+    promptfoo round-trip and no LLM call. The ports are locked to the JS
+    implementations by shared fixtures (tests/fixtures/*_cases.json).
+    """
+    # local import: optimize pulls in dspy, which plain calibrate runs don't need
+    from evalloop.optimize import json_score_and_feedback, label_score_and_feedback
+
+    verdicts: dict[tuple[str, str], bool] = {}
+    for label in labels:
+        case = golden_by_id.get(label.case_id)
+        if case is None:
+            continue
+        if cfg.task.answer_type == "label":
+            score, _feedback = label_score_and_feedback(label.output_raw, case.expected, cfg.task.labels)
+        else:  # json
+            score, _feedback = json_score_and_feedback(label.output_raw, case.expected)
+        verdicts[(label.case_id, label.model_label)] = score >= 1.0
+    return verdicts
+
+
 def calibrate(config: Config, paths: TaskPaths, run_id: str | None = None) -> CalibrationResult:
     cfg = config
     labels = load_human_labels(paths.human_labels)
@@ -185,14 +215,12 @@ def calibrate(config: Config, paths: TaskPaths, run_id: str | None = None) -> Ca
 
     if run_id is not None:
         verdicts = _judge_verdicts_from_run(run_id, paths)
-    else:
-        if cfg.task.answer_type != "text":
-            raise CalibrateError(
-                f"fresh re-grading is only supported for answer_type=text tasks, "
-                f"but this task uses answer_type={cfg.task.answer_type!r}. "
-                "Pass --run-id to cross-check an existing run instead."
-            )
+    elif cfg.task.answer_type == "text":
         verdicts = _judge_verdicts_fresh(labels, golden_by_id, cfg, paths)
+    else:
+        # label/json grading is deterministic -- replay through the Python
+        # ports of the production asserts instead of a promptfoo round-trip
+        verdicts = _judge_verdicts_deterministic(labels, golden_by_id, cfg)
 
     cases: list[CaseAgreement] = []
     skipped = 0

@@ -230,11 +230,14 @@ def load_taxonomy(path: str | Path) -> dict:
 
 
 def pivot(run_id: str, paths: TaskPaths, taxonomy_path: str | Path | None = None) -> Path:
+    # resolve up front so the report footer prints the path actually used,
+    # not None (issue #52)
+    taxonomy_path = Path(taxonomy_path) if taxonomy_path is not None else paths.taxonomy
     output_path = paths.runs_dir / run_id / "output.json"
     if not output_path.exists():
         raise AnalyzeError(f"run {run_id!r} has no output.json at {output_path}")
     parsed = parse_promptfoo_output(output_path)
-    taxonomy = load_taxonomy(taxonomy_path if taxonomy_path is not None else paths.taxonomy)
+    taxonomy = load_taxonomy(taxonomy_path)
     assignments: dict[str, str] = taxonomy["assignments"]
     category_names = {c["id"]: c.get("name", c["id"]) for c in taxonomy["categories"]}
 

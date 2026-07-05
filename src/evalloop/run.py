@@ -23,6 +23,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+import yaml
+
 from evalloop.paths import REPO_ROOT, TaskPaths
 from evalloop.schemas import Config, parse_promptfoo_output
 
@@ -209,6 +211,17 @@ def run(
     except ValueError:
         prompt_file_display = str(prompt_path)
 
+    # meta must reflect what was actually evaluated: `build --models` may have
+    # narrowed the provider set relative to the task config, and the built
+    # promptfoo config -- not the task config -- is the ground truth (issue #49)
+    built_aliases: set[str] = set()
+    try:
+        built = yaml.safe_load(promptfoo_config_path.read_text(encoding="utf-8")) or {}
+        built_aliases = {p.get("label") for p in built.get("providers", []) if isinstance(p, dict) and p.get("label")}
+    except (OSError, yaml.YAMLError):
+        pass  # unreadable build artifact -> fall back to the full task config below
+    evaluated_models = [m for m in config.models if m.alias in built_aliases] or list(config.models)
+
     meta = {
         "run_id": run_id,
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -226,7 +239,7 @@ def run(
         "repeat": effective_repeat,
         "limit": limit,
         "no_cache": no_cache,
-        "models": [{"alias": m.alias, "provider": m.provider, "tier": m.tier} for m in config.models],
+        "models": [{"alias": m.alias, "provider": m.provider, "tier": m.tier} for m in evaluated_models],
         "actual_cost_usd": actual_cost,
         "judge": {
             "provider": config.judge.provider,
@@ -268,7 +281,7 @@ def run(
     if output_missing:
         raise RunError(
             f"promptfoo eval failed (exit {proc.returncode}) and produced no output.json "
-            f"(recorded as run_id={run_id} in results/index.jsonl for the audit trail).\n"
+            f"(recorded as run_id={run_id} in {paths.index} for the audit trail).\n"
             f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
         )
 

@@ -242,10 +242,13 @@ def init_task_workspace(name: str, root: Path = REPO_ROOT, answer_type: str = "l
     if answer_type not in {"label", "json", "text"}:
         raise ValueError(f"unknown answer_type {answer_type!r} (expected label/json/text)")
     paths = TaskPaths(root=root, task=name)
-    if paths.task_dir.exists():
-        raise TaskExistsError(f"task directory already exists: {paths.task_dir}")
+    # duplicate = a task.yaml exists, not merely the directory: an empty dir or
+    # a half-written scaffold isn't a task (list_tasks won't show it either),
+    # and refusing to re-run init there would leave it unrecoverable (issue #55)
+    if paths.task_config.exists():
+        raise TaskExistsError(f"task {name!r} already exists: {paths.task_config}")
 
-    (paths.task_dir / "prompts").mkdir(parents=True)
+    (paths.task_dir / "prompts").mkdir(parents=True, exist_ok=True)
     labels_block = (
         '  labels: ["ラベルA", "ラベルB"]   # answer_type=label では必須。実際のラベルに置き換えること\n'
         if answer_type == "label"
