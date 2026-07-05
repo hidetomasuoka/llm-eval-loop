@@ -117,91 +117,36 @@ def _mk_config(answer_type, judge_provider, model_provider):
     )
 
 
-def _mk_run_data(run_id="run-1"):
+def _mk_run_data(run_id="run-1", answer_type="label", judge_provider="j", model_providers=None):
+    models = [{"provider": p, "alias": f"m{i}", "tier": "small"} for i, p in enumerate(model_providers or [])]
     meta = {
         "run_id": run_id,
+        "answer_type": answer_type,
         "repeat": 1,
         "prompt_file": "prompts/base/task.txt",
         "prompt_sha256": "a" * 64,
-        "models": [],
+        "models": models,
         "promptfoo_version": "0.0.0-test",
-        "judge": {"provider": "j"},
+        "judge": {"provider": judge_provider},
     }
     return blog_mod.RunData(run_id=run_id, meta=meta, stats=[])
 
 
 def test_conditions_reproduce_adds_allow_same_judge_for_same_judge_text_config():
-    # config.yaml-style setup: llm-rubric judge is also an evaluated model, so
-    # a bare `evalloop build` aborts on iron rule #2 -- the reproduce block
-    # must carry the override or it isn't copy-pastable
+    # run snapshot records answer_type=text and judge/model sharing the same
+    # provider -- the reproduce block must carry --allow-same-judge or it won't
+    # be copy-pastable (build.py iron rule #2 would abort)
     config = _mk_config("text", judge_provider="p:shared", model_provider="p:shared")
-    md = blog_mod.render_conditions_md([_mk_run_data()], config, fig03_written=False)
+    run = _mk_run_data(answer_type="text", judge_provider="p:shared", model_providers=["p:shared"])
+    md = blog_mod.render_conditions_md([run], config, fig03_written=False)
     assert "evalloop build --allow-same-judge" in md
 
 
 def test_conditions_reproduce_plain_build_when_judge_is_independent():
     config = _mk_config("text", judge_provider="p:judge", model_provider="p:model")
-    md = blog_mod.render_conditions_md([_mk_run_data()], config, fig03_written=False)
+    run = _mk_run_data(answer_type="text", judge_provider="p:judge", model_providers=["p:model"])
+    md = blog_mod.render_conditions_md([run], config, fig03_written=False)
     assert "evalloop build\n" in md
-    assert "--allow-same-judge" not in md
-
-
-def _write_config_yaml(path: Path, answer_type: str, judge_provider: str, model_provider: str) -> None:
-    """Write a minimal config.yaml to *path* suitable for load_config()."""
-    data = {
-        "task": {"name": "t", "answer_type": answer_type, "prompt_file": "prompts/base/task.txt"},
-        "models": [{"provider": model_provider, "alias": "m1"}],
-        "run": {},
-        "judge": {"provider": judge_provider},
-        "optimize": {"target_alias": "m1", "reflection_provider": "r"},
-    }
-    path.write_text(yaml.dump(data), encoding="utf-8")
-
-
-def test_conditions_allow_same_judge_uses_build_config_path_not_blog_config(tmp_path):
-    # The blog command is invoked with a config that has independent judge/model
-    # providers, but the run's meta.config_path points to a config where they
-    # share a provider.  The reproduce block must derive --allow-same-judge from
-    # the *build* config (meta.config_path), not the blog config.
-    alt_config_path = tmp_path / "alt-config.yaml"
-    _write_config_yaml(alt_config_path, "text", judge_provider="p:shared", model_provider="p:shared")
-
-    blog_config = _mk_config("text", judge_provider="p:judge", model_provider="p:model")
-
-    meta = {
-        "run_id": "run-1",
-        "repeat": 1,
-        "prompt_file": "prompts/base/task.txt",
-        "prompt_sha256": "a" * 64,
-        "models": [],
-        "promptfoo_version": "0.0.0-test",
-        "judge": {"provider": "j"},
-        "config_path": str(alt_config_path),
-    }
-    run = blog_mod.RunData(run_id="run-1", meta=meta, stats=[])
-    md = blog_mod.render_conditions_md([run], blog_config, fig03_written=False)
-    assert "--allow-same-judge" in md
-
-
-def test_conditions_no_allow_same_judge_when_build_config_path_is_independent(tmp_path):
-    # Inverse: blog config has same-judge but the run's meta.config_path does not.
-    alt_config_path = tmp_path / "alt-config.yaml"
-    _write_config_yaml(alt_config_path, "text", judge_provider="p:judge", model_provider="p:model")
-
-    blog_config = _mk_config("text", judge_provider="p:shared", model_provider="p:shared")
-
-    meta = {
-        "run_id": "run-1",
-        "repeat": 1,
-        "prompt_file": "prompts/base/task.txt",
-        "prompt_sha256": "a" * 64,
-        "models": [],
-        "promptfoo_version": "0.0.0-test",
-        "judge": {"provider": "j"},
-        "config_path": str(alt_config_path),
-    }
-    run = blog_mod.RunData(run_id="run-1", meta=meta, stats=[])
-    md = blog_mod.render_conditions_md([run], blog_config, fig03_written=False)
     assert "--allow-same-judge" not in md
 
 
@@ -209,7 +154,18 @@ def test_conditions_reproduce_plain_build_for_label_config():
     # same provider on both sides is irrelevant outside answer_type=text:
     # build.py only enforces iron rule #2 for the llm-rubric path
     config = _mk_config("label", judge_provider="p:shared", model_provider="p:shared")
-    md = blog_mod.render_conditions_md([_mk_run_data()], config, fig03_written=False)
+    run = _mk_run_data(answer_type="label", judge_provider="p:shared", model_providers=["p:shared"])
+    md = blog_mod.render_conditions_md([run], config, fig03_written=False)
+    assert "--allow-same-judge" not in md
+
+
+def test_conditions_reproduce_same_judge_uses_meta_not_config():
+    # When the passed config disagrees with primary.meta, the meta (run
+    # snapshot) must win.  Here the config says "same judge" but the snapshot
+    # says the run actually used different providers.
+    config = _mk_config("text", judge_provider="p:shared", model_provider="p:shared")
+    run = _mk_run_data(answer_type="text", judge_provider="p:judge", model_providers=["p:model"])
+    md = blog_mod.render_conditions_md([run], config, fig03_written=False)
     assert "--allow-same-judge" not in md
 
 

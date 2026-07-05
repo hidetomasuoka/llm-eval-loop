@@ -1,8 +1,10 @@
 # llm-eval-loop
 
 [![CI](https://github.com/hidetomasuoka/llm-eval-loop/actions/workflows/ci.yml/badge.svg)](https://github.com/hidetomasuoka/llm-eval-loop/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](pyproject.toml)
 
-個人開発用のLLM評価ハーネス。1つのタスクについて、ローカル小型モデルからフロンティアモデルまで
+LLM評価ハーネス。1つのタスクについて、ローカル小型モデルからフロンティアモデルまで
 同一条件で評価し、次の問いに答える。
 
 > **どのモデルが必要精度を満たすか。それはいくら（コスト）で達成できるか。**
@@ -10,6 +12,10 @@
 実行と判定は [promptfoo](https://www.promptfoo.dev/) に任せ、Python（`evalloop`）は
 データセット管理・ジャッジ校正・失敗分析・[dspy](https://dspy.ai/) GEPAによるプロンプト最適化・
 ブログ公開用エクスポートを担当する薄いグルーレイヤーとして実装されている。
+
+個人プロジェクトとして開発している実験的なツールだが、git clone してそのまま使える状態を
+維持している（Windows実機・CIでの検証状況は後述）。issue / PR は歓迎 — 対応はベストエフォート。
+期待値と開発手順は [CONTRIBUTING.md](CONTRIBUTING.md) を参照。
 
 設計方針・データ仕様・鉄の掟など詳細な設計根拠は [docs/DESIGN.md](docs/DESIGN.md) を参照。
 

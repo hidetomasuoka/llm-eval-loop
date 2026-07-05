@@ -334,12 +334,16 @@ def render_conditions_md(runs: list[RunData], config, fig03_written: bool) -> st
         "```bash",
     ]
     config_flag = f" --config {primary.meta['config_path']}" if primary.meta.get("config_path", "config.yaml") != "config.yaml" else ""
-    # mirror build.py's iron-rule-#2 check: use the config that evalloop build
-    # will actually read (primary.meta['config_path']) so the flag is correct
-    # when the blog command's --config differs from the run's stored config_path.
-    _build_config_path = primary.meta.get("config_path")
-    _build_config = load_config(_build_config_path) if _build_config_path and _build_config_path != "config.yaml" else config
-    same_judge = _build_config.task.answer_type == "text" and any(m.provider == _build_config.judge.provider for m in _build_config.models)
+    # mirror build.py's iron-rule-#2 check: for a same-judge text config the
+    # copy-pasted command aborts unless --allow-same-judge is included.
+    # Use primary.meta (the run snapshot) so that the flag matches the actual
+    # config that was used for the run, not the config passed to blog().
+    _meta_judge_provider = primary.meta.get("judge", {}).get("provider", "")
+    _meta_models = primary.meta.get("models", [])
+    same_judge = (
+        primary.meta.get("answer_type") == "text"
+        and any(m.get("provider") == _meta_judge_provider for m in _meta_models)
+    )
     same_judge_flag = " --allow-same-judge" if same_judge else ""
     lines.append(f"evalloop build{config_flag}{same_judge_flag}")
     for run in runs:
