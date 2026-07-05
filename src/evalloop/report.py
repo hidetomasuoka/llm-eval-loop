@@ -8,8 +8,9 @@ README.md section 1; the failure x category pivot lives in analyze.py.
 from __future__ import annotations
 
 import json
+import math
 import statistics
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from evalloop.schemas import CaseResult, parse_promptfoo_output
@@ -33,12 +34,35 @@ class AliasStats:
     p50_latency_ms: float | None
     cache_rate: float
     error_count: int
+    # uncertainty additions (issue #11): a single pass rate hides both the
+    # binomial sampling error and the run-to-run noise repeat runs reveal
+    pass_ci_low: float | None = None
+    pass_ci_high: float | None = None
+    repeat_pass_rates: list[float] = field(default_factory=list)  # one entry per repeat_index; [] when repeat=1
+    repeat_stddev: float | None = None  # stddev across repeat_pass_rates; None when <2 repeats
+    flip_case_ids: list[str] = field(default_factory=list)  # cases graded both pass AND fail across repeats
+    flip_rate: float | None = None  # flips / cases-with->=2-repeats; None when no case has repeats
 
 
 def _percentile50(values: list[float]) -> float | None:
     if not values:
         return None
     return statistics.median(values)
+
+
+def wilson_interval(successes: int, n: int, z: float = 1.96) -> tuple[float, float]:
+    """95% Wilson score interval for a binomial proportion. NOTE: with
+    repeat>1 the graded rows are not independent samples (the same cases are
+    resampled), so this interval is optimistic -- repeat_stddev is the
+    empirical run-to-run noise measure; this is the sampling-error floor.
+    """
+    if n == 0:
+        return (0.0, 1.0)
+    p_hat = successes / n
+    denom = 1 + z * z / n
+    center = (p_hat + z * z / (2 * n)) / denom
+    margin = (z / denom) * math.sqrt(p_hat * (1 - p_hat) / n + z * z / (4 * n * n))
+    return (max(0.0, center - margin), min(1.0, center + margin))
 
 
 def compute_alias_stats(results: list[CaseResult]) -> list[AliasStats]:
@@ -48,8 +72,29 @@ def compute_alias_stats(results: list[CaseResult]) -> list[AliasStats]:
 
     stats: list[AliasStats] = []
     for alias, rows in sorted(by_alias.items()):
-        passed_flags = [r.passed for r in rows if r.passed is not None]
-        pass_rate = (sum(1 for p in passed_flags if p) / len(passed_flags)) if passed_flags else None
+        graded = [r for r in rows if r.passed is not None]
+        successes = sum(1 for r in graded if r.passed)
+        pass_rate = (successes / len(graded)) if graded else None
+        ci_low, ci_high = wilson_interval(successes, len(graded)) if graded else (None, None)
+
+        # per-repeat pass rates (repeat_index is per (case, alias) -- schemas.py)
+        by_repeat: dict[int, list[bool]] = {}
+        for r in graded:
+            by_repeat.setdefault(r.repeat_index, []).append(bool(r.passed))
+        repeat_pass_rates = (
+            [sum(flags) / len(flags) for _idx, flags in sorted(by_repeat.items())] if len(by_repeat) > 1 else []
+        )
+        repeat_stddev = statistics.stdev(repeat_pass_rates) if len(repeat_pass_rates) >= 2 else None
+
+        # flip = a case graded more than once whose verdict is not constant
+        verdicts_by_case: dict[str, list[bool]] = {}
+        for r in graded:
+            if r.case_id:
+                verdicts_by_case.setdefault(r.case_id, []).append(bool(r.passed))
+        multi_repeat_cases = {cid: flags for cid, flags in verdicts_by_case.items() if len(flags) > 1}
+        flip_case_ids = sorted(cid for cid, flags in multi_repeat_cases.items() if len(set(flags)) > 1)
+        flip_rate = (len(flip_case_ids) / len(multi_repeat_cases)) if multi_repeat_cases else None
+
         costs = [r.cost or 0.0 for r in rows]
         latencies = [r.latency_ms for r in rows if r.latency_ms is not None]
         cache_hits = sum(1 for r in rows if r.cached)
@@ -64,6 +109,12 @@ def compute_alias_stats(results: list[CaseResult]) -> list[AliasStats]:
                 p50_latency_ms=_percentile50(latencies),
                 cache_rate=(cache_hits / len(rows)) if rows else 0.0,
                 error_count=errors,
+                pass_ci_low=ci_low,
+                pass_ci_high=ci_high,
+                repeat_pass_rates=repeat_pass_rates,
+                repeat_stddev=repeat_stddev,
+                flip_case_ids=flip_case_ids,
+                flip_rate=flip_rate,
             )
         )
     return stats
@@ -90,14 +141,24 @@ def render_markdown(run_id: str, meta: dict, stats: list[AliasStats], warnings_l
     if warnings_lines:
         lines.append("")
 
-    lines.append("| alias | n | pass_rate | total_cost_usd | avg_cost_usd | p50_latency_ms | cache_rate | errors |")
-    lines.append("|---|---:|---:|---:|---:|---:|---:|---:|")
+    lines.append(
+        "| alias | n | pass_rate | pass_95ci | repeat_stddev | total_cost_usd | avg_cost_usd "
+        "| p50_latency_ms | cache_rate | errors |"
+    )
+    lines.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
     for s in stats:
+        ci = (
+            f"[{format(s.pass_ci_low, '.1%')}, {format(s.pass_ci_high, '.1%')}]"
+            if s.pass_ci_low is not None and s.pass_ci_high is not None
+            else "n/a"
+        )
         lines.append(
-            "| {alias} | {n} | {pass_rate} | {total_cost} | {avg_cost} | {p50} | {cache} | {errors} |".format(
+            "| {alias} | {n} | {pass_rate} | {ci} | {stddev} | {total_cost} | {avg_cost} | {p50} | {cache} | {errors} |".format(
                 alias=s.alias,
                 n=s.n,
                 pass_rate=fmt(s.pass_rate, ".1%"),
+                ci=ci,
+                stddev=fmt(s.repeat_stddev, ".1%"),
                 total_cost=fmt(s.total_cost_usd, ".4f"),
                 avg_cost=fmt(s.avg_cost_usd, ".6f"),
                 p50=fmt(s.p50_latency_ms, ".0f"),
@@ -106,6 +167,31 @@ def render_markdown(run_id: str, meta: dict, stats: list[AliasStats], warnings_l
             )
         )
     lines.append("")
+    lines.append(
+        "> pass_95ci: Wilson score interval over all graded rows (optimistic when repeat>1 -- "
+        "repeats of the same case are not independent samples). repeat_stddev: stddev of the "
+        "per-repeat pass rates; n/a when repeat=1."
+    )
+    lines.append("")
+
+    # repeat stability section, only when at least one alias actually has repeats
+    repeat_stats = [s for s in stats if s.repeat_pass_rates]
+    if repeat_stats:
+        lines.append("## Repeat stability (run-to-run variance)")
+        lines.append("")
+        lines.append('A case "flips" when it is graded both pass and fail across repeats of the same run.')
+        lines.append("")
+        for s in repeat_stats:
+            rates = ", ".join(format(r, ".1%") for r in s.repeat_pass_rates)
+            lines.append(
+                f"- **{s.alias}**: per-repeat pass rates [{rates}], stddev {fmt(s.repeat_stddev, '.1%')}, "
+                f"flip rate {fmt(s.flip_rate, '.1%')} ({len(s.flip_case_ids)} case(s))"
+            )
+            if s.flip_case_ids:
+                shown = ", ".join(s.flip_case_ids[:20])
+                more = f" (+{len(s.flip_case_ids) - 20} more)" if len(s.flip_case_ids) > 20 else ""
+                lines.append(f"  - flipped: {shown}{more}")
+        lines.append("")
     return "\n".join(lines)
 
 

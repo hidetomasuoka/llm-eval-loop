@@ -525,21 +525,33 @@ def compare(run_a: str, run_b: str) -> Path:
     lines = [
         f"# Compare: {run_a} (A, before) vs {run_b} (B, after)",
         "",
-        "| alias | pass_rate A | pass_rate B | delta | cost A | cost B | cost delta |",
-        "|---|---:|---:|---:|---:|---:|---:|",
+        "| alias | pass_rate A | pass_rate B | delta | beyond_95ci | cost A | cost B | cost delta |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for alias in aliases:
         a, b = stats_a.get(alias), stats_b.get(alias)
         pa = a.pass_rate if a else None
         pb = b.pass_rate if b else None
         delta = (pb - pa) if (pa is not None and pb is not None) else None
+        # issue #11: flag whether the delta clears the noise floor -- "yes"
+        # only when the two Wilson 95% intervals do not overlap at all
+        if a and b and a.pass_ci_low is not None and b.pass_ci_low is not None:
+            non_overlap = b.pass_ci_low > a.pass_ci_high or b.pass_ci_high < a.pass_ci_low
+            beyond_ci = "yes" if non_overlap else "no"
+        else:
+            beyond_ci = "n/a"
         ca = a.total_cost_usd if a else None
         cb = b.total_cost_usd if b else None
         cdelta = (cb - ca) if (ca is not None and cb is not None) else None
         lines.append(
-            f"| {alias} | {_fmt_pct(pa)} | {_fmt_pct(pb)} | {_fmt_pct_signed(delta)} | "
+            f"| {alias} | {_fmt_pct(pa)} | {_fmt_pct(pb)} | {_fmt_pct_signed(delta)} | {beyond_ci} | "
             f"{_fmt_usd(ca)} | {_fmt_usd(cb)} | {_fmt_usd_signed(cdelta)} |"
         )
+    lines.append("")
+    lines.append(
+        "> beyond_95ci: yes when the Wilson 95% intervals of A and B do not overlap "
+        "(a conservative significance check; overlapping intervals mean the delta may be noise)."
+    )
     lines.append("")
 
     report_mod.REPORTS_DIR.mkdir(parents=True, exist_ok=True)

@@ -404,7 +404,10 @@ def parse_promptfoo_output(path: str | Path) -> ParsedRun:
 
     rows, warns = _extract_result_rows(raw)
     results: list[CaseResult] = []
-    repeat_counters: dict[str, int] = {}
+    # keyed by (case_id, alias): a multi-provider run interleaves providers for
+    # the same case, so counting per case_id alone would spread one provider's
+    # repeats across indices and break per-alias repeat aggregation (report.py)
+    repeat_counters: dict[tuple[str, str | None], int] = {}
 
     for i, row in enumerate(rows):
         if not isinstance(row, dict):
@@ -437,9 +440,10 @@ def parse_promptfoo_output(path: str | Path) -> ParsedRun:
         token_usage = response.get("tokenUsage") or _nested_get(grading, "tokensUsed", default={}) or {}
         cached = bool(response.get("cached", False))
 
-        repeat_index = repeat_counters.get(case_id, 0) if case_id else 0
+        counter_key = (case_id, alias)
+        repeat_index = repeat_counters.get(counter_key, 0) if case_id else 0
         if case_id:
-            repeat_counters[case_id] = repeat_index + 1
+            repeat_counters[counter_key] = repeat_index + 1
 
         passed = row.get("success")
         if passed is None:
