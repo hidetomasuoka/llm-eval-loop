@@ -15,6 +15,7 @@ Iron rules enforced here:
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -95,7 +96,12 @@ def _build_default_test(config: Config, allow_same_judge: bool, paths: TaskPaths
     default_test: dict = {"vars": {}, "assert": []}
 
     if answer_type == "label":
-        default_test["vars"]["labels"] = config.task.labels
+        # NOTE: must be a JSON-encoded string, not a real YAML/JS array. promptfoo
+        # treats any array-valued var (including ones merged in from defaultTest)
+        # as a test matrix dimension and expands one test per element -- passing
+        # the 9-label list directly turned 5 cases into 45 duplicated rows (one
+        # per label) instead of 5. label_match.js JSON.parses this back to an array.
+        default_test["vars"]["labels"] = json.dumps(config.task.labels, ensure_ascii=False)
         default_test["assert"] = [
             {"type": "javascript", "value": f"file://{to_promptfoo_relpath(LABEL_MATCH_JS, promptfoo_dir)}"}
         ]

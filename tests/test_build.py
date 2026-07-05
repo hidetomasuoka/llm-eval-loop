@@ -1,3 +1,4 @@
+import json
 import shutil
 
 import pytest
@@ -61,7 +62,11 @@ def test_default_test_label_uses_label_match_js(isolated_root):
     cfg = _make_config(answer_type="label")
     paths = TaskPaths(root=isolated_root, task="t1")
     default_test = build_mod._build_default_test(cfg, allow_same_judge=False, paths=paths)
-    assert default_test["vars"]["labels"] == cfg.task.labels
+    # labels must be a JSON-encoded STRING, not a real array: promptfoo expands
+    # array-valued vars into a test matrix (one test per element), silently
+    # multiplying every case by len(labels)
+    assert isinstance(default_test["vars"]["labels"], str)
+    assert json.loads(default_test["vars"]["labels"]) == cfg.task.labels
     assert default_test["assert"][0]["type"] == "javascript"
     assert "label_match.js" in default_test["assert"][0]["value"]
 
