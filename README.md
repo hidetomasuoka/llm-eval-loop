@@ -136,8 +136,8 @@ label正規化・train/test split分離・output.jsonパーサ・ブログ公開
 
 CI（[.github/workflows/ci.yml](.github/workflows/ci.yml)）は push / PR ごとに
 Ubuntu / Windows × Python 3.11 / 3.12 で pytest + ruff を実行する。さらに master への
-push 時、リポジトリの secrets に `ANTHROPIC_API_KEY` が設定されている場合のみ、
-haiku45 単独・3ケースの実スモーク（build → run → report、1回 $0.05 未満）を流す。
+push 時、ランナー上の Ollama（qwen2.5:0.5b）で3ケースの実スモーク（build → run → report）を
+流す。ローカルモデルなので APIキー・secrets 登録は不要、コストも0。
 
 ## Windows実地検証で見つかった問題と修正
 

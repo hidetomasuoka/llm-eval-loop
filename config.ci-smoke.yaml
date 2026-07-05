@@ -2,7 +2,8 @@
 # CI スモークテスト専用 config（.github/workflows/ci.yml の smoke ジョブが使用）
 #
 # 目的は build -> run -> report のパイプライン疎通確認であって精度測定ではない。
-# 最安の haiku45 単独 + `evalloop run --limit 3` で1回あたり $0.05 未満に抑える。
+# CIランナー上の Ollama + 超小型ローカルモデル（qwen2.5:0.5b）で実行するため、
+# APIキー不要・コスト0で回せる。
 #
 # 注意: task セクションは config.yaml（本番タスク）のミラー。本タスクを
 #       差し替えたときはこのファイルの task も追随させること。
@@ -15,13 +16,13 @@ task:
   labels: []
   json_schema_file: null
 
-# スモークは最安モデル1つだけを評価する
+# スモークはCIランナーのCPUで動く最小のローカルモデル1つだけを評価する
 models:
-  - provider: anthropic:messages:claude-haiku-4-5-20251001
-    alias: haiku45
-    tier: small
-    price_in_per_mtok: 1.0
-    price_out_per_mtok: 5.0
+  - provider: ollama:chat:qwen2.5:0.5b
+    alias: qwen05b
+    tier: local
+    price_in_per_mtok: 0.0    # ローカル実行なのでコストは0
+    price_out_per_mtok: 0.0
 
 run:
   repeat: 1
@@ -30,15 +31,19 @@ run:
   cost_warn_usd: 3.0
 
 judge:
-  # 被評価モデル（haiku45）と別providerなので --allow-same-judge は不要
-  provider: anthropic:messages:claude-sonnet-4-6
+  # スモークでは評価対象と同一のローカルモデルをジャッジに使う（APIキー不要を優先）。
+  # iron rule #2（judge == 被評価モデル）に該当するため、buildには
+  # --allow-same-judge が必要（ci.yml側で明示的に渡している）。
+  # ジャッジ品質は問わない — スモークの成否は output.json / meta.json の生成と
+  # report 作成の成功で判定し、pass rate では判定しないため。
+  provider: ollama:chat:qwen2.5:0.5b
   threshold: 0.8
   agreement_threshold: 0.85
   rubric_file: prompts/base/judge_rubric.txt
 
 optimize:
   # スモークでは optimize は実行しない（スキーマ上の必須キーなので置いてあるだけ）
-  target_alias: haiku45
+  target_alias: qwen05b
   reflection_provider: anthropic/claude-opus-4-8
   auto: light
 
