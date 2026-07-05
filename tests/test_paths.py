@@ -42,6 +42,15 @@ def test_init_existing_task_raises(isolated_root):
         paths_mod.init_task_workspace("dup", root=isolated_root)
 
 
+def test_init_proceeds_over_dir_without_task_yaml(isolated_root):
+    # an empty/half-written directory is not a task (list_tasks ignores it);
+    # init must be re-runnable there instead of dead-ending (issue #55)
+    (isolated_root / "tasks" / "leftover" / "prompts").mkdir(parents=True)
+    tp = paths_mod.init_task_workspace("leftover", root=isolated_root)
+    assert tp.task_config.exists()
+    assert "leftover" in paths_mod.list_tasks(isolated_root)
+
+
 def test_init_invalid_name_raises(isolated_root):
     with pytest.raises(paths_mod.TaskNotFoundError):
         paths_mod.init_task_workspace("Bad Name!", root=isolated_root)

@@ -43,6 +43,31 @@ def _make_config():
     )
 
 
+def test_run_meta_models_reflect_built_provider_subset(isolated_root, monkeypatch):
+    """`build --models` narrows the built promptfoo config; meta.json must list
+    only what was actually evaluated, not the full task config (issue #49)."""
+    paths = TaskPaths(root=isolated_root, task="t1")
+    cfg = _make_config()
+    cfg.models.append(ModelConfig(provider="ollama:chat:qwen2.5:7b", alias="qwen7b", tier="local"))
+    _prepare_env(monkeypatch, paths)
+    # the built artifact contains only haiku45, as `build --models haiku45` would emit
+    paths.promptfoo_config.write_text(
+        "providers:\n  - id: anthropic:messages:claude-haiku-4-5-20251001\n    label: haiku45\n",
+        encoding="utf-8",
+    )
+
+    def fake_eval(config_path, output_path, **kwargs):
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json.dumps({"results": {"results": []}}), encoding="utf-8")
+        return _FakeCompletedProcess(returncode=0)
+
+    monkeypatch.setattr(run_mod, "run_promptfoo_eval", fake_eval)
+
+    outcome = run_mod.run(cfg, paths)
+
+    assert [m["alias"] for m in outcome.meta["models"]] == ["haiku45"]
+
+
 def _prepare_env(monkeypatch, paths):
     monkeypatch.setattr(run_mod, "get_promptfoo_version", lambda: "0.0.0-test")
     monkeypatch.setattr(run_mod, "get_node_version", lambda: "v22.22.0")

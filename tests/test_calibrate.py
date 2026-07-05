@@ -29,9 +29,14 @@ def _write_human_labels(path, labels):
             f.write(json.dumps(label, ensure_ascii=False) + "\n")
 
 
-def _make_config(rubric_file):
+def _make_config(rubric_file, answer_type="text", labels=None):
     return Config(
-        task=TaskConfig(name="t1", answer_type="text", prompt_file="tasks/sample-inquiry/prompts/task.txt"),
+        task=TaskConfig(
+            name="t1",
+            answer_type=answer_type,
+            prompt_file="tasks/sample-inquiry/prompts/task.txt",
+            labels=labels or [],
+        ),
         models=[
             ModelConfig(provider="ollama:chat:qwen2.5:7b", alias="qwen7b", tier="local"),
             ModelConfig(provider="anthropic:messages:claude-haiku-4-5-20251001", alias="haiku45", tier="small"),
@@ -89,6 +94,37 @@ def _row(case_id, alias, passed):
         "gradingResult": {"pass": passed, "score": 1 if passed else 0, "reason": "r"},
         "success": passed,
     }
+
+
+def test_calibrate_fresh_mode_label_task_replays_deterministically(calibrate_env, monkeypatch):
+    """label tasks are graded by a deterministic assert, so fresh calibration
+    replays output_raw through the Python port of label_match.js -- no
+    promptfoo round-trip and no rubric file needed (issue #50)."""
+    paths = calibrate_env["paths"]
+    labels4 = ["契約照会", "障害報告", "機能要望", "その他"]
+    cfg = _make_config(rubric_file="does-not-exist.txt", answer_type="label", labels=labels4)
+    _write_human_labels(
+        paths.human_labels,
+        [
+            # exact label match -> judge pass, human pass -> agree
+            {"case_id": "case-0001", "model_label": "haiku45", "output_raw": "契約照会", "human_verdict": "pass"},
+            # containment fallback -> judge pass, human pass -> agree
+            {"case_id": "case-0002", "model_label": "haiku45", "output_raw": "回答: 障害報告 です", "human_verdict": "pass"},
+            # wrong label (golden expects 機能要望) -> judge fail, human fail -> agree
+            {"case_id": "case-0003", "model_label": "haiku45", "output_raw": "その他", "human_verdict": "fail"},
+        ],
+    )
+
+    def _no_promptfoo(*args, **kwargs):
+        raise AssertionError("deterministic fresh calibration must not shell out to promptfoo")
+
+    monkeypatch.setattr(run_mod, "run_promptfoo_eval", _no_promptfoo)
+
+    result = calibrate_mod.calibrate(cfg, paths, run_id=None)
+
+    assert result.n_compared == 3
+    assert result.agreement_rate == pytest.approx(1.0)
+    assert result.status == "calibrated"
 
 
 def test_calibrate_run_id_mode_high_agreement(calibrate_env):

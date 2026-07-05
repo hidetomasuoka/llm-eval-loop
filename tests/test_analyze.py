@@ -333,6 +333,8 @@ def test_pivot_cross_tab_with_unassigned_bucket(analyze_env):
     assert "ラベル取り違え" in content
     assert "unassigned" in content.lower() or "未割当" in content
     assert "haiku45" in content and "qwen7b" in content
+    # the footer must print the taxonomy path actually used, not None (issue #52)
+    assert "`None`" not in content
 
 
 def test_pivot_missing_taxonomy_raises(analyze_env):
