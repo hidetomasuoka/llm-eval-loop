@@ -14,7 +14,7 @@ An LLM evaluation harness. It evaluates one task across models — from small lo
 
 Execution and grading are delegated to [promptfoo](https://www.promptfoo.dev/); the Python layer (`evalloop`) is a thin glue layer that owns dataset management, judge calibration, failure analysis, prompt optimization with [dspy](https://dspy.ai/) GEPA, and publish-guarded blog export.
 
-This is an experimental personal project, but it is kept in a state you can `git clone` and use as-is (see the verification sections below for what has actually been exercised on real machines and in CI). Issues and PRs are welcome — support is best-effort. See [CONTRIBUTING.md](CONTRIBUTING.md) for expectations and the development workflow.
+This is an experimental personal project, but it is kept in a state you can `git clone` and use as-is (see the for mac / for windows verification sections below for what has actually been exercised on real machines and in CI). Issues and PRs are welcome — support is best-effort. See [CONTRIBUTING.md](CONTRIBUTING.md) for expectations and the development workflow.
 
 For the design rationale, data specifications, and the project's non-negotiable "iron rules", see [docs/DESIGN.md](docs/DESIGN.md) (full design doc, Japanese).
 
@@ -123,21 +123,32 @@ uv run ruff check .  # linter (the same check CI runs)
 
 Everything related to the iron rules — label normalization, train/test split separation, the output.json parser, the blog publish guards — is covered by unit tests (`tests/`). Tests never write into the checkout (see the `isolated_artifact_paths` fixture in [tests/conftest.py](tests/conftest.py)).
 
-CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs pytest + ruff on Ubuntu / Windows × Python 3.11 / 3.12 for every push and PR. Additionally, on pushes to master, if the `OLLAMA_API_KEY` secret is configured, a 3-case live smoke (`--task sample-inquiry --models gptoss20b`: build → run → report) runs against Ollama Cloud; it is skipped automatically otherwise. No metered API cost is incurred.
+CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs pytest + ruff on Ubuntu / Windows × Python 3.11 / 3.12 for every push and PR (macOS verification status is noted in the for mac section below). Additionally, on pushes to master, if the `OLLAMA_API_KEY` secret is configured, a 3-case live smoke (`--task sample-inquiry --models gptoss20b`: build → run → report) runs against Ollama Cloud; it is skipped automatically otherwise. No metered API cost is incurred.
 
-## Issues found (and fixed) during live Windows verification
+## Live verification: for mac / for windows
 
-The commands `doctor`/`build`/`run`/`report`/`blog` were exercised on a real Windows 11 machine with Node.js and Ollama (qwen2.5:7b), which surfaced the following bugs that fully mocked unit tests had not caught:
+The commands `doctor`/`build`/`run`/`report`/`blog` were exercised on two real machines. Bugs that fully mocked unit tests had not caught were surfaced during this live verification.
+
+### for mac
+
+- macOS (Apple Silicon) + Node.js + Ollama (qwen2.5:7b)
+- `subprocess` and path resolution follow standard Unix behavior, so no OS-specific bugs were found
+- The CJK-font-detection → matplotlib `font.family` bug (below) was also discovered and fixed on macOS
+- Both the bundled `sample-inquiry` and CUAD-100 (after data acquisition) tasks have been confirmed to run the full pipeline
+
+### for windows
+
+The commands were exercised on a real Windows 11 machine with Node.js and Ollama (qwen2.5:7b), which surfaced the following bugs that fully mocked unit tests had not caught:
 
 - **`subprocess.run(["npx", ...])` raises `FileNotFoundError` on Windows**: `npx` is actually `npx.cmd`, and `subprocess` without a shell does not apply PATHEXT resolution. Fixed by resolving through `shutil.which("npx")`
 - **promptfoo's actual Node.js requirement is `^20.20.0 || >=22.22.0`**: 21.x and 22.0–22.21.x are hard-rejected by promptfoo itself at startup (you can't tell from `node --version` alone)
 - **`subprocess.run(..., text=True)` crashes under cp932 (the default code page on Japanese Windows)**: when promptfoo's output contains characters not representable in cp932, the reader thread dies with `UnicodeDecodeError`. Fixed by specifying `encoding="utf-8", errors="replace"` explicitly
 - **`llm-rubric` with `value: file://...` does not substitute `{{input}}`/`{{expected}}`**: inspecting the actual grading prompt showed that file://-referenced rubrics bypass Nunjucks templating and the placeholders reach the judge verbatim (inline `value` strings ARE templated). Fixed by reading the rubric file's content and embedding it as an inline string (`build.py`, `calibrate.py`)
-- A bug where a detected CJK font was never actually set as matplotlib's `font.family`, causing garbled Japanese chart labels, was also fixed (found during the M5 implementation)
+- A bug where a detected CJK font was never actually set as matplotlib's `font.family`, causing garbled Japanese chart labels, was also fixed (found during the M5 implementation; a shared mac/windows bug re-confirmed during windows live verification)
 
 These issues only surfaced when actually evaluating the CUAD-100 task (below) — a demonstration of the limits of purely mock-based testing.
 
-## Live verification on Windows + CUAD-100
+## for windows + CUAD-100 live verification
 
 Using `config.local-verify.yaml` (Ollama qwen2.5:7b only, no API keys), the full `build` → `run` → `report` → `blog` pipeline was executed on a real Windows machine. On a 5-case subset, the grading logic (llm-rubric judge) was confirmed to produce meaningful pass/fail verdicts (e.g. an output of "no applicable clause" is correctly failed when the gold answer contains a clause, and passed when the gold answer is also "no applicable clause"). A full run over all 80 test-split cases takes a long time due to CPU-bound local inference (measured ~136 seconds per case = two model calls: extraction + grading).
 
