@@ -1,0 +1,42 @@
+# =============================================================================
+# CUAD-100 契約条項抽出タスク
+#
+# データ（golden.jsonl / human_labels.jsonl 等）は git 管理外（issue #47 の
+# データポリシー）。取得・再生成の手順は PROVENANCE.md を参照。
+# プロンプトは prompts/task.txt・prompts/judge_rubric.txt に規約固定。
+# =============================================================================
+
+task:
+  # CUAD (Contract Understanding Atticus Dataset) v1 の100件サブセットを使った
+  # 契約条項抽出タスク。抽出式QA（該当箇所のテキストを抜き出す）なので
+  # answer_type=text で llm-rubric ジャッジを使う
+  answer_type: text
+  labels: []
+  json_schema_file: null
+
+# グローバル registry（config.yaml）からの alias 選択
+models: [qwen7b, haiku45, sonnet46, opus48, fable5]
+
+judge:
+  # llm-rubric の grader。必ず明示する（環境キー依存の暗黙デフォルトグレーダーは禁止）
+  # 被評価モデルと同一providerの場合、build は既定で停止する（--allow-same-judge でのみ回避）
+  #
+  # 注意: このタスクは models に5段階の全ティアを含めており、judgeにはそのうち
+  # sonnet46と同一providerを使っている。そのため build には
+  # `evalloop build --task cuad100 --allow-same-judge` が必要（sonnet46の行だけ
+  # 自己採点になる既知のトレードオフとして許容している）。
+  provider: anthropic:messages:claude-sonnet-4-6
+  threshold: 0.8
+  agreement_threshold: 0.85     # human_labels.jsonl とのジャッジ一致率のしきい値
+
+optimize:
+  target_alias: qwen7b                              # GEPAで最適化する対象モデル
+  reflection_provider: anthropic/claude-opus-4-8     # dspy側の表記（大型モデル）
+  auto: light
+
+blog:
+  jpy_per_usd: 150               # コストの円換算表示用（0で非表示）
+  slug_prefix: llm-eval
+  allowed_sources:                # 公開ガードが許可するmeta.sourceの値
+    - "self-made"
+    - "CUAD v1 (The Atticus Project, CC BY 4.0) via chenghao/cuad_qa mirror on Hugging Face"

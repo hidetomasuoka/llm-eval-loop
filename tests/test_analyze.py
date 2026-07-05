@@ -5,43 +5,46 @@ import pytest
 import yaml
 
 from evalloop import analyze as analyze_mod
-from evalloop import build as build_mod
 from evalloop import run as run_mod
+from evalloop.paths import REPO_ROOT, TaskPaths
+from evalloop.schemas import (
+    BlogConfig,
+    Config,
+    JudgeConfig,
+    ModelConfig,
+    OptimizeConfig,
+    RunConfig,
+    TaskConfig,
+)
 
-REPO_ROOT = build_mod.REPO_ROOT
+
+def _make_config(judge_provider="anthropic:messages:claude-sonnet-4-6", models=None):
+    return Config(
+        task=TaskConfig(name="t1", answer_type="text", prompt_file="tasks/sample-inquiry/prompts/task.txt"),
+        models=models
+        or [
+            ModelConfig(provider="ollama:chat:qwen2.5:7b", alias="qwen7b", tier="local"),
+            ModelConfig(provider="anthropic:messages:claude-haiku-4-5-20251001", alias="haiku45", tier="small"),
+        ],
+        run=RunConfig(),
+        judge=JudgeConfig(provider=judge_provider),
+        optimize=OptimizeConfig(target_alias="qwen7b", reflection_provider="r"),
+        blog=BlogConfig(),
+        path=REPO_ROOT / "config.yaml",
+    )
 
 
 @pytest.fixture
-def analyze_env(tmp_path, monkeypatch):
-    runs_dir = tmp_path / "runs"
-    notes_path = tmp_path / "notes.csv"
-    taxonomy_path = tmp_path / "taxonomy.yaml"
-    taxonomy_draft_path = tmp_path / "taxonomy.draft.yaml"
-    reports_dir = tmp_path / "reports"
-    golden_path = tmp_path / "golden.jsonl"  # left missing unless a test writes it
-
-    monkeypatch.setattr(run_mod, "RUNS_DIR", runs_dir)
-    monkeypatch.setattr(analyze_mod, "NOTES_PATH", notes_path)
-    monkeypatch.setattr(analyze_mod, "TAXONOMY_PATH", taxonomy_path)
-    monkeypatch.setattr(analyze_mod, "TAXONOMY_DRAFT_PATH", taxonomy_draft_path)
-    monkeypatch.setattr(analyze_mod, "REPORTS_DIR", reports_dir)
-    monkeypatch.setattr(build_mod, "GOLDEN_PATH", golden_path)
-    # cluster() writes its throwaway _cluster_tmp.yaml into PROMPTFOO_DIR;
-    # keep even that transient write out of the real checkout
-    monkeypatch.setattr(build_mod, "PROMPTFOO_DIR", tmp_path / "promptfoo")
-
-    return {
-        "runs_dir": runs_dir,
-        "notes_path": notes_path,
-        "taxonomy_path": taxonomy_path,
-        "taxonomy_draft_path": taxonomy_draft_path,
-        "reports_dir": reports_dir,
-        "golden_path": golden_path,
-    }
+def analyze_env(isolated_root):
+    paths = TaskPaths(root=isolated_root, task="t1")
+    # cluster()/pivot() write into the task workspace (taxonomy draft, notes);
+    # the fixture pre-creates the task dir like a real scaffolded task would
+    paths.task_dir.mkdir(parents=True)
+    return paths
 
 
-def _write_run_output(runs_dir, run_id, rows):
-    run_dir = runs_dir / run_id
+def _write_run_output(paths, run_id, rows):
+    run_dir = paths.runs_dir / run_id
     run_dir.mkdir(parents=True)
     (run_dir / "output.json").write_text(json.dumps({"results": {"results": rows}}), encoding="utf-8")
 
@@ -64,7 +67,7 @@ def _row(case_id, alias, passed, category="基本", output="x", error=None):
 
 def test_failures_writes_jsonl_and_notes_csv(analyze_env):
     _write_run_output(
-        analyze_env["runs_dir"],
+        analyze_env,
         "run-1",
         [
             _row("case-0001", "haiku45", True),
@@ -73,8 +76,9 @@ def test_failures_writes_jsonl_and_notes_csv(analyze_env):
         ],
     )
 
-    failures_path, notes_path = analyze_mod.failures("run-1")
+    failures_path, notes_path = analyze_mod.failures("run-1", analyze_env)
 
+    assert notes_path == analyze_env.notes
     lines = failures_path.read_text(encoding="utf-8").strip().splitlines()
     assert len(lines) == 2
     ids = {json.loads(line)["case_id"] for line in lines}
@@ -91,9 +95,9 @@ def test_failures_includes_errored_rows(analyze_env):
     errored_row = _row("case-0005", "haiku45", passed=None, error="rate limited")
     errored_row["gradingResult"] = {}
     errored_row["success"] = None
-    _write_run_output(analyze_env["runs_dir"], "run-1", [errored_row])
+    _write_run_output(analyze_env, "run-1", [errored_row])
 
-    failures_path, _ = analyze_mod.failures("run-1")
+    failures_path, _ = analyze_mod.failures("run-1", analyze_env)
 
     lines = failures_path.read_text(encoding="utf-8").strip().splitlines()
     assert len(lines) == 1
@@ -103,11 +107,11 @@ def test_failures_includes_errored_rows(analyze_env):
 
 
 def test_failures_is_idempotent_no_duplicate_notes_rows(analyze_env):
-    _write_run_output(analyze_env["runs_dir"], "run-1", [_row("case-0002", "haiku45", False)])
-    analyze_mod.failures("run-1")
+    _write_run_output(analyze_env, "run-1", [_row("case-0002", "haiku45", False)])
+    analyze_mod.failures("run-1", analyze_env)
 
     # hand-annotate the note column, like a human would
-    notes_path = analyze_env["notes_path"]
+    notes_path = analyze_env.notes
     with notes_path.open(encoding="utf-8", newline="") as f:
         rows = list(csv.DictReader(f))
     rows[0]["note"] = "typo in label"
@@ -117,7 +121,7 @@ def test_failures_is_idempotent_no_duplicate_notes_rows(analyze_env):
         writer.writerows(rows)
 
     # re-running failures for the same run must not duplicate or clobber the hand note
-    analyze_mod.failures("run-1")
+    analyze_mod.failures("run-1", analyze_env)
 
     with notes_path.open(encoding="utf-8", newline="") as f:
         rows_after = list(csv.DictReader(f))
@@ -127,12 +131,12 @@ def test_failures_is_idempotent_no_duplicate_notes_rows(analyze_env):
 
 def test_failures_missing_run_raises(analyze_env):
     with pytest.raises(analyze_mod.AnalyzeError):
-        analyze_mod.failures("does-not-exist")
+        analyze_mod.failures("does-not-exist", analyze_env)
 
 
 def test_failures_fills_input_head_from_golden(analyze_env):
     long_input = "本契約は解約可能である。" * 30  # far longer than INPUT_HEAD_LEN
-    with analyze_env["golden_path"].open("w", encoding="utf-8") as f:
+    with analyze_env.golden.open("w", encoding="utf-8") as f:
         f.write(
             json.dumps(
                 {
@@ -147,7 +151,7 @@ def test_failures_fills_input_head_from_golden(analyze_env):
             + "\n"
         )
     _write_run_output(
-        analyze_env["runs_dir"],
+        analyze_env,
         "run-1",
         [
             _row("case-0002", "haiku45", False),
@@ -155,7 +159,7 @@ def test_failures_fills_input_head_from_golden(analyze_env):
         ],
     )
 
-    _, notes_path = analyze_mod.failures("run-1")
+    _, notes_path = analyze_mod.failures("run-1", analyze_env)
 
     with notes_path.open(encoding="utf-8", newline="") as f:
         rows = {r["case_id"]: r for r in csv.DictReader(f)}
@@ -164,10 +168,10 @@ def test_failures_fills_input_head_from_golden(analyze_env):
 
 
 def test_failures_tolerates_missing_golden(analyze_env):
-    # analyze_env leaves golden_path missing; triage must still work
-    _write_run_output(analyze_env["runs_dir"], "run-1", [_row("case-0002", "haiku45", False)])
+    # analyze_env leaves golden.jsonl missing; triage must still work
+    _write_run_output(analyze_env, "run-1", [_row("case-0002", "haiku45", False)])
 
-    _, notes_path = analyze_mod.failures("run-1")
+    _, notes_path = analyze_mod.failures("run-1", analyze_env)
 
     with notes_path.open(encoding="utf-8", newline="") as f:
         rows = list(csv.DictReader(f))
@@ -181,12 +185,12 @@ def test_failures_tolerates_missing_golden(analyze_env):
 
 
 def test_cluster_writes_draft_never_touches_taxonomy_yaml(analyze_env, monkeypatch):
-    analyze_env["notes_path"].write_text(
+    analyze_env.notes.write_text(
         "case_id,model,input_head,output_head,expected,note\n"
         "case-0002,haiku45,foo,bar,契約照会,label swap\n",
         encoding="utf-8",
     )
-    analyze_env["taxonomy_path"].write_text("categories: []\nassignments: {}\n", encoding="utf-8")
+    analyze_env.taxonomy.write_text("categories: []\nassignments: {}\n", encoding="utf-8")
 
     fake_taxonomy = {
         "categories": [{"id": "label_swap", "name": "ラベル取り違え", "definition": "似たラベルを混同する"}],
@@ -210,23 +214,24 @@ def test_cluster_writes_draft_never_touches_taxonomy_yaml(analyze_env, monkeypat
 
     monkeypatch.setattr(run_mod, "run_promptfoo_eval", fake_eval)
 
-    draft_path = analyze_mod.cluster(notes_path=analyze_env["notes_path"], config_path=REPO_ROOT / "config.yaml")
+    draft_path = analyze_mod.cluster(_make_config(), analyze_env, notes_path=analyze_env.notes)
 
+    assert draft_path == analyze_env.taxonomy_draft
     draft = yaml.safe_load(draft_path.read_text(encoding="utf-8"))
     assert draft["categories"][0]["id"] == "label_swap"
     # taxonomy.yaml (the real, human-merged file) must be untouched
-    real = yaml.safe_load(analyze_env["taxonomy_path"].read_text(encoding="utf-8"))
+    real = yaml.safe_load(analyze_env.taxonomy.read_text(encoding="utf-8"))
     assert real == {"categories": [], "assignments": {}}
-    assert not list(build_mod.PROMPTFOO_DIR.glob("_cluster_tmp.yaml"))
+    assert not list(analyze_env.promptfoo_dir.glob("_cluster_tmp.yaml"))
 
 
 def test_cluster_missing_notes_raises(analyze_env):
     with pytest.raises(analyze_mod.AnalyzeError):
-        analyze_mod.cluster(notes_path=analyze_env["notes_path"], config_path=REPO_ROOT / "config.yaml")
+        analyze_mod.cluster(_make_config(), analyze_env)
 
 
 def test_cluster_invalid_json_output_raises(analyze_env, monkeypatch):
-    analyze_env["notes_path"].write_text(
+    analyze_env.notes.write_text(
         "case_id,model,input_head,output_head,expected,note\ncase-0002,haiku45,foo,bar,契約照会,x\n",
         encoding="utf-8",
     )
@@ -249,30 +254,20 @@ def test_cluster_invalid_json_output_raises(analyze_env, monkeypatch):
     monkeypatch.setattr(run_mod, "run_promptfoo_eval", fake_eval)
 
     with pytest.raises(analyze_mod.AnalyzeError):
-        analyze_mod.cluster(notes_path=analyze_env["notes_path"], config_path=REPO_ROOT / "config.yaml")
+        analyze_mod.cluster(_make_config(), analyze_env, notes_path=analyze_env.notes)
 
 
-def test_cluster_omits_temperature_when_judge_lacks_sampling_support(analyze_env, monkeypatch, tmp_path):
+def test_cluster_omits_temperature_when_judge_lacks_sampling_support(analyze_env, monkeypatch):
     # judge.provider also appears in models[] with supports_sampling_params:
     # false (opus48/fable5-style) -- the throwaway cluster eval must not send
     # temperature or the provider rejects it with HTTP 400
-    analyze_env["notes_path"].write_text(
+    analyze_env.notes.write_text(
         "case_id,model,input_head,output_head,expected,note\ncase-0002,haiku45,foo,bar,契約照会,x\n",
         encoding="utf-8",
     )
-    config_path = tmp_path / "config.yaml"
-    config_path.write_text(
-        yaml.safe_dump(
-            {
-                "task": {"name": "t", "answer_type": "text", "prompt_file": "prompts/base/task.txt"},
-                "models": [
-                    {"provider": "p:nosample", "alias": "nosample", "tier": "frontier", "supports_sampling_params": False}
-                ],
-                "judge": {"provider": "p:nosample"},
-                "optimize": {"target_alias": "nosample", "reflection_provider": "r"},
-            }
-        ),
-        encoding="utf-8",
+    cfg = _make_config(
+        judge_provider="p:nosample",
+        models=[ModelConfig(provider="p:nosample", alias="nosample", tier="frontier", supports_sampling_params=False)],
     )
 
     fake_taxonomy = {"categories": [{"id": "c1", "name": "c1", "definition": "d"}], "assignments": {"case-0002": "c1"}}
@@ -296,7 +291,7 @@ def test_cluster_omits_temperature_when_judge_lacks_sampling_support(analyze_env
 
     monkeypatch.setattr(run_mod, "run_promptfoo_eval", fake_eval)
 
-    analyze_mod.cluster(notes_path=analyze_env["notes_path"], config_path=config_path)
+    analyze_mod.cluster(cfg, analyze_env, notes_path=analyze_env.notes)
 
     provider_config = captured["config"]["providers"][0]["config"]
     assert "temperature" not in provider_config
@@ -310,7 +305,7 @@ def test_cluster_omits_temperature_when_judge_lacks_sampling_support(analyze_env
 
 def test_pivot_cross_tab_with_unassigned_bucket(analyze_env):
     _write_run_output(
-        analyze_env["runs_dir"],
+        analyze_env,
         "run-1",
         [
             _row("case-0001", "haiku45", False),
@@ -319,7 +314,7 @@ def test_pivot_cross_tab_with_unassigned_bucket(analyze_env):
             _row("case-0004", "qwen7b", True),  # passing row must be excluded
         ],
     )
-    analyze_env["taxonomy_path"].write_text(
+    analyze_env.taxonomy.write_text(
         yaml.safe_dump(
             {
                 "categories": [{"id": "label_swap", "name": "ラベル取り違え", "definition": "d"}],
@@ -331,21 +326,30 @@ def test_pivot_cross_tab_with_unassigned_bucket(analyze_env):
         encoding="utf-8",
     )
 
-    report_path = analyze_mod.pivot("run-1")
+    report_path = analyze_mod.pivot("run-1", analyze_env)
     content = report_path.read_text(encoding="utf-8")
 
+    assert report_path.parent == analyze_env.reports_dir
     assert "ラベル取り違え" in content
     assert "unassigned" in content.lower() or "未割当" in content
     assert "haiku45" in content and "qwen7b" in content
 
 
 def test_pivot_missing_taxonomy_raises(analyze_env):
-    _write_run_output(analyze_env["runs_dir"], "run-1", [_row("case-0001", "haiku45", False)])
+    _write_run_output(analyze_env, "run-1", [_row("case-0001", "haiku45", False)])
     with pytest.raises(analyze_mod.AnalyzeError):
-        analyze_mod.pivot("run-1")
+        analyze_mod.pivot("run-1", analyze_env)
 
 
 def test_pivot_missing_run_raises(analyze_env):
-    analyze_env["taxonomy_path"].write_text("categories: []\nassignments: {}\n", encoding="utf-8")
+    analyze_env.taxonomy.write_text("categories: []\nassignments: {}\n", encoding="utf-8")
     with pytest.raises(analyze_mod.AnalyzeError):
-        analyze_mod.pivot("does-not-exist")
+        analyze_mod.pivot("does-not-exist", analyze_env)
+
+
+def test_load_taxonomy_requires_explicit_path(analyze_env):
+    analyze_env.taxonomy.write_text("categories: []\n", encoding="utf-8")
+    taxonomy = analyze_mod.load_taxonomy(analyze_env.taxonomy)
+    assert taxonomy == {"categories": [], "assignments": {}}
+    with pytest.raises(analyze_mod.AnalyzeError):
+        analyze_mod.load_taxonomy(analyze_env.task_dir / "nope.yaml")

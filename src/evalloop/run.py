@@ -23,14 +23,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from evalloop.schemas import Config, load_config, parse_promptfoo_output
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
-PROMPTFOO_CONFIG_PATH = REPO_ROOT / "promptfoo" / "promptfooconfig.yaml"
-VARIANTS_DIR = REPO_ROOT / "promptfoo" / "variants"
-RESULTS_DIR = REPO_ROOT / "results"
-RUNS_DIR = RESULTS_DIR / "runs"
-INDEX_PATH = RESULTS_DIR / "index.jsonl"
+from evalloop.paths import REPO_ROOT, TaskPaths
+from evalloop.schemas import Config, parse_promptfoo_output
 
 
 class RunError(RuntimeError):
@@ -105,10 +99,10 @@ def get_node_version() -> str:
         return "unknown"
 
 
-def resolve_config_path(variant: str | None) -> Path:
+def resolve_config_path(paths: TaskPaths, variant: str | None) -> Path:
     if variant is None:
-        return PROMPTFOO_CONFIG_PATH
-    variant_path = VARIANTS_DIR / f"{variant}.yaml"
+        return paths.promptfoo_config
+    variant_path = paths.variants_dir / f"{variant}.yaml"
     if not variant_path.exists():
         raise RunError(f"variant config not found: {variant_path} (run `evalloop optimize` first?)")
     return variant_path
@@ -172,21 +166,21 @@ def _actual_cost_from_output(output_path: Path) -> float:
 
 
 def run(
+    config: Config,
+    paths: TaskPaths,
     variant: str | None = None,
     repeat: int | None = None,
     limit: int | None = None,
     no_cache: bool = False,
-    config_path: str | Path = REPO_ROOT / "config.yaml",
 ) -> RunOutcome:
-    config: Config = load_config(config_path)
-    promptfoo_config_path = resolve_config_path(variant)
+    promptfoo_config_path = resolve_config_path(paths, variant)
     if not promptfoo_config_path.exists():
-        raise RunError(f"{promptfoo_config_path} does not exist; run `evalloop build` first")
+        raise RunError(f"{promptfoo_config_path} does not exist; run `evalloop build --task {paths.task}` first")
 
     effective_repeat = repeat if repeat is not None else config.run.repeat
 
     run_id = new_run_id()
-    run_dir = RUNS_DIR / run_id
+    run_dir = paths.runs_dir / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     output_path = run_dir / "output.json"
     meta_path = run_dir / "meta.json"
@@ -206,26 +200,29 @@ def run(
     actual_cost = _actual_cost_from_output(output_path) if output_path.exists() else 0.0
     prompt_path = REPO_ROOT / config.task.prompt_file
 
-    resolved_config_path = Path(config_path).resolve()
-    try:
-        config_path_display = str(resolved_config_path.relative_to(REPO_ROOT))
-    except ValueError:
-        config_path_display = str(resolved_config_path)
     try:
         promptfoo_config_display = str(promptfoo_config_path.relative_to(REPO_ROOT))
     except ValueError:
         promptfoo_config_display = str(promptfoo_config_path)
+    try:
+        prompt_file_display = str(prompt_path.relative_to(REPO_ROOT))
+    except ValueError:
+        prompt_file_display = str(prompt_path)
 
     meta = {
         "run_id": run_id,
         "created_at": datetime.now(timezone.utc).isoformat(),
+        "task": paths.task,
         "task_name": config.task.name,
         "answer_type": config.task.answer_type,
         "variant": variant,
-        "config_path": config_path_display,  # so blog.py can generate accurate `--config` repro commands
         "promptfoo_config_path": promptfoo_config_display,
-        "prompt_file": str(prompt_path.relative_to(REPO_ROOT)),
+        "prompt_file": prompt_file_display,
         "prompt_sha256": sha256_of_file(prompt_path),
+        # dataset-version reproducibility (issue #47): which golden.jsonl this
+        # run actually evaluated. Task data is not tracked in git, so the hash
+        # is the only durable identity.
+        "golden_sha256": sha256_of_file(paths.golden) if paths.golden.exists() else None,
         "repeat": effective_repeat,
         "limit": limit,
         "no_cache": no_cache,
@@ -239,7 +236,7 @@ def run(
         "promptfoo_version": get_promptfoo_version(),
         "node_version": get_node_version(),
         "evalloop_command": (
-            f"evalloop run{f' --config {config_path_display}' if config_path_display != 'config.yaml' else ''}"
+            f"evalloop run --task {paths.task}"
             f"{f' --variant {variant}' if variant else ''}"
             f" --repeat {effective_repeat}{f' --limit {limit}' if limit else ''}{' --no-cache' if no_cache else ''}"
         ),
@@ -248,16 +245,17 @@ def run(
     }
     meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    paths.results_dir.mkdir(parents=True, exist_ok=True)
     index_entry = {
         "run_id": run_id,
         "created_at": meta["created_at"],
+        "task": paths.task,
         "task_name": config.task.name,
         "variant": variant,
         "actual_cost_usd": actual_cost,
         "promptfoo_exit_code": proc.returncode,
     }
-    with INDEX_PATH.open("a", encoding="utf-8") as f:
+    with paths.index.open("a", encoding="utf-8") as f:
         f.write(json.dumps(index_entry, ensure_ascii=False) + "\n")
 
     print(f"[run] run_id={run_id}")

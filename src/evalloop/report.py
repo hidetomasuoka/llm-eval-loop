@@ -13,11 +13,8 @@ import statistics
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from evalloop.paths import TaskPaths
 from evalloop.schemas import CaseResult, parse_promptfoo_output
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
-RUNS_DIR = REPO_ROOT / "results" / "runs"
-REPORTS_DIR = REPO_ROOT / "results" / "reports"
 
 
 class ReportError(RuntimeError):
@@ -195,12 +192,12 @@ def render_markdown(run_id: str, meta: dict, stats: list[AliasStats], warnings_l
     return "\n".join(lines)
 
 
-def report(run_id: str) -> Path:
-    run_dir = RUNS_DIR / run_id
+def report(run_id: str, paths: TaskPaths) -> Path:
+    run_dir = paths.runs_dir / run_id
     output_path = run_dir / "output.json"
     meta_path = run_dir / "meta.json"
     if not output_path.exists() or not meta_path.exists():
-        raise ReportError(f"run {run_id!r} not found under {RUNS_DIR} (expected output.json and meta.json)")
+        raise ReportError(f"run {run_id!r} not found under {paths.runs_dir} (expected output.json and meta.json)")
 
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
     parsed = parse_promptfoo_output(output_path)
@@ -217,8 +214,8 @@ def report(run_id: str) -> Path:
     warnings_lines.extend(f"promptfoo output.json parser warning: {w}" for w in parsed.warnings)
 
     markdown = render_markdown(run_id, meta, stats, warnings_lines)
-    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
-    report_path = REPORTS_DIR / f"{run_id}.md"
+    paths.reports_dir.mkdir(parents=True, exist_ok=True)
+    report_path = paths.reports_dir / f"{run_id}.md"
     report_path.write_text(markdown, encoding="utf-8")
     print(f"[report] wrote {report_path}")
     return report_path

@@ -42,14 +42,10 @@ from pathlib import Path
 import dspy
 import yaml
 
-from evalloop import build as build_mod
 from evalloop import report as report_mod
 from evalloop import run as run_mod
-from evalloop.schemas import assert_split_disjoint, load_config, load_golden_jsonl, parse_promptfoo_output
-
-REPO_ROOT = build_mod.REPO_ROOT
-OPTIMIZED_DIR = REPO_ROOT / "prompts" / "optimized"
-VARIANTS_DIR = REPO_ROOT / "promptfoo" / "variants"
+from evalloop.paths import REPO_ROOT, TaskPaths
+from evalloop.schemas import Config, assert_split_disjoint, load_golden_jsonl, parse_promptfoo_output
 
 
 class OptimizeError(RuntimeError):
@@ -331,17 +327,17 @@ def _reroot_file_refs(obj, prefix: str):
     return obj
 
 
-def to_variant_relpath(target: Path) -> str:
-    rel = os.path.relpath(target, start=VARIANTS_DIR)
+def to_variant_relpath(target: Path, variants_dir: Path) -> str:
+    rel = os.path.relpath(target, start=variants_dir)
     return rel.replace(os.sep, "/")
 
 
-def build_variant_config(target_alias: str, task_path: Path) -> dict:
-    if not build_mod.PROMPTFOO_CONFIG_PATH.exists():
-        raise OptimizeError(f"{build_mod.PROMPTFOO_CONFIG_PATH} not found; run `evalloop build` first")
-    base_config = yaml.safe_load(build_mod.PROMPTFOO_CONFIG_PATH.read_text(encoding="utf-8"))
+def build_variant_config(target_alias: str, task_path: Path, paths: TaskPaths) -> dict:
+    if not paths.promptfoo_config.exists():
+        raise OptimizeError(f"{paths.promptfoo_config} not found; run `evalloop build --task {paths.task}` first")
+    base_config = yaml.safe_load(paths.promptfoo_config.read_text(encoding="utf-8"))
     variant_config = _reroot_file_refs(base_config, prefix="../")
-    variant_config["prompts"] = [f"file://{to_variant_relpath(task_path)}"]
+    variant_config["prompts"] = [f"file://{to_variant_relpath(task_path, paths.variants_dir)}"]
     variant_config["description"] = f"{base_config.get('description', '')} (optimized: {target_alias})"
     return variant_config
 
@@ -361,18 +357,18 @@ class OptimizeOutcome:
     compare_path: Path | None
 
 
-def _load_test_ids() -> set[str]:
-    if not build_mod.TESTS_TEST_PATH.exists():
-        raise OptimizeError(f"{build_mod.TESTS_TEST_PATH} not found; run `evalloop build` first")
-    entries = yaml.safe_load(build_mod.TESTS_TEST_PATH.read_text(encoding="utf-8")) or []
+def _load_test_ids(paths: TaskPaths) -> set[str]:
+    if not paths.tests_test.exists():
+        raise OptimizeError(f"{paths.tests_test} not found; run `evalloop build --task {paths.task}` first")
+    entries = yaml.safe_load(paths.tests_test.read_text(encoding="utf-8")) or []
     return {e["vars"]["case_id"] for e in entries}
 
 
-def _find_latest_base_run(task_name: str) -> str | None:
-    if not run_mod.INDEX_PATH.exists():
+def _find_latest_base_run(task_name: str, paths: TaskPaths) -> str | None:
+    if not paths.index.exists():
         return None
     candidates = []
-    with run_mod.INDEX_PATH.open(encoding="utf-8") as f:
+    with paths.index.open(encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if not line:
@@ -401,12 +397,12 @@ def run_gepa(student, trainset, metric, reflection_lm, auto: str, seed: int = 0)
     return optimizer.compile(student=student, trainset=trainset)
 
 
-def optimize(config_path: str | Path = REPO_ROOT / "config.yaml") -> OptimizeOutcome:
-    cfg = load_config(config_path)
+def optimize(config: Config, paths: TaskPaths) -> OptimizeOutcome:
+    cfg = config
     score_fn = _score_fn_for(cfg)  # resolve the training metric first: fail fast on unsupported types
 
-    test_ids = _load_test_ids()
-    cases = load_golden_jsonl(build_mod.GOLDEN_PATH)
+    test_ids = _load_test_ids(paths)
+    cases = load_golden_jsonl(paths.golden)
     train_cases = [c for c in cases if c.split == "train"]
     if not train_cases:
         raise OptimizeError("golden.jsonl has no split=='train' cases; nothing to optimize against")
@@ -438,7 +434,7 @@ def optimize(config_path: str | Path = REPO_ROOT / "config.yaml") -> OptimizeOut
     optimized_template = render_optimized_template(optimized_instructions, original_template)
 
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-    out_dir = OPTIMIZED_DIR / cfg.optimize.target_alias / ts
+    out_dir = paths.optimized_dir / cfg.optimize.target_alias / ts
     out_dir.mkdir(parents=True, exist_ok=True)
     task_path = out_dir / "task.txt"
     task_path.write_text(optimized_template, encoding="utf-8")
@@ -463,21 +459,21 @@ def optimize(config_path: str | Path = REPO_ROOT / "config.yaml") -> OptimizeOut
     print(f"[optimize] wrote {log_path}")
 
     variant_name = f"{cfg.optimize.target_alias}_{ts}"
-    variant_config = build_variant_config(cfg.optimize.target_alias, task_path)
-    VARIANTS_DIR.mkdir(parents=True, exist_ok=True)
-    variant_path = VARIANTS_DIR / f"{variant_name}.yaml"
+    variant_config = build_variant_config(cfg.optimize.target_alias, task_path, paths)
+    paths.variants_dir.mkdir(parents=True, exist_ok=True)
+    variant_path = paths.variants_dir / f"{variant_name}.yaml"
     variant_path.write_text(yaml.safe_dump(variant_config, allow_unicode=True, sort_keys=False), encoding="utf-8")
     print(f"[optimize] wrote {variant_path}")
 
-    outcome = run_mod.run(variant=variant_name, config_path=config_path)
-    report_mod.report(outcome.run_id)
+    outcome = run_mod.run(cfg, paths, variant=variant_name)
+    report_mod.report(outcome.run_id, paths)
 
-    base_run_id = _find_latest_base_run(cfg.task.name)
+    base_run_id = _find_latest_base_run(cfg.task.name, paths)
     compare_path = None
     if base_run_id:
-        compare_path = compare(base_run_id, outcome.run_id)
+        compare_path = compare(base_run_id, outcome.run_id, paths)
     else:
-        print("[optimize] no prior base run found in results/index.jsonl; skipping compare")
+        print(f"[optimize] no prior base run found in {paths.index}; skipping compare")
 
     return OptimizeOutcome(
         variant_name=variant_name,
@@ -510,9 +506,9 @@ def _fmt_usd_signed(v):
     return f"{'+' if v >= 0 else ''}${v:.4f}" if v is not None else "n/a"
 
 
-def compare(run_a: str, run_b: str) -> Path:
-    output_a = run_mod.RUNS_DIR / run_a / "output.json"
-    output_b = run_mod.RUNS_DIR / run_b / "output.json"
+def compare(run_a: str, run_b: str, paths: TaskPaths) -> Path:
+    output_a = paths.runs_dir / run_a / "output.json"
+    output_b = paths.runs_dir / run_b / "output.json"
     if not output_a.exists():
         raise OptimizeError(f"run {run_a!r} not found ({output_a})")
     if not output_b.exists():
@@ -554,8 +550,8 @@ def compare(run_a: str, run_b: str) -> Path:
     )
     lines.append("")
 
-    report_mod.REPORTS_DIR.mkdir(parents=True, exist_ok=True)
-    path = report_mod.REPORTS_DIR / f"compare_{run_a}_{run_b}.md"
+    paths.reports_dir.mkdir(parents=True, exist_ok=True)
+    path = paths.reports_dir / f"compare_{run_a}_{run_b}.md"
     path.write_text("\n".join(lines), encoding="utf-8")
     print(f"[compare] wrote {path}")
     return path

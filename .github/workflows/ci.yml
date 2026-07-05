@@ -5,6 +5,8 @@
 #   smoke -- masterへのpush時のみ、Ollama Cloud（https://ollama.com）で
 #            build -> run --limit 3 -> report の実疎通を確認。Actions secrets の
 #            OLLAMA_API_KEY がある場合のみ実行（無ければスキップしてgreenのまま）。
+#            タスクは sample-inquiry（fresh clone にデータが存在する唯一のタスク。
+#            issue #47 のデータポリシーでタスクデータは既定でgit管理外のため）。
 name: CI
 
 on:
@@ -46,7 +48,8 @@ jobs:
     # OLLAMA_BASE_URL をホストに、OLLAMA_API_KEY を Bearer 認証に使う
     # （pinned 0.121.17 の dist で確認済み）ため、env を設定するだけで
     # Ollama Cloud に接続できる。ランナーへの Ollama インストールは不要。
-    # 対象は先頭3ケース（各2,500字未満）× gpt-oss:20b。Ollama Cloud は
+    # sample-inquiry（label タスク・決定的assert採点）の先頭3ケース ×
+    # gpt-oss:20b（`--models` サブセット指定）。Ollama Cloud は
     # サブスクリプション/無料枠ベースなので従量課金は発生しない。
     #
     # 成否は「output.json / meta.json が生成され report が作れること」で判定する。
@@ -85,17 +88,15 @@ jobs:
       - name: Install dependencies
         if: steps.key.outputs.present == 'true'
         run: uv sync
-      - name: Build (ollama cloud smoke config)
+      - name: Build (sample-inquiry, smoke model subset)
         if: steps.key.outputs.present == 'true'
-        # config.ci-smoke.yaml は評価対象とllm-rubricジャッジが同一モデルのため、
-        # iron rule #2 の明示オーバーライドが必要（スモークは精度を測らない）
-        run: uv run evalloop build --yes --allow-same-judge --config config.ci-smoke.yaml
+        run: uv run evalloop build --task sample-inquiry --models gptoss20b --yes
       - name: Run 3-case eval
         if: steps.key.outputs.present == 'true'
-        run: uv run evalloop run --limit 3 --repeat 1 --config config.ci-smoke.yaml
+        run: uv run evalloop run --task sample-inquiry --limit 3 --repeat 1
       - name: Generate report for the smoke run
         if: steps.key.outputs.present == 'true'
         run: |
-          RUN_ID=$(uv run python -c "import json; print(json.loads(open('results/index.jsonl', encoding='utf-8').readlines()[-1])['run_id'])")
-          uv run evalloop report "$RUN_ID"
-          test -f "results/reports/${RUN_ID}.md"
+          RUN_ID=$(uv run python -c "import json; print(json.loads(open('results/sample-inquiry/index.jsonl', encoding='utf-8').readlines()[-1])['run_id'])")
+          uv run evalloop report "$RUN_ID" --task sample-inquiry
+          test -f "results/sample-inquiry/reports/${RUN_ID}.md"

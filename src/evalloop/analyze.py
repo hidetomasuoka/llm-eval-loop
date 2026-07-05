@@ -20,15 +20,9 @@ from pathlib import Path
 
 import yaml
 
-from evalloop import build as build_mod
 from evalloop import run as run_mod
-from evalloop.schemas import SchemaError, load_config, load_golden_jsonl, parse_promptfoo_output
-
-REPO_ROOT = build_mod.REPO_ROOT
-NOTES_PATH = REPO_ROOT / "data" / "notes.csv"
-TAXONOMY_PATH = REPO_ROOT / "data" / "taxonomy.yaml"
-TAXONOMY_DRAFT_PATH = REPO_ROOT / "data" / "taxonomy.draft.yaml"
-REPORTS_DIR = REPO_ROOT / "results" / "reports"
+from evalloop.paths import TaskPaths
+from evalloop.schemas import Config, SchemaError, load_golden_jsonl, parse_promptfoo_output
 
 NOTES_COLUMNS = ["case_id", "model", "input_head", "output_head", "expected", "note"]
 HEAD_LEN = 50
@@ -51,14 +45,14 @@ def _head(value, n=HEAD_LEN) -> str:
 # ---------------------------------------------------------------------------
 
 
-def failures(run_id: str) -> tuple[Path, Path]:
-    output_path = run_mod.RUNS_DIR / run_id / "output.json"
+def failures(run_id: str, paths: TaskPaths) -> tuple[Path, Path]:
+    output_path = paths.runs_dir / run_id / "output.json"
     if not output_path.exists():
         raise AnalyzeError(f"run {run_id!r} has no output.json at {output_path}")
     parsed = parse_promptfoo_output(output_path)
 
     failing = [r for r in parsed.results if r.passed is False or r.error]
-    failures_path = run_mod.RUNS_DIR / run_id / "failures.jsonl"
+    failures_path = paths.runs_dir / run_id / "failures.jsonl"
     with failures_path.open("w", encoding="utf-8") as f:
         for r in failing:
             f.write(
@@ -78,9 +72,10 @@ def failures(run_id: str) -> tuple[Path, Path]:
             )
 
     existing_keys: set[tuple[str, str]] = set()
-    notes_exists = NOTES_PATH.exists()
+    notes_path = paths.notes
+    notes_exists = notes_path.exists()
     if notes_exists:
-        with NOTES_PATH.open(encoding="utf-8", newline="") as f:
+        with notes_path.open(encoding="utf-8", newline="") as f:
             for row in csv.DictReader(f):
                 existing_keys.add((row.get("case_id", ""), row.get("model", "")))
 
@@ -88,11 +83,11 @@ def failures(run_id: str) -> tuple[Path, Path]:
     # from golden.jsonl by case_id. A missing/invalid golden.jsonl must not
     # block failure triage -- the input_head column just stays empty.
     try:
-        golden_inputs = {c.id: c.input for c in load_golden_jsonl(build_mod.GOLDEN_PATH)}
+        golden_inputs = {c.id: c.input for c in load_golden_jsonl(paths.golden)}
     except SchemaError:
         golden_inputs = {}
 
-    NOTES_PATH.parent.mkdir(parents=True, exist_ok=True)
+    notes_path.parent.mkdir(parents=True, exist_ok=True)
     new_rows = [
         {
             "case_id": r.case_id or "",
@@ -105,15 +100,15 @@ def failures(run_id: str) -> tuple[Path, Path]:
         for r in failing
         if (r.case_id or "", r.alias or "") not in existing_keys
     ]
-    with NOTES_PATH.open("a" if notes_exists else "w", encoding="utf-8", newline="") as f:
+    with notes_path.open("a" if notes_exists else "w", encoding="utf-8", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=NOTES_COLUMNS)
         if not notes_exists:
             writer.writeheader()
         writer.writerows(new_rows)
 
     print(f"[failures] {len(failing)} failing result(s) -> {failures_path}")
-    print(f"[failures] appended {len(new_rows)} new row(s) to {NOTES_PATH} (fill in the `note` column by hand)")
-    return failures_path, NOTES_PATH
+    print(f"[failures] appended {len(new_rows)} new row(s) to {notes_path} (fill in the `note` column by hand)")
+    return failures_path, notes_path
 
 
 # ---------------------------------------------------------------------------
@@ -138,7 +133,9 @@ _CLUSTER_PROMPT_TEMPLATE = """あなたはLLM評価の失敗分析を行うア�
 """
 
 
-def _run_cluster_llm(notes_rows: list[dict], judge_provider: str, judge_supports_sampling: bool = True) -> dict:
+def _run_cluster_llm(
+    notes_rows: list[dict], judge_provider: str, paths: TaskPaths, judge_supports_sampling: bool = True
+) -> dict:
     # mirror build.py: providers with supports_sampling_params=false reject
     # temperature with HTTP 400
     provider_config: dict = {}
@@ -154,8 +151,8 @@ def _run_cluster_llm(notes_rows: list[dict], judge_provider: str, judge_supports
     }
 
     tmp_name = "_cluster_tmp.yaml"
-    tmp_config_path = build_mod.PROMPTFOO_DIR / tmp_name
-    build_mod.PROMPTFOO_DIR.mkdir(parents=True, exist_ok=True)
+    tmp_config_path = paths.promptfoo_dir / tmp_name
+    paths.promptfoo_dir.mkdir(parents=True, exist_ok=True)
     tmp_config_path.write_text(yaml.safe_dump(promptfoo_config, allow_unicode=True, sort_keys=False), encoding="utf-8")
 
     try:
@@ -178,8 +175,8 @@ def _run_cluster_llm(notes_rows: list[dict], judge_provider: str, judge_supports
         raise AnalyzeError(f"cluster LLM output was not valid JSON: {e}\nraw output:\n{raw_output}") from e
 
 
-def cluster(notes_path: str | Path | None = None, config_path: str | Path = REPO_ROOT / "config.yaml") -> Path:
-    notes_path = Path(notes_path) if notes_path is not None else NOTES_PATH
+def cluster(config: Config, paths: TaskPaths, notes_path: str | Path | None = None) -> Path:
+    notes_path = Path(notes_path) if notes_path is not None else paths.notes
     if not notes_path.exists():
         raise AnalyzeError(f"{notes_path} not found; run `evalloop failures RUN_ID` first")
 
@@ -188,23 +185,23 @@ def cluster(notes_path: str | Path | None = None, config_path: str | Path = REPO
     if not notes_rows:
         raise AnalyzeError(f"{notes_path} has no rows to cluster")
 
-    cfg = load_config(config_path)
-    # config.yaml only carries supports_sampling_params on models[]; if the
+    cfg = config
+    # the config only carries supports_sampling_params on models[]; if the
     # judge provider also appears there, honor that entry's flag (empty match
     # -> True, i.e. keep sending temperature as before)
     judge_supports_sampling = all(m.supports_sampling_params for m in cfg.models if m.provider == cfg.judge.provider)
-    taxonomy = _run_cluster_llm(notes_rows, cfg.judge.provider, judge_supports_sampling)
+    taxonomy = _run_cluster_llm(notes_rows, cfg.judge.provider, paths, judge_supports_sampling)
 
     if "categories" not in taxonomy or "assignments" not in taxonomy:
         raise AnalyzeError(f"cluster LLM output missing 'categories'/'assignments' keys: {taxonomy}")
 
-    TAXONOMY_DRAFT_PATH.write_text(
+    paths.taxonomy_draft.write_text(
         yaml.safe_dump(taxonomy, allow_unicode=True, sort_keys=False), encoding="utf-8"
     )
-    print(f"[cluster] wrote {TAXONOMY_DRAFT_PATH} ({len(taxonomy['categories'])} categories, "
+    print(f"[cluster] wrote {paths.taxonomy_draft} ({len(taxonomy['categories'])} categories, "
           f"{len(taxonomy['assignments'])} assignments)")
-    print(f"[cluster] this NEVER overwrites {TAXONOMY_PATH} -- merge by hand, then `evalloop pivot` reads that file")
-    return TAXONOMY_DRAFT_PATH
+    print(f"[cluster] this NEVER overwrites {paths.taxonomy} -- merge by hand, then `evalloop pivot` reads that file")
+    return paths.taxonomy_draft
 
 
 # ---------------------------------------------------------------------------
@@ -219,11 +216,11 @@ class PivotCell:
     count: int
 
 
-def load_taxonomy(path: str | Path | None = None) -> dict:
-    path = Path(path) if path is not None else TAXONOMY_PATH
+def load_taxonomy(path: str | Path) -> dict:
+    path = Path(path)
     if not path.exists():
         raise AnalyzeError(
-            f"{path} not found. Run `evalloop cluster` then hand-merge data/taxonomy.draft.yaml into {path}"
+            f"{path} not found. Run `evalloop cluster` then hand-merge the taxonomy draft into {path}"
         )
     with path.open(encoding="utf-8") as f:
         taxonomy = yaml.safe_load(f) or {}
@@ -232,12 +229,12 @@ def load_taxonomy(path: str | Path | None = None) -> dict:
     return taxonomy
 
 
-def pivot(run_id: str, taxonomy_path: str | Path | None = None) -> Path:
-    output_path = run_mod.RUNS_DIR / run_id / "output.json"
+def pivot(run_id: str, paths: TaskPaths, taxonomy_path: str | Path | None = None) -> Path:
+    output_path = paths.runs_dir / run_id / "output.json"
     if not output_path.exists():
         raise AnalyzeError(f"run {run_id!r} has no output.json at {output_path}")
     parsed = parse_promptfoo_output(output_path)
-    taxonomy = load_taxonomy(taxonomy_path)
+    taxonomy = load_taxonomy(taxonomy_path if taxonomy_path is not None else paths.taxonomy)
     assignments: dict[str, str] = taxonomy["assignments"]
     category_names = {c["id"]: c.get("name", c["id"]) for c in taxonomy["categories"]}
 
@@ -269,8 +266,8 @@ def pivot(run_id: str, taxonomy_path: str | Path | None = None) -> Path:
         lines.append(f"| {name} | " + " | ".join(str(c) for c in row_counts) + f" | {sum(row_counts)} |")
     lines.append("")
 
-    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
-    report_path = REPORTS_DIR / f"pivot_{run_id}.md"
+    paths.reports_dir.mkdir(parents=True, exist_ok=True)
+    report_path = paths.reports_dir / f"pivot_{run_id}.md"
     report_path.write_text("\n".join(lines), encoding="utf-8")
     print(f"[pivot] wrote {report_path}")
     return report_path

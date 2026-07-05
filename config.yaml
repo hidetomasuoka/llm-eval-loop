@@ -1,36 +1,26 @@
 # =============================================================================
-# llm-eval-loop マスター設定
+# llm-eval-loop グローバル設定（issue #47: 複数タスクワークスペース構成）
 #
-# このファイルは `evalloop build` の唯一の入力設定です。
-# 本タスク差し替え時に触るのは config.yaml / data/golden.jsonl / prompts/base/*.txt
-# の3点だけで済む構造になっています（README.md セクション14）。
+# ここには「全タスク共通のもの」だけを置く:
+#   - models[]:     評価対象モデルの registry（モデル動物園）。単価・sampling可否を
+#                   1箇所で管理し、各タスクは tasks/<name>/task.yaml の models: で
+#                   alias を選択する（省略時は全モデル）
+#   - run:          実行デフォルト（タスク側で上書き可）
+#   - default_task: --task 省略時・EVALLOOP_TASK 未設定時に使うタスク
 #
-# 注意: models[].provider の表記・price_*_per_mtok の単価はあくまでサンプル値です。
-#       promptfoo の provider ID 命名規則や各社の価格は変わるため、
-#       `evalloop doctor` が通らない ID は使わず、単価は使用時点の公式価格に
-#       更新してください（README.md セクション13の注意書き参照）。
+# タスク固有の設定（answer_type / labels / judge / optimize / blog）は
+# tasks/<name>/task.yaml にある。新しいタスクの追加は tasks/ にディレクトリを
+# 切るだけで、既存タスクのファイルには一切触れない。
 #
-# 注意: `promptfoo share` はクラウドアップロードのため本プロジェクトでは使用禁止です。
-#       ローカル結果の閲覧には `evalloop view`（= `promptfoo view`）を使ってください。
+# 注意: `promptfoo share` はクラウドアップロードのため本プロジェクトでは使用禁止。
+#       ローカル結果の閲覧には `evalloop view` を使うこと。
 # =============================================================================
 
-task:
-  # タスク名。run_id や blog の slug のプレフィックスには使わない（それは blog.slug_prefix）
-  # CUAD (Contract Understanding Atticus Dataset) v1 の100件サブセットを使った
-  # 契約条項抽出タスク。元のサンプルタスク(問い合わせ分類)は data/sample/ に残っている。
-  name: cuad100-clause-extraction
-  # label: 決定的なラベル一致assert（javascript） / json: is-json + フィールド比較 / text: llm-rubric
-  # CUADは抽出式QA（該当箇所のテキストを抜き出す）なので answer_type=text で
-  # llm-rubricジャッジを使う
-  answer_type: text
-  # {{input}} プレースホルダを含むベースプロンプト。file:// でpromptfooに渡される
-  prompt_file: prompts/base/task.txt
-  # answer_type=label のときの許容ラベル一覧（正規化・部分一致判定にも使う）。text/jsonでは未使用
-  labels: []
-  # answer_type=json のときのみ必須。JSON Schemaファイルへのパス
-  json_schema_file: null
+# fresh clone でもデータが存在する唯一のタスク（合成デモデータ、git追跡オプトイン）。
+# 実タスクで作業するときは --task か EVALLOOP_TASK で切り替える
+default_task: sample-inquiry
 
-# 評価対象モデル一覧。★provider IDは例。promptfoo公式Docsで実装時に確認すること
+# 評価対象モデル registry。★provider IDは例。promptfoo公式Docsで実装時に確認すること
 # 単価は2026-07時点のAnthropic公式価格（$/MTok）。実行前に公式料金ページで最新を確認すること
 models:
   - provider: ollama:chat:qwen2.5:7b
@@ -63,35 +53,16 @@ models:
     price_out_per_mtok: 50.0
     # claude-fable-5も同様にsamplingパラメータをHTTP 400で拒否する
     supports_sampling_params: false
+  - provider: ollama:chat:gpt-oss:20b
+    alias: gptoss20b
+    tier: small
+    # Ollama Cloud（https://ollama.com）経由で使う。CIスモーク用
+    # （`--models gptoss20b` で選択。OLLAMA_BASE_URL/OLLAMA_API_KEY が必要）
+    price_in_per_mtok: 0.0      # サブスク/無料枠ベースで従量単価なし
+    price_out_per_mtok: 0.0
 
 run:
   repeat: 1                     # 安定測定フェーズでは3にする（promptfoo --repeat）
   temperature: 0.0
   max_tokens: 1024
   cost_warn_usd: 3.0            # 実行前概算(USD)がこれを超えたら確認プロンプトを出す
-
-judge:
-  # llm-rubric の grader。必ず明示する（環境キー依存の暗黙デフォルトグレーダーは禁止）
-  # 被評価モデルと同一providerの場合、build は既定で停止する（--allow-same-judge でのみ回避）
-  #
-  # 注意: このconfigはmodels[]に5段階の全ティアを含めており、judgeにはそのうち
-  # sonnet46と同一providerを使っている。そのためanswer_type=textでbuildする際は
-  # `evalloop build --allow-same-judge` が必要（sonnet46の行だけ自己採点になる
-  # 既知のトレードオフとして許容している。他の4モデルは独立採点される）。
-  # 自己採点バイアスを避けたい場合は、評価対象に含まれない別モデルをjudgeに指定すること。
-  provider: anthropic:messages:claude-sonnet-4-6
-  threshold: 0.8
-  agreement_threshold: 0.85     # human_labels.jsonl とのジャッジ一致率のしきい値
-  rubric_file: prompts/base/judge_rubric.txt
-
-optimize:
-  target_alias: qwen7b                              # GEPAで最適化する対象モデル
-  reflection_provider: anthropic/claude-opus-4-8     # dspy側の表記（大型モデル）
-  auto: light
-
-blog:
-  jpy_per_usd: 150               # コストの円換算表示用（0で非表示）
-  slug_prefix: llm-eval
-  allowed_sources:                # 公開ガード(README.md 9.3.1)が許可するmeta.sourceの値
-    - "self-made"
-    - "CUAD v1 (The Atticus Project, CC BY 4.0) via chenghao/cuad_qa mirror on Hugging Face"

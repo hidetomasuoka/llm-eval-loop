@@ -33,19 +33,16 @@ from pathlib import Path
 
 import yaml
 
-from evalloop import build as build_mod
 from evalloop import run as run_mod
+from evalloop.paths import REPO_ROOT, TaskPaths
 from evalloop.schemas import (
+    Config,
     GoldenCase,
     HumanLabel,
-    load_config,
     load_golden_jsonl,
     load_human_labels,
     parse_promptfoo_output,
 )
-
-REPO_ROOT = build_mod.REPO_ROOT
-HUMAN_LABELS_PATH = REPO_ROOT / "data" / "human_labels.jsonl"
 
 
 class CalibrateError(RuntimeError):
@@ -71,8 +68,8 @@ class CalibrationResult:
     cases: list[CaseAgreement]
 
 
-def _judge_verdicts_from_run(run_id: str) -> dict[tuple[str, str], bool]:
-    output_path = run_mod.RUNS_DIR / run_id / "output.json"
+def _judge_verdicts_from_run(run_id: str, paths: TaskPaths) -> dict[tuple[str, str], bool]:
+    output_path = paths.runs_dir / run_id / "output.json"
     if not output_path.exists():
         raise CalibrateError(f"run {run_id!r} has no output.json at {output_path}")
     parsed = parse_promptfoo_output(output_path)
@@ -88,7 +85,7 @@ def _judge_verdicts_from_run(run_id: str) -> dict[tuple[str, str], bool]:
 
 
 def _judge_verdicts_fresh(
-    labels: list[HumanLabel], golden_by_id: dict[str, GoldenCase], cfg
+    labels: list[HumanLabel], golden_by_id: dict[str, GoldenCase], cfg: Config, paths: TaskPaths
 ) -> dict[tuple[str, str], bool]:
     tests = []
     for label in labels:
@@ -136,8 +133,8 @@ def _judge_verdicts_fresh(
     }
 
     tmp_name = f"_calibrate_{uuid.uuid4().hex[:8]}.yaml"
-    tmp_config_path = build_mod.PROMPTFOO_DIR / tmp_name
-    build_mod.PROMPTFOO_DIR.mkdir(parents=True, exist_ok=True)
+    tmp_config_path = paths.promptfoo_dir / tmp_name
+    paths.promptfoo_dir.mkdir(parents=True, exist_ok=True)
     tmp_config_path.write_text(yaml.safe_dump(promptfoo_config, allow_unicode=True, sort_keys=False), encoding="utf-8")
 
     try:
@@ -172,18 +169,18 @@ def _judge_verdicts_fresh(
     return verdicts
 
 
-def calibrate(config_path: str | Path = REPO_ROOT / "config.yaml", run_id: str | None = None) -> CalibrationResult:
-    cfg = load_config(config_path)
-    labels = load_human_labels(HUMAN_LABELS_PATH)
+def calibrate(config: Config, paths: TaskPaths, run_id: str | None = None) -> CalibrationResult:
+    cfg = config
+    labels = load_human_labels(paths.human_labels)
     if not labels:
-        raise CalibrateError(f"{HUMAN_LABELS_PATH} is empty; nothing to calibrate against")
+        raise CalibrateError(f"{paths.human_labels} is empty; nothing to calibrate against")
 
-    golden_by_id = {c.id: c for c in load_golden_jsonl(build_mod.GOLDEN_PATH)}
+    golden_by_id = {c.id: c for c in load_golden_jsonl(paths.golden)}
 
     if run_id is not None:
-        verdicts = _judge_verdicts_from_run(run_id)
+        verdicts = _judge_verdicts_from_run(run_id, paths)
     else:
-        verdicts = _judge_verdicts_fresh(labels, golden_by_id, cfg)
+        verdicts = _judge_verdicts_fresh(labels, golden_by_id, cfg, paths)
 
     cases: list[CaseAgreement] = []
     skipped = 0
@@ -239,7 +236,7 @@ def calibrate(config_path: str | Path = REPO_ROOT / "config.yaml", run_id: str |
         print("[calibrate] WARNING: no comparable cases; calibration status left as 'no_data'")
 
     if run_id is not None:
-        meta_path = run_mod.RUNS_DIR / run_id / "meta.json"
+        meta_path = paths.runs_dir / run_id / "meta.json"
         if meta_path.exists():
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
             meta.setdefault("judge", {})

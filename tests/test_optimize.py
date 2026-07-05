@@ -7,12 +7,12 @@ import yaml
 from evalloop import build as build_mod
 from evalloop import optimize as optimize_mod
 from evalloop import run as run_mod
+from evalloop.paths import REPO_ROOT, TaskPaths
+from tests.conftest import scaffold_task
 
-REPO_ROOT = build_mod.REPO_ROOT
-
-# NOTE: tests that exercise the real build/run/report orchestration take the
-# isolated_artifact_paths fixture (tests/conftest.py) so nothing is written
-# into the real checkout.
+# NOTE: tests that exercise the real build/run/report orchestration scaffold a
+# task inside `isolated_root` (tests/conftest.py) so nothing is written into
+# the real checkout.
 
 
 # ---------------------------------------------------------------------------
@@ -59,7 +59,7 @@ def test_extract_handles_template_without_input_marker():
 
 
 def test_round_trip_against_real_sample_prompt():
-    real_template = (REPO_ROOT / "prompts" / "base" / "task.txt").read_text(encoding="utf-8")
+    real_template = (REPO_ROOT / "tasks" / "sample-inquiry" / "prompts" / "task.txt").read_text(encoding="utf-8")
     instructions = optimize_mod.extract_instructions_from_template(real_template)
     assert "{{input}}" not in instructions
     assert len(instructions) > 0
@@ -188,33 +188,33 @@ def test_reroot_file_refs_adds_prefix_only_to_file_uris():
     assert rerooted["c"] == 3
 
 
-def test_build_variant_config_reroots_and_swaps_prompt(isolated_artifact_paths, tmp_path, monkeypatch):
-    # promptfooconfig.yaml paths are relative to promptfoo/; the variant lives
-    # one level deeper at promptfoo/variants/, so every file:// ref must gain
-    # one extra "../". Pin down a known (label-type) build first so this
-    # doesn't depend on whichever task config.yaml last happened to build --
-    # label-type still has a file:// javascript assert to check rerooting on
-    # (text-type's llm-rubric assert is inline content, not file://, since
-    # promptfoo doesn't template {{input}}/{{expected}} in file://-loaded
-    # rubric values -- see build.py's comment).
-    synthetic_golden = tmp_path / "golden.jsonl"
-    _write_label_type_golden(synthetic_golden)
-    monkeypatch.setattr(build_mod, "GOLDEN_PATH", synthetic_golden)
-    build_mod.build(config_path=_label_type_config_path(tmp_path), yes=True)
+def test_build_variant_config_reroots_and_swaps_prompt(isolated_root):
+    # promptfoo/<task>/promptfooconfig.yaml paths are relative to the task's
+    # promptfoo dir; the variant lives one level deeper at
+    # promptfoo/<task>/variants/, so every file:// ref must gain one extra
+    # "../". Pin down a known (label-type) build first -- label-type still has
+    # a file:// javascript assert to check rerooting on (text-type's
+    # llm-rubric assert is inline content, not file://, since promptfoo
+    # doesn't template {{input}}/{{expected}} in file://-loaded rubric values
+    # -- see build.py's comment).
+    cfg, paths = scaffold_task(isolated_root)
+    build_mod.build(cfg, paths, yes=True)
 
-    fake_task_path = optimize_mod.OPTIMIZED_DIR / "qwen7b" / "20260101-000000" / "task.txt"
-    variant_config = optimize_mod.build_variant_config("qwen7b", fake_task_path)
+    fake_task_path = paths.optimized_dir / "qwen7b" / "20260101-000000" / "task.txt"
+    variant_config = optimize_mod.build_variant_config("qwen7b", fake_task_path, paths)
 
-    assert variant_config["prompts"] == [f"file://{optimize_mod.to_variant_relpath(fake_task_path)}"]
+    assert variant_config["prompts"] == [
+        f"file://{optimize_mod.to_variant_relpath(fake_task_path, paths.variants_dir)}"
+    ]
     assert variant_config["defaultTest"]["assert"][0]["value"].startswith("file://../../")
     assert variant_config["tests"].startswith("file://../../")
     assert "optimized" in variant_config["description"]
 
 
-def test_build_variant_config_missing_base_config_raises(monkeypatch, tmp_path):
-    monkeypatch.setattr(build_mod, "PROMPTFOO_CONFIG_PATH", tmp_path / "nope.yaml")
+def test_build_variant_config_missing_base_config_raises(isolated_root):
+    paths = TaskPaths(root=isolated_root, task="t1")  # nothing built here
     with pytest.raises(optimize_mod.OptimizeError):
-        optimize_mod.build_variant_config("qwen7b", tmp_path / "task.txt")
+        optimize_mod.build_variant_config("qwen7b", isolated_root / "task.txt", paths)
 
 
 # ---------------------------------------------------------------------------
@@ -222,23 +222,23 @@ def test_build_variant_config_missing_base_config_raises(monkeypatch, tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_find_latest_base_run_picks_most_recent_successful_base(tmp_path, monkeypatch):
-    index_path = tmp_path / "index.jsonl"
-    monkeypatch.setattr(run_mod, "INDEX_PATH", index_path)
+def test_find_latest_base_run_picks_most_recent_successful_base(isolated_root):
+    paths = TaskPaths(root=isolated_root, task="t1")
+    paths.results_dir.mkdir(parents=True)
     entries = [
         {"run_id": "old", "created_at": "2026-01-01T00:00:00Z", "task_name": "t", "variant": None, "promptfoo_exit_code": 0},
         {"run_id": "variant-run", "created_at": "2026-01-02T00:00:00Z", "task_name": "t", "variant": "x", "promptfoo_exit_code": 0},
         {"run_id": "failed", "created_at": "2026-01-03T00:00:00Z", "task_name": "t", "variant": None, "promptfoo_exit_code": 1},
         {"run_id": "newest-base", "created_at": "2026-01-04T00:00:00Z", "task_name": "t", "variant": None, "promptfoo_exit_code": 0},
     ]
-    index_path.write_text("\n".join(json.dumps(e) for e in entries) + "\n", encoding="utf-8")
+    paths.index.write_text("\n".join(json.dumps(e) for e in entries) + "\n", encoding="utf-8")
 
-    assert optimize_mod._find_latest_base_run("t") == "newest-base"
+    assert optimize_mod._find_latest_base_run("t", paths) == "newest-base"
 
 
-def test_find_latest_base_run_returns_none_when_missing(tmp_path, monkeypatch):
-    monkeypatch.setattr(run_mod, "INDEX_PATH", tmp_path / "index.jsonl")
-    assert optimize_mod._find_latest_base_run("t") is None
+def test_find_latest_base_run_returns_none_when_missing(isolated_root):
+    paths = TaskPaths(root=isolated_root, task="t1")  # no index.jsonl
+    assert optimize_mod._find_latest_base_run("t", paths) is None
 
 
 # ---------------------------------------------------------------------------
@@ -263,28 +263,24 @@ def _row(case_id, alias, passed, cost=0.001):
     }
 
 
-def test_compare_computes_deltas(tmp_path, monkeypatch):
-    import evalloop.report as report_mod
+def test_compare_computes_deltas(isolated_root):
+    paths = TaskPaths(root=isolated_root, task="t1")
 
-    runs_dir = tmp_path / "runs"
-    reports_dir = tmp_path / "reports"
-    monkeypatch.setattr(run_mod, "RUNS_DIR", runs_dir)
-    monkeypatch.setattr(report_mod, "REPORTS_DIR", reports_dir)
+    _write_output(paths.runs_dir, "before", [_row("case-0001", "qwen7b", False, cost=0.0), _row("case-0002", "qwen7b", False, cost=0.0)])
+    _write_output(paths.runs_dir, "after", [_row("case-0001", "qwen7b", True, cost=0.0), _row("case-0002", "qwen7b", True, cost=0.0)])
 
-    _write_output(runs_dir, "before", [_row("case-0001", "qwen7b", False, cost=0.0), _row("case-0002", "qwen7b", False, cost=0.0)])
-    _write_output(runs_dir, "after", [_row("case-0001", "qwen7b", True, cost=0.0), _row("case-0002", "qwen7b", True, cost=0.0)])
-
-    path = optimize_mod.compare("before", "after")
+    path = optimize_mod.compare("before", "after", paths)
     content = path.read_text(encoding="utf-8")
 
+    assert path.parent == paths.reports_dir
     assert "qwen7b" in content
     assert "+100.0%" in content
 
 
-def test_compare_missing_run_raises(tmp_path, monkeypatch):
-    monkeypatch.setattr(run_mod, "RUNS_DIR", tmp_path / "runs")
+def test_compare_missing_run_raises(isolated_root):
+    paths = TaskPaths(root=isolated_root, task="t1")
     with pytest.raises(optimize_mod.OptimizeError):
-        optimize_mod.compare("nope-a", "nope-b")
+        optimize_mod.compare("nope-a", "nope-b", paths)
 
 
 # ---------------------------------------------------------------------------
@@ -294,54 +290,44 @@ def test_compare_missing_run_raises(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def _label_type_config_path(tmp_path):
-    """optimize() only supports answer_type=='label' (its GEPA metric is a
-    label_match.js port). The project's live config.yaml is currently the
-    CUAD-100 text-extraction task, so this test needs its own label-type
-    config -- otherwise it'd just be testing the OptimizeError guard, not the
-    real orchestration path.
-    """
-    raw = yaml.safe_load((REPO_ROOT / "config.yaml").read_text(encoding="utf-8"))
-    raw["task"]["answer_type"] = "label"
-    raw["task"]["labels"] = ["契約照会", "障害報告", "機能要望", "その他"]
-    path = tmp_path / "config.label-test.yaml"
-    path.write_text(yaml.safe_dump(raw, allow_unicode=True, sort_keys=False), encoding="utf-8")
-    return path
-
-
-def _write_label_type_golden(path):
+def _label_type_golden_rows():
     labels = ["契約照会", "障害報告", "機能要望", "その他"]
-    with path.open("w", encoding="utf-8") as f:
-        for i in range(8):
-            row = {
-                "id": f"case-{i+1:04d}",
-                "input": f"問い合わせ文サンプル{i+1}",
+    rows = []
+    for i in range(8):
+        rows.append(
+            {
+                "id": f"case-{i + 1:04d}",
+                "input": f"問い合わせ文サンプル{i + 1}",
                 "expected": labels[i % len(labels)],
                 "split": "train",
                 "meta": {"category": "基本", "source": "self-made"},
             }
-            f.write(json.dumps(row, ensure_ascii=False) + "\n")
-        for i in range(12):
-            row = {
-                "id": f"case-{i+100:04d}",
-                "input": f"問い合わせ文サンプル{i+100}",
+        )
+    for i in range(12):
+        rows.append(
+            {
+                "id": f"case-{i + 100:04d}",
+                "input": f"問い合わせ文サンプル{i + 100}",
                 "expected": labels[i % len(labels)],
                 "split": "test",
                 "meta": {"category": "基本", "source": "self-made"},
             }
-            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        )
+    return rows
 
 
-def test_optimize_end_to_end_with_stubbed_gepa_and_promptfoo(isolated_artifact_paths, monkeypatch, tmp_path):
-    # decouple from the live project's data/golden.jsonl (currently CUAD-100,
-    # a text-extraction task) so this label-only optimize() path has data
-    # that actually matches its own config's labels.
-    synthetic_golden = tmp_path / "golden.jsonl"
-    _write_label_type_golden(synthetic_golden)
-    monkeypatch.setattr(build_mod, "GOLDEN_PATH", synthetic_golden)
+def _stub_run_env(monkeypatch, fake_eval):
+    monkeypatch.setattr(run_mod, "run_promptfoo_eval", fake_eval)
+    # keep run()'s post-eval bookkeeping hermetic (no real npx/node subprocesses)
+    monkeypatch.setattr(run_mod, "get_promptfoo_version", lambda: "0.0.0-test")
+    monkeypatch.setattr(run_mod, "get_node_version", lambda: "v22.22.0")
 
-    config_path = _label_type_config_path(tmp_path)
-    build_mod.build(config_path=config_path, yes=True)
+
+def test_optimize_end_to_end_with_stubbed_gepa_and_promptfoo(isolated_root, monkeypatch):
+    # optimize() trains against the task's own golden.jsonl; scaffold a
+    # label-type task whose data matches its own labels.
+    cfg, paths = scaffold_task(isolated_root, golden_rows=_label_type_golden_rows())
+    build_mod.build(cfg, paths, yes=True)
 
     fake_optimized = types.SimpleNamespace(
         signature=types.SimpleNamespace(instructions="最適化された新しい指示文です。")
@@ -349,7 +335,7 @@ def test_optimize_end_to_end_with_stubbed_gepa_and_promptfoo(isolated_artifact_p
     monkeypatch.setattr(optimize_mod, "run_gepa", lambda *a, **k: fake_optimized)
 
     def fake_eval(config_path, output_path, **kwargs):
-        cfg = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        cfg_yaml = yaml.safe_load(config_path.read_text(encoding="utf-8"))
         rows = [
             {
                 "vars": {"case_id": f"case-{i:04d}", "expected": "契約照会", "category": "基本"},
@@ -359,7 +345,7 @@ def test_optimize_end_to_end_with_stubbed_gepa_and_promptfoo(isolated_artifact_p
                 "success": True,
                 "cost": 0.0,
             }
-            for i, p in enumerate(cfg["providers"], start=1)
+            for i, p in enumerate(cfg_yaml["providers"], start=1)
         ]
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(json.dumps({"results": {"results": rows}}), encoding="utf-8")
@@ -370,15 +356,16 @@ def test_optimize_end_to_end_with_stubbed_gepa_and_promptfoo(isolated_artifact_p
 
         return _P()
 
-    monkeypatch.setattr(run_mod, "run_promptfoo_eval", fake_eval)
+    _stub_run_env(monkeypatch, fake_eval)
 
-    outcome = optimize_mod.optimize(config_path=config_path)
+    outcome = optimize_mod.optimize(cfg, paths)
 
     assert outcome.task_path.exists()
+    assert paths.optimized_dir in outcome.task_path.parents
     assert "最適化された新しい指示文です。" in outcome.task_path.read_text(encoding="utf-8")
     assert outcome.variant_path.exists()
     assert outcome.run_id
-    assert (run_mod.RUNS_DIR / outcome.run_id / "output.json").exists()
+    assert (paths.runs_dir / outcome.run_id / "output.json").exists()
     # the isolated index.jsonl only holds this variant run (base runs are
     # variant=None), so compare is skipped -- deterministically, unlike when
     # this read the developer's real results/index.jsonl
@@ -386,56 +373,49 @@ def test_optimize_end_to_end_with_stubbed_gepa_and_promptfoo(isolated_artifact_p
     assert outcome.compare_path is None
 
 
-def _text_type_config_path(tmp_path):
-    """A text-type config mirroring the live CUAD-100 setup (answer_type=text,
-    llm-rubric judge). The judge provider shares a provider with models[], so
-    build needs allow_same_judge=True, exactly like the real config.yaml.
-    """
-    raw = yaml.safe_load((REPO_ROOT / "config.yaml").read_text(encoding="utf-8"))
-    raw["task"]["answer_type"] = "text"
-    raw["task"]["labels"] = []
-    path = tmp_path / "config.text-test.yaml"
-    path.write_text(yaml.safe_dump(raw, allow_unicode=True, sort_keys=False), encoding="utf-8")
-    return path
-
-
-def _write_text_type_golden(path):
+def _text_type_golden_rows():
     spans = [
         "This Agreement shall be governed by the laws of the State of New York.",
         "Either party may terminate upon thirty days written notice.",
         "該当条項なし",
     ]
-    with path.open("w", encoding="utf-8") as f:
-        for i in range(6):
-            row = {
+    rows = []
+    for i in range(6):
+        rows.append(
+            {
                 "id": f"case-{i + 1:04d}",
                 "input": f"CONTRACT EXCERPT {i + 1} ...",
                 "expected": spans[i % len(spans)],
                 "split": "train",
                 "meta": {"category": "governing-law", "source": "self-made"},
             }
-            f.write(json.dumps(row, ensure_ascii=False) + "\n")
-        for i in range(6):
-            row = {
+        )
+    for i in range(6):
+        rows.append(
+            {
                 "id": f"case-{i + 100:04d}",
                 "input": f"CONTRACT EXCERPT {i + 100} ...",
                 "expected": spans[i % len(spans)],
                 "split": "test",
                 "meta": {"category": "governing-law", "source": "self-made"},
             }
-            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        )
+    return rows
 
 
-def test_optimize_end_to_end_with_text_task(isolated_artifact_paths, monkeypatch, tmp_path):
-    """answer_type=text no longer trips a guard (issue #17): the CUAD-style
-    live config must reach GEPA training and the downstream run/report.
+def test_optimize_end_to_end_with_text_task(isolated_root, monkeypatch):
+    """answer_type=text no longer trips a guard (issue #17): a CUAD-style
+    text task must reach GEPA training and the downstream run/report.
     """
-    synthetic_golden = tmp_path / "golden.jsonl"
-    _write_text_type_golden(synthetic_golden)
-    monkeypatch.setattr(build_mod, "GOLDEN_PATH", synthetic_golden)
-
-    config_path = _text_type_config_path(tmp_path)
-    build_mod.build(config_path=config_path, yes=True, allow_same_judge=True)
+    # the scaffold's judge provider is distinct from every evaluated model, so
+    # no --allow-same-judge override is needed for the llm-rubric build
+    cfg, paths = scaffold_task(
+        isolated_root,
+        answer_type="text",
+        golden_rows=_text_type_golden_rows(),
+        rubric="採点: {{input}} / {{expected}}\n",
+    )
+    build_mod.build(cfg, paths, yes=True)
 
     captured = {}
 
@@ -449,7 +429,7 @@ def test_optimize_end_to_end_with_text_task(isolated_artifact_paths, monkeypatch
     monkeypatch.setattr(optimize_mod, "run_gepa", fake_gepa)
 
     def fake_eval(config_path, output_path, **kwargs):
-        cfg = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        cfg_yaml = yaml.safe_load(config_path.read_text(encoding="utf-8"))
         rows = [
             {
                 "vars": {"case_id": f"case-{i:04d}", "expected": "x", "category": "governing-law"},
@@ -459,7 +439,7 @@ def test_optimize_end_to_end_with_text_task(isolated_artifact_paths, monkeypatch
                 "success": True,
                 "cost": 0.0,
             }
-            for i, p in enumerate(cfg["providers"], start=1)
+            for i, p in enumerate(cfg_yaml["providers"], start=1)
         ]
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(json.dumps({"results": {"results": rows}}), encoding="utf-8")
@@ -470,9 +450,9 @@ def test_optimize_end_to_end_with_text_task(isolated_artifact_paths, monkeypatch
 
         return _P()
 
-    monkeypatch.setattr(run_mod, "run_promptfoo_eval", fake_eval)
+    _stub_run_env(monkeypatch, fake_eval)
 
-    outcome = optimize_mod.optimize(config_path=config_path)
+    outcome = optimize_mod.optimize(cfg, paths)
 
     assert outcome.task_path.exists()
     assert "optimized text instructions" in outcome.task_path.read_text(encoding="utf-8")

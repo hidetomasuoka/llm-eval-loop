@@ -40,24 +40,33 @@ uv run evalloop doctor           # connectivity check for Node/promptfoo/Ollama/
 
 `doctor` runs a single tiny eval against every configured provider (it calls real APIs).
 
+## Tasks are self-contained workspaces
+
+Every evaluation task lives in its own directory under `tasks/<name>/` (issue #47): `task.yaml` (what to measure and how), `golden.jsonl` (the dataset), `prompts/task.txt` (+ `judge_rubric.txt` for text tasks), plus the hand-curated analysis files (`human_labels.jsonl`, `taxonomy.yaml`, `notes.csv`). Generated artifacts go to per-task subtrees (`data/build/<task>/`, `promptfoo/<task>/`, `results/<task>/`, `blog/<task>/`). Select a task with `--task NAME` on any command, the `EVALLOOP_TASK` env var, or `default_task` in the global `config.yaml` (which also holds the shared model registry with prices). `evalloop task list` shows what exists.
+
+**Data policy: task data is gitignored by default.** Only `task.yaml`, `prompts/` and `PROVENANCE.md` (source + how to re-obtain the data) are tracked, so private datasets can safely live here. The synthetic `sample-inquiry` demo task is the one opt-in exception — its data is tracked, which is why it is the default task and the CI smoke target.
+
 ## Quickstart
 
-`data/golden.jsonl` (the currently active task) contains 100 contract-clause-extraction cases (train 20 / test 80) extracted from CUAD v1 (Contract Understanding Atticus Dataset, published by The Atticus Project, CC BY 4.0). It is an `answer_type=text` task graded by an LLM judge (llm-rubric): "did the model correctly extract the clause of the specified category from the contract excerpt?"
-The previous sample task (inquiry classification, `answer_type=label`) is preserved under `data/sample/` and can be restored at any time by swapping `config.yaml`'s `task.*` together with `data/golden.jsonl` / `prompts/base/*.txt` (see "Bring your own task" below).
+Works on a fresh clone with the bundled `sample-inquiry` task (20 synthetic inquiry-classification cases, `answer_type=label`, graded by a deterministic assert — no LLM judge, and with a local Ollama model no API key at all):
 
 ```bash
-uv run evalloop build --allow-same-judge       # golden.jsonl -> full set of promptfoo configs
+uv run evalloop build --models qwen7b          # sample-inquiry is the default task
 uv run evalloop run --limit 10                 # try just the first 10 cases
 uv run evalloop report <run_id printed above>  # Markdown table: model x accuracy x cost
 uv run evalloop view                           # browse results in promptfoo's local viewer
 ```
 
-> `--allow-same-judge` is required because the bundled `config.yaml` includes the judge (same provider as sonnet46) among the 5 evaluated models — a known, documented tradeoff in which only the sonnet46 row is self-graded (see the judge comment in `config.yaml`). Point the judge at a model outside the evaluated set and the flag becomes unnecessary.
+Drop `--models qwen7b` to evaluate the full model registry (needs `ANTHROPIC_API_KEY`).
 
-> Trying it without API keys: `config.local-verify.yaml` is a verification-only config that runs and grades entirely on Ollama (qwen2.5:7b). Without `ANTHROPIC_API_KEY`, you can exercise the whole pipeline with
-> `uv run evalloop build --config config.local-verify.yaml --allow-same-judge` →
-> `uv run evalloop run --config config.local-verify.yaml --limit 5`
-> (`--allow-same-judge` is required because the judge is the same model being evaluated; mind the self-grading bias).
+The CUAD-100 contract-clause-extraction task (`answer_type=text`, llm-rubric judge) is defined in `tasks/cuad100/` but ships without data — see [tasks/cuad100/PROVENANCE.md](tasks/cuad100/PROVENANCE.md) to obtain it (CUAD v1, CC BY 4.0), then:
+
+```bash
+uv run evalloop build --task cuad100 --allow-same-judge
+uv run evalloop run --task cuad100 --limit 10
+```
+
+> `--allow-same-judge` is required because `tasks/cuad100/task.yaml` includes the judge (same provider as sonnet46) among the 5 evaluated models — a known, documented tradeoff in which only the sonnet46 row is self-graded. Point the judge at a model outside the evaluated set and the flag becomes unnecessary.
 
 If everything looks good, drop `--limit` to run the full set, then continue into failure analysis, the improvement loop, and blog export.
 
@@ -77,13 +86,13 @@ uv run evalloop blog --runs <run_id>                        # figures/tables/art
 
 ## Bring your own task
 
-Only three things need touching:
+Adding a task never touches existing tasks — create a directory under `tasks/` with three files:
 
-1. `config.yaml` — task name, label list, evaluated models, prices, judge settings
-2. `data/golden.jsonl` — the eval dataset (single source of truth; format in [docs/DESIGN.md#5-データ仕様](docs/DESIGN.md#5-データ仕様), Japanese)
-3. `prompts/base/task.txt` — the base prompt containing the `{{input}}` placeholder
+1. `tasks/<name>/task.yaml` — answer_type, labels, judge/optimize settings, and (optionally) which registry models to evaluate (copy an existing task.yaml as a template)
+2. `tasks/<name>/golden.jsonl` — the eval dataset (single source of truth; format in [docs/DESIGN.md#5-データ仕様](docs/DESIGN.md#5-データ仕様), Japanese). Gitignored by default — add a `PROVENANCE.md` describing where it came from
+3. `tasks/<name>/prompts/task.txt` — the base prompt containing the `{{input}}` placeholder (text tasks also need `prompts/judge_rubric.txt`)
 
-`config.yaml`'s `models[].provider` uses promptfoo notation (e.g. `anthropic:messages:claude-...`, `ollama:chat:qwen2.5:7b`), while `optimize.reflection_provider` uses dspy/litellm notation (e.g. `anthropic/claude-...`). **The two formats differ.** Prices and provider IDs in the bundled config are samples only: never use an ID that doesn't pass `doctor`, and update prices to the official pricing at the time of use.
+Then run everything with `--task <name>`. Model definitions (provider IDs, prices, `supports_sampling_params`) live once in the global `config.yaml` registry; a task picks aliases from it. `models[].provider` uses promptfoo notation (e.g. `anthropic:messages:claude-...`, `ollama:chat:qwen2.5:7b`), while `optimize.reflection_provider` uses dspy/litellm notation (e.g. `anthropic/claude-...`). **The two formats differ.** Prices and provider IDs in the bundled config are samples only: never use an ID that doesn't pass `doctor`, and update prices to the official pricing at the time of use.
 
 > **Models that reject sampling parameters**: `claude-opus-4-8` and `claude-fable-5` reject `temperature` and other sampling parameters with **HTTP 400**. Set `models[].supports_sampling_params: false` for such models and `evalloop build` will omit temperature from the generated promptfoo config (`max_tokens` is always sent). The bundled `config.yaml` already sets this for opus48 / fable5.
 > Also note that `claude-fable-5` has always-on thinking, so its latency and output token counts can be larger than other models' (keep this in mind when interpreting cost estimates and latency comparisons).
@@ -114,7 +123,7 @@ uv run ruff check .  # linter (the same check CI runs)
 
 Everything related to the iron rules — label normalization, train/test split separation, the output.json parser, the blog publish guards — is covered by unit tests (`tests/`). Tests never write into the checkout (see the `isolated_artifact_paths` fixture in [tests/conftest.py](tests/conftest.py)).
 
-CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs pytest + ruff on Ubuntu / Windows × Python 3.11 / 3.12 for every push and PR. Additionally, on pushes to master, if the `OLLAMA_API_KEY` secret is configured, a 3-case live smoke (build → run → report) runs against Ollama Cloud (gpt-oss:20b); it is skipped automatically otherwise. No metered API cost is incurred.
+CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs pytest + ruff on Ubuntu / Windows × Python 3.11 / 3.12 for every push and PR. Additionally, on pushes to master, if the `OLLAMA_API_KEY` secret is configured, a 3-case live smoke (`--task sample-inquiry --models gptoss20b`: build → run → report) runs against Ollama Cloud; it is skipped automatically otherwise. No metered API cost is incurred.
 
 ## Issues found (and fixed) during live Windows verification
 
@@ -134,33 +143,31 @@ Using `config.local-verify.yaml` (Ollama qwen2.5:7b only, no API keys), the full
 
 ## Generated artifacts policy (files not tracked by git)
 
-Everything the `evalloop` commands generate is gitignored and not part of the repository. After a fresh clone, run `uv run evalloop build` first, as in the Quickstart, to generate `promptfoo/promptfooconfig.yaml` and `data/build/`.
+Everything the `evalloop` commands generate is gitignored and lives in per-task subtrees. After a fresh clone, run `uv run evalloop build` first, as in the Quickstart.
 
-| Command | Artifacts (all untracked) |
+| Command | Artifacts (all untracked, `<task>` = task name) |
 |---|---|
-| `evalloop build` | `data/build/`, `promptfoo/promptfooconfig.yaml` |
-| `evalloop run` | `results/runs/{run_id}/`, `results/index.jsonl` (machine-local audit ledger) |
-| `evalloop report` | `results/reports/` |
-| `evalloop failures` / `cluster` | `data/notes.csv`, `data/failures.jsonl`, `data/taxonomy.draft.yaml` |
-| `evalloop optimize` | `promptfoo/variants/` (`prompts/optimized/` may optionally be committed as experiment artifacts) |
-| `evalloop blog` | `blog/` |
+| `evalloop build` | `data/build/<task>/`, `promptfoo/<task>/promptfooconfig.yaml` |
+| `evalloop run` | `results/<task>/runs/{run_id}/`, `results/<task>/index.jsonl` (machine-local audit ledger) |
+| `evalloop report` | `results/<task>/reports/` |
+| `evalloop failures` / `cluster` | `tasks/<task>/notes.csv`, `tasks/<task>/taxonomy.draft.yaml` |
+| `evalloop optimize` | `promptfoo/<task>/variants/` (`tasks/<task>/optimized/` may optionally be committed as experiment artifacts) |
+| `evalloop blog` | `blog/<task>/` |
 
-Raw run outputs (output.json / meta.json) can contain local absolute paths and provider error payloads, so they are never committed to the public repository. Hand-curated files (`data/golden.jsonl`, `data/human_labels.jsonl`, `data/taxonomy.yaml`, `prompts/base/`, `config.yaml`) are tracked as usual.
+Raw run outputs (output.json / meta.json) can contain local absolute paths and provider error payloads, so they are never committed to the public repository. Task **data** (`golden.jsonl`, `human_labels.jsonl`, `notes.csv`, `taxonomy*.yaml`) is also gitignored by default per the data policy above; only the task's "code" (`task.yaml`, `prompts/`, `PROVENANCE.md`) and the global `config.yaml` are tracked.
 
 ## Data provenance
 
-All bundled data comes from public datasets or was created synthetically for this project; **none of it is related to real customer data, business data, or actual inquiries**.
+Each task documents its data source and how to re-obtain it in `tasks/<name>/PROVENANCE.md`. All data ever bundled here comes from public datasets or was created synthetically for this project; **none of it is related to real customer data, business data, or actual inquiries**.
 
-- `data/golden.jsonl` — a 100-case subset extracted from [CUAD v1](https://www.atticusprojectai.org/cuad) (published by The Atticus Project, **CC BY 4.0**), obtained via the `chenghao/cuad_qa` mirror on Hugging Face (source attribution in `config.yaml`'s `blog.allowed_sources`)
-- `data/human_labels.jsonl` — intentionally empty at the moment (no human review pass over CUAD-100 yet; see Known constraints)
-- `data/sample/golden.jsonl` — the previous sample task (4-way inquiry classification): **20 self-made dummy cases** (`meta.source: "self-made"`). Invented texts imitating generic SaaS inquiries; not quotes or adaptations of real inquiries
-- `data/sample/human_labels.jsonl` — **10 synthetic fixtures** for the judge-calibration demo. `output_raw` values are fictional model outputs, not real LLM results
+- `tasks/sample-inquiry/` (tracked, opt-in) — **20 self-made dummy cases** for 4-way inquiry classification (`meta.source: "self-made"`; invented texts imitating generic SaaS inquiries) plus **10 synthetic fixtures** for the judge-calibration demo (`output_raw` values are fictional model outputs)
+- `tasks/cuad100/` (data untracked) — a 100-case subset extracted from [CUAD v1](https://www.atticusprojectai.org/cuad) (published by The Atticus Project, **CC BY 4.0**), obtained via the `chenghao/cuad_qa` mirror on Hugging Face; see its PROVENANCE.md for the file fingerprint and recovery steps
 
 ## Known constraints
 
 - `evalloop optimize` supports all three answer types, but the GEPA **training metric is a deterministic proxy, not the final evaluation**: `label` uses the label-match port, `text` (e.g. the active CUAD-100 task) uses SQuAD-style token F1 against the gold span(s), and `json` uses a deep-equality port. For text tasks the final promptfoo evaluation still uses the llm-rubric judge, so training metric and final grading can diverge — measuring that divergence is part of the GEPA case study
 - With a small local model (qwen2.5:7b) as judge, instruction following is less stable than with frontier models (e.g. it occasionally returns grading rationales in languages other than English/Japanese). Prefer a judge substantially stronger than the models being evaluated (as `config.yaml` is designed to do)
-- `data/human_labels.jsonl` is intentionally empty because there are no human labels for the CUAD-100 task yet. Using `evalloop calibrate` requires a human review pass first
+- `tasks/cuad100/human_labels.jsonl` is intentionally empty because there are no human labels for the CUAD-100 task yet. Using `evalloop calibrate` there requires a human review pass first (the `sample-inquiry` task ships 10 synthetic labels for the calibration demo)
 
 For design background, data specs, and the details of the "iron rules", see [docs/DESIGN.md](docs/DESIGN.md) (Japanese).
 

@@ -12,11 +12,14 @@ emits a warning (rather than raising) when an expected key is missing.
 from __future__ import annotations
 
 import json
+import os
 import warnings as _warnings
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import yaml
+
+from evalloop import paths as paths_mod
 
 VALID_SPLITS = {"train", "test"}
 VALID_ANSWER_TYPES = {"label", "json", "text"}
@@ -114,28 +117,18 @@ class Config:
         raise SchemaError(f"unknown model alias {alias!r}; known aliases: {[m.alias for m in self.models]}")
 
 
-def load_config(path: str | Path) -> Config:
-    path = Path(path)
-    if not path.exists():
-        raise SchemaError(f"config file not found: {path}")
-    with path.open(encoding="utf-8") as f:
-        raw = yaml.safe_load(f) or {}
+@dataclass
+class GlobalConfig:
+    """Root config.yaml: the model zoo + run defaults + default_task.
+    Everything task-specific lives in tasks/<name>/task.yaml (issue #47)."""
 
-    try:
-        task_raw = raw["task"]
-        models_raw = raw["models"]
-        judge_raw = raw["judge"]
-        optimize_raw = raw["optimize"]
-    except KeyError as e:
-        raise SchemaError(f"config.yaml missing required top-level key: {e}") from e
+    default_task: str | None
+    models: list[ModelConfig]
+    run: RunConfig
+    path: Path
 
-    task = TaskConfig(
-        name=task_raw["name"],
-        answer_type=task_raw["answer_type"],
-        prompt_file=task_raw["prompt_file"],
-        labels=task_raw.get("labels") or [],
-        json_schema_file=task_raw.get("json_schema_file"),
-    )
+
+def _parse_models(models_raw, source: str) -> list[ModelConfig]:
     models = [
         ModelConfig(
             provider=m["provider"],
@@ -149,20 +142,101 @@ def load_config(path: str | Path) -> Config:
     ]
     aliases = [m.alias for m in models]
     if len(aliases) != len(set(aliases)):
-        raise SchemaError(f"config.yaml models[].alias must be unique, got: {aliases}")
+        raise SchemaError(f"{source} models[].alias must be unique, got: {aliases}")
+    return models
 
-    run_raw = raw.get("run") or {}
-    run = RunConfig(
-        repeat=int(run_raw.get("repeat", 1)),
-        temperature=float(run_raw.get("temperature", 0.0)),
-        max_tokens=int(run_raw.get("max_tokens", 1024)),
-        cost_warn_usd=float(run_raw.get("cost_warn_usd", 3.0)),
+
+def _parse_run(run_raw, defaults: RunConfig | None = None) -> RunConfig:
+    base = defaults or RunConfig()
+    run_raw = run_raw or {}
+    return RunConfig(
+        repeat=int(run_raw.get("repeat", base.repeat)),
+        temperature=float(run_raw.get("temperature", base.temperature)),
+        max_tokens=int(run_raw.get("max_tokens", base.max_tokens)),
+        cost_warn_usd=float(run_raw.get("cost_warn_usd", base.cost_warn_usd)),
     )
+
+
+def load_global_config(path: str | Path) -> GlobalConfig:
+    path = Path(path)
+    if not path.exists():
+        raise SchemaError(f"global config not found: {path}")
+    with path.open(encoding="utf-8") as f:
+        raw = yaml.safe_load(f) or {}
+
+    models_raw = raw.get("models")
+    if not models_raw:
+        raise SchemaError(f"{path}: must define a non-empty models[] registry")
+    models = _parse_models(models_raw, str(path))
+    run = _parse_run(raw.get("run"))
+    return GlobalConfig(default_task=raw.get("default_task"), models=models, run=run, path=path)
+
+
+def resolve_task_name(task: str | None, global_config: GlobalConfig) -> str:
+    """--task flag > EVALLOOP_TASK env > config.yaml default_task."""
+    name = task or os.environ.get("EVALLOOP_TASK") or global_config.default_task
+    if not name:
+        raise SchemaError(
+            "no task specified: pass --task NAME, set EVALLOOP_TASK, or set default_task in config.yaml"
+        )
+    return name
+
+
+def load_task(task: str | None = None, root: Path | None = None) -> tuple[Config, paths_mod.TaskPaths]:
+    """Resolve a task into (merged Config, TaskPaths).
+
+    The merged Config keeps the same shape the codebase always used, so
+    downstream modules don't care about the global/task file split:
+    prompt_file / rubric_file / json_schema_file come back as ABSOLUTE paths
+    (path convention: tasks/<name>/prompts/task.txt, judge_rubric.txt).
+    """
+    root = root or paths_mod.REPO_ROOT
+    global_config = load_global_config(root / "config.yaml")
+    name = resolve_task_name(task, global_config)
+    try:
+        tp = paths_mod.for_task(name, root)
+    except paths_mod.TaskNotFoundError as e:
+        raise SchemaError(str(e)) from e
+
+    with tp.task_config.open(encoding="utf-8") as f:
+        raw = yaml.safe_load(f) or {}
+
+    try:
+        task_raw = raw["task"]
+        judge_raw = raw["judge"]
+        optimize_raw = raw["optimize"]
+    except KeyError as e:
+        raise SchemaError(f"{tp.task_config} missing required top-level key: {e}") from e
+
+    json_schema_file = task_raw.get("json_schema_file")
+    task_cfg = TaskConfig(
+        name=name,  # the directory name is the canonical task name
+        answer_type=task_raw["answer_type"],
+        prompt_file=str(tp.prompt_file),
+        labels=task_raw.get("labels") or [],
+        json_schema_file=str(tp.task_dir / json_schema_file) if json_schema_file else None,
+    )
+
+    # task.yaml's models: is an alias subset of the global registry (omitted = all)
+    selection = raw.get("models")
+    if selection:
+        by_alias = {m.alias: m for m in global_config.models}
+        unknown = [a for a in selection if a not in by_alias]
+        if unknown:
+            raise SchemaError(
+                f"{tp.task_config}: models {unknown} not in the global registry "
+                f"(known: {sorted(by_alias)})"
+            )
+        models = [by_alias[a] for a in selection]
+    else:
+        models = list(global_config.models)
+
+    run = _parse_run(raw.get("run"), defaults=global_config.run)
     judge = JudgeConfig(
         provider=judge_raw["provider"],
         threshold=float(judge_raw.get("threshold", 0.8)),
         agreement_threshold=float(judge_raw.get("agreement_threshold", 0.85)),
-        rubric_file=judge_raw.get("rubric_file", "prompts/base/judge_rubric.txt"),
+        rubric_file=str(tp.rubric_file),  # path convention, not configurable
     )
     optimize = OptimizeConfig(
         target_alias=optimize_raw["target_alias"],
@@ -176,7 +250,18 @@ def load_config(path: str | Path) -> Config:
         allowed_sources=blog_raw.get("allowed_sources") or ["self-made"],
     )
 
-    return Config(task=task, models=models, run=run, judge=judge, optimize=optimize, blog=blog, path=path)
+    config = Config(task=task_cfg, models=models, run=run, judge=judge, optimize=optimize, blog=blog, path=tp.task_config)
+    return config, tp
+
+
+def restrict_models(config: Config, aliases: list[str]) -> Config:
+    """CLI --models: narrow the resolved task's model list (e.g. CI smoke)."""
+    known = {m.alias for m in config.models}
+    unknown = [a for a in aliases if a not in known]
+    if unknown:
+        raise SchemaError(f"--models {unknown} not in this task's model list (known: {sorted(known)})")
+    picked = [m for m in config.models if m.alias in set(aliases)]
+    return replace(config, models=picked)
 
 
 # ---------------------------------------------------------------------------
