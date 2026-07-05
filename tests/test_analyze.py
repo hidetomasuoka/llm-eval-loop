@@ -201,6 +201,57 @@ def test_cluster_invalid_json_output_raises(analyze_env, monkeypatch):
         analyze_mod.cluster(notes_path=analyze_env["notes_path"], config_path=REPO_ROOT / "config.yaml")
 
 
+def test_cluster_omits_temperature_when_judge_lacks_sampling_support(analyze_env, monkeypatch, tmp_path):
+    # judge.provider also appears in models[] with supports_sampling_params:
+    # false (opus48/fable5-style) -- the throwaway cluster eval must not send
+    # temperature or the provider rejects it with HTTP 400
+    analyze_env["notes_path"].write_text(
+        "case_id,model,input_head,output_head,expected,note\ncase-0002,haiku45,foo,bar,契約照会,x\n",
+        encoding="utf-8",
+    )
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "task": {"name": "t", "answer_type": "text", "prompt_file": "prompts/base/task.txt"},
+                "models": [
+                    {"provider": "p:nosample", "alias": "nosample", "tier": "frontier", "supports_sampling_params": False}
+                ],
+                "judge": {"provider": "p:nosample"},
+                "optimize": {"target_alias": "nosample", "reflection_provider": "r"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    fake_taxonomy = {"categories": [{"id": "c1", "name": "c1", "definition": "d"}], "assignments": {"case-0002": "c1"}}
+    captured = {}
+
+    def fake_eval(cfg_path, output_path, **kwargs):
+        captured["config"] = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(
+            json.dumps({"results": {"results": [{"vars": {}, "provider": {"id": "j", "label": "cluster_judge"},
+                                                    "response": {"output": json.dumps(fake_taxonomy, ensure_ascii=False)},
+                                                    "gradingResult": {"pass": True, "score": 1}, "success": True}]}}),
+            encoding="utf-8",
+        )
+
+        class _P:
+            returncode = 0
+            stderr = ""
+
+        return _P()
+
+    monkeypatch.setattr(run_mod, "run_promptfoo_eval", fake_eval)
+
+    analyze_mod.cluster(notes_path=analyze_env["notes_path"], config_path=config_path)
+
+    provider_config = captured["config"]["providers"][0]["config"]
+    assert "temperature" not in provider_config
+    assert provider_config == {"max_tokens": 2048}
+
+
 # ---------------------------------------------------------------------------
 # pivot
 # ---------------------------------------------------------------------------
