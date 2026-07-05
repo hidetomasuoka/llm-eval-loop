@@ -180,6 +180,12 @@ def calibrate(config: Config, paths: TaskPaths, run_id: str | None = None) -> Ca
     if run_id is not None:
         verdicts = _judge_verdicts_from_run(run_id, paths)
     else:
+        if cfg.task.answer_type != "text":
+            raise CalibrateError(
+                f"fresh re-grading is only supported for answer_type=text tasks, "
+                f"but this task uses answer_type={cfg.task.answer_type!r}. "
+                "Pass --run-id to cross-check an existing run instead."
+            )
         verdicts = _judge_verdicts_fresh(labels, golden_by_id, cfg, paths)
 
     cases: list[CaseAgreement] = []
