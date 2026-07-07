@@ -26,8 +26,18 @@ optimize:
   target_alias: qwen7b
   reflection_provider: anthropic/claude-opus-4-8
   auto: light
-  # method: gepa                 # 最適化手法の選択（省略時 gepa）。miprov2/copro は APO-06/07 で追加予定
-  # params: {}                   # 手法固有パラメータの受け皿。GEPAでは params.auto が上の auto より優先される
+  # 最適化手法は method で選択（省略時 gepa）。手法固有パラメータは params。
+  # どの手法でも訓練メトリクスは代理指標（プロキシ）で、最終評価は llm-rubric のまま。
+  # 手法の選び方は docs/APO_GUIDE.md（症状→粒度→手法）を参照。設定例:
+  #
+  # method: gepa                 # 進化的なinstruction最適化（reflection LMが改善案を提案）
+  # params: {auto: medium}       # params.auto は上の auto より優先される
+  #
+  # method: miprov2              # ベイズ最適化。※現状instructionのみ（demosはAPO-17で解放予定）
+  # params: {auto: light, val_ratio: 0.2, seed: 0}   # train splitから8:2でvalsetを分割（seed固定）
+  #
+  # method: copro                # coordinate ascent型のinstruction改善
+  # params: {breadth: 10, depth: 3, init_temperature: 1.4}
 
 blog:
   jpy_per_usd: 150

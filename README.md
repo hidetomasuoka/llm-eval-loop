@@ -78,9 +78,9 @@ uv run evalloop cluster                                    # an LLM drafts categ
 #   -> review, then save as data/taxonomy.yaml (the draft never overwrites it automatically)
 uv run evalloop pivot <run_id>                              # failure-category x model cross-tab
 uv run evalloop calibrate --run-id <run_id>                 # agreement rate between the LLM judge and human labels
-uv run evalloop optimize                                    # improve the prompt with dspy GEPA (uses the train split only)
+uv run evalloop optimize                                    # improve the prompt with dspy (uses the train split only; method via task.yaml optimize.method: gepa / miprov2 / copro)
 #   -> afterwards run/report/compare (against the latest base run, if any) execute automatically
-#   NOTE: GEPA trains against a deterministic proxy metric (token F1 for text tasks); the final eval stays llm-rubric (see Known constraints)
+#   NOTE: whichever method, training uses a deterministic proxy metric (token F1 for text tasks); the final eval stays llm-rubric (see Known constraints)
 #   NOTE: for which failure symptoms warrant which optimization technique, see docs/APO_GUIDE.md (a symptom → granularity → method diagnostic guide)
 uv run evalloop blog --runs <run_id>                        # figures/tables/article draft into blog/
 ```

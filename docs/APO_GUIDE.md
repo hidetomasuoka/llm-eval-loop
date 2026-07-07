@@ -1,6 +1,6 @@
 # APO 適用ガイド（症状 → 粒度 → 手法 の診断）
 
-> **この文書について**: `evalloop optimize` は現状 **GEPA 一択** だが、APO（Automatic Prompt Optimization）手法は「失敗症状 × 最適化粒度」で選ぶべきものである。本ガイドは、どの症状にどの粒度のどの手法を当てるかの判断基準を整備し、今後のオプティマイザ拡張（[APO-03] 以降）の設計根拠とする。
+> **この文書について**: `evalloop optimize` は **GEPA / MIPROv2 / COPRO の3手法**に対応している（task.yaml の `optimize.method: gepa | miprov2 | copro` で選択、省略時 gepa。手法固有パラメータは `optimize.params`）。APO（Automatic Prompt Optimization）手法は「失敗症状 × 最適化粒度」で選ぶべきものであり、本ガイドは、どの症状にどの粒度のどの手法を当てるかの判断基準を整備する。
 >
 > **位置づけ**: 本ガイドは [docs/DESIGN.md](DESIGN.md) の「鉄の掟（第11章）」に従う。本文中で鉄の掟と矛盾する記述はないことが前提。コード変更を伴わない docs のみの追加。
 
@@ -33,7 +33,7 @@ APO には **train / holdout 分割が取れる評価セット** が前提とな
 
 - **train split**: 最適化に使うケース群。GEPA等はこのみを読む（`optimize.py` は `split=='train'` のみ抽出し、test と ID が交差すると即異常終了）
 - **holdout（test）split**: 最適化に使わず、最終評価のみに使う。ここでの改善確認が「汎化した」と言える唯一の証拠
-- **評価指標**: GEPA はプロセス内高速 metric を必要とするため、最終評価（llm-rubric）とは**異なる代理指標**を使う（`optimize.py` の docstring 参照）。代理指標と最終評価の divergence は測定対象であり、隠さない。
+- **評価指標**: **どの手法でも訓練メトリクスはプロセス内の代理指標（プロキシ）であり、最終評価（llm-rubric）とは別物**（`optimizers/metrics.py` の docstring 参照）。代理指標と最終評価の divergence は測定対象であり、隠さない。
 
 train/holdout が取れない（評価セットが小さすぎる・ラベルがない）場合は、まず評価セット整備が先。APO は評価セットの上に成り立つ。
 
@@ -45,16 +45,16 @@ train/holdout が取れない（評価セットが小さすぎる・ラベルが
 
 | 症状 | 粒度 | 代表手法 | evalloop対応 |
 |---|---|---|---|
-| 指示が曖昧で分類・抽出がぶれる | **7a. Instruction** | GEPA, OPRO, APE, ProTeGi, PromptAgent | **GEPA対応済**（`evalloop optimize`） |
-| 例の入れ替え・順序で性能がぶれる | **7b. Exemplar** | EASE, MIPROv2, PromptWizard | 未対応（計画あり） |
+| 指示が曖昧で分類・抽出がぶれる | **7a. Instruction** | GEPA, COPRO, OPRO, APE, ProTeGi, PromptAgent | **対応済: GEPA / COPRO**（`optimize.method: gepa` / `copro`）。MIPROv2 も現状は instruction 提案として利用可 |
+| 例の入れ替え・順序で性能がぶれる | **7b. Exemplar** | EASE, MIPROv2, PromptWizard | **一部対応: MIPROv2**（`optimize.method: miprov2` — ※現状 instruction のみ、demos ブートストラップは [APO-17] で解放予定） |
 | 長いsystem promptの局所修正で別セクションが壊れる | **7c. 長文構造** | SCULPT | 対象外 |
 | コスト・長さ制約が厳しい | **7d. 多目的** | InstOptima, EMO-Prompts | レポート可視化のみ計画 |
 | Agent軌跡が破綻 | **7e. Agent/Multi-step** | PROMST | 対象外 |
 
 ### 各粒度の補足
 
-- **7a. Instruction 粒度**: 指示文そのものを書き換える。GEPA は reflection LM に「この失敗を直すには指示をどう変えればよいか」を提案させ、train set で候補を評価し、パレートフロントに蓄積する進化的最適化。`evalloop optimize` はこの粒度のみ対応。
-- **7b. Exemplar 粒度**: few-shot 例の選択・順序を最適化する。Instruction が完成していても例でぶれる場合はこちら。未対応だが計画あり（`optimize.py` 拡張 or 別モジュール）。
+- **7a. Instruction 粒度**: 指示文そのものを書き換える。GEPA は reflection LM に「この失敗を直すには指示をどう変えればよいか」を提案させ、train set で候補を評価し、パレートフロントに蓄積する進化的最適化。COPRO は breadth 個の候補生成 × depth 回の反復改善（coordinate ascent）。MIPROv2 はベイズ最適化で instruction 空間を探索する（`optimize.method` で選択）。
+- **7b. Exemplar 粒度**: few-shot 例の選択・順序を最適化する。Instruction が完成していても例でぶれる場合はこちら。MIPROv2 が本来この粒度をカバーするが、evalloop では現状 demos ブートストラップを無効化して instruction のみ使っている（[APO-17] で解放予定）。
 - **7c. 長文構造粒度**: system prompt が複数セクションから成り、一部を直すと別セクションが壊れる症状。SCULPT はセクション単位の局所編集を保持する。本プロジェクトのプロンプトは短いため対象外。
 - **7d. 多目的粒度**: 精度以外にコスト・出力長・レイテンシを同時に最適化。InstOptima/EMO-Prompts はパレートフロントを複数目的で追跡する。evalloop は現状レポート可視化のみ計画（最適化自体は未対応）。
 - **7e. Agent/Multi-step粒度**: Agent の多段推論軌跡全体を最適化。PROMST は軌跡の失敗点から改善する。本プロジェクトは単発QA前提のため対象外。
@@ -79,7 +79,7 @@ APO を適用・評価する際の運用上の前提。
 1. **評価セットと分割の前提**: train/holdout 分割が取れる評価セットが必須。鉄の掟 #1（`assert_split_disjoint`）に従い、train と test の ID 交差は即異常終了。
 2. **適用しやすい症状**: 指示が曖昧・分類がぶれる・抽出が安定しない（Instruction 粒度）。例の順序で性能がぶれる（Exemplar 粒度）。これらは APO の効きやすい症状。
 3. **後回しにすべき症状**: 検索未ヒット・チャンク境界崩れ・パース欠損・ツール誤選択・ワークフロー破綻。プロンプト以外が主因の場合は APO より先に根本原因を直す。
-4. **holdout側での改善確認**: train でのスコア上昇だけでは「汎化した」と言えない。holdout（test split）で改善が確認できて初めて採用。GEPA の valset スコアと test での最終評価は別物（代理指標と最終評価の divergence は測定対象）。
+4. **holdout側での改善確認**: train でのスコア上昇だけでは「汎化した」と言えない。holdout（test split）で改善が確認できて初めて採用。オプティマイザの train/val スコアと test での最終評価は別物（どの手法でも訓練メトリクスは代理指標であり、最終評価との divergence は測定対象）。
 5. **1 prompt × 1 provider原則**: 1回の最適化は1プロンプト・1プロバイダで行う。複数プロバイダを同時に最適化すると、プロバイダ間の挙動差がどの指示変更によるものか分離できなくなる。
 6. **本番失敗パターンを評価セットに含める**: 本番で失敗したケースは評価セットに追加し、回帰テスト可能な形にする。APO は評価セットの上に成り立つため、評価セットが本番を代表していないと改善が本番に効かない。
 7. **「最強手法」断定の回避**: APO 手法の優劣は**条件依存**（タスク・モデル・データサイズ・評価指標）。あるタスクで GEPA が勝っても別タスクで OPRO が勝りうる。「最強手法」を断定せず、症状と粒度で選ぶ。
@@ -109,6 +109,7 @@ Soft Prompt（Prefix-Tuning 等）や PEFT（LoRA 等）は本プロジェクト
 ## 参考
 
 - [docs/DESIGN.md](DESIGN.md) — 設計ドキュメント・鉄の掟（第11章）
-- `src/evalloop/optimize.py` — GEPA 実装（Instruction 粒度のみ対応、代理指標のdocstring）
+- `src/evalloop/optimize.py` — オーケストレーション（手法選択・variant生成・run/report/compare）
+- `src/evalloop/optimizers/` — 手法実装（gepa.py / miprov2.py / copro.py）と共有の代理メトリクス（metrics.py — 代理指標のdocstring）
 - Issue #60 — 本ガイドの作成指示
 - APO 計画全22件 — [APO-xx] で参照される依存関係
