@@ -45,16 +45,19 @@ train/holdout が取れない（評価セットが小さすぎる・ラベルが
 
 | 症状 | 粒度 | 代表手法 | evalloop対応 |
 |---|---|---|---|
-| 指示が曖昧で分類・抽出がぶれる | **7a. Instruction** | GEPA, OPRO, APE, ProTeGi, PromptAgent | **GEPA対応済**（`evalloop optimize`） |
-| 例の入れ替え・順序で性能がぶれる | **7b. Exemplar** | EASE, MIPROv2, PromptWizard | 未対応（計画あり） |
+| 指示が曖昧で分類・抽出がぶれる | **7a. Instruction** | GEPA, COPRO, OPRO, APE, ProTeGi, PromptAgent | **GEPA / COPRO 対応済**（`optimize.method: gepa\|copro`） |
+| 例の入れ替え・順序で性能がぶれる | **7b. Exemplar** | MIPROv2, EASE, PromptWizard | **MIPROv2 対応済※** instructionのみ（demosは [APO-17] で解放予定） |
 | 長いsystem promptの局所修正で別セクションが壊れる | **7c. 長文構造** | SCULPT | 対象外 |
 | コスト・長さ制約が厳しい | **7d. 多目的** | InstOptima, EMO-Prompts | レポート可視化のみ計画 |
 | Agent軌跡が破綻 | **7e. Agent/Multi-step** | PROMST | 対象外 |
 
 ### 各粒度の補足
 
-- **7a. Instruction 粒度**: 指示文そのものを書き換える。GEPA は reflection LM に「この失敗を直すには指示をどう変えればよいか」を提案させ、train set で候補を評価し、パレートフロントに蓄積する進化的最適化。`evalloop optimize` はこの粒度のみ対応。
-- **7b. Exemplar 粒度**: few-shot 例の選択・順序を最適化する。Instruction が完成していても例でぶれる場合はこちら。未対応だが計画あり（`optimize.py` 拡張 or 別モジュール）。
+- **7a. Instruction 粒度**: 指示文そのものを書き換える。evalloop は2手法を対応済:
+  - **GEPA**（`optimize.method: gepa`、デフォルト）: reflection LM に「この失敗を直すには指示をどう変えればよいか」を提案させ、train set で候補を評価し、パレートフロントに蓄積する進化的最適化
+  - **COPRO**（`optimize.method: copro`）: coordinate ascent 的な反復で指示を改善。`params.breadth` / `depth` / `init_temperature` で探索幅・深さ・初期温度を調整
+- **7b. Exemplar 粒度**: few-shot 例の選択・順序を最適化する。Instruction が完成していても例でぶれる場合はこちら。
+  - **MIPROv2**（`optimize.method: miprov2`）: ベイズ最適化でinstruction空間を探索。現状は instruction のみ対応（demos ブートストラップは [APO-17] で解放予定）。`params.val_ratio` / `seed` で検証比・乱数シードを調整
 - **7c. 長文構造粒度**: system prompt が複数セクションから成り、一部を直すと別セクションが壊れる症状。SCULPT はセクション単位の局所編集を保持する。本プロジェクトのプロンプトは短いため対象外。
 - **7d. 多目的粒度**: 精度以外にコスト・出力長・レイテンシを同時に最適化。InstOptima/EMO-Prompts はパレートフロントを複数目的で追跡する。evalloop は現状レポート可視化のみ計画（最適化自体は未対応）。
 - **7e. Agent/Multi-step粒度**: Agent の多段推論軌跡全体を最適化。PROMST は軌跡の失敗点から改善する。本プロジェクトは単発QA前提のため対象外。
@@ -67,7 +70,7 @@ train/holdout が取れない（評価セットが小さすぎる・ラベルが
 
 1. **API Structured Outputs**: provider がサポートする構造化出力機能（OpenAI の Structured Outputs / response_format、Anthropic の tool_use）を使う。スキーマ強制が最も安定。これが使えるならまず使う。
 2. **Schema再設計（PARSE）**: スキーマ自体を簡素化・平坦化し、ネストを減らす。フィールド名をモデルに誤解されにくい形に変更する。PARSE 系の手法はスキーマ再設計を含む。
-3. **few-shot / プロンプト最適化**: ①②でも崩れる場合、正例 few-shot や Instruction 粒度のプロンプト最適化（GEPA 等）で出力形式を安定させる。ただし最終評価は `evalloop run` の llm-rubric/deep-equal で行い、代理指標との divergence を測る。
+3. **few-shot / プロンプト最適化**: ①②でも崩れる場合、正例 few-shot や Instruction 粒度のプロンプト最適化（GEPA / COPRO / MIPROv2）で出力形式を安定させる。ただし最終評価は `evalloop run` の llm-rubric/deep-equal で行い、代理指標との divergence を測る。
 4. **モデル変更・schema-aware評価**: より構造化出力に強いモデルに変更するか、評価側で schema-aware な許容幅（必須フィールドのみ厳格・オプションは緩和）を設ける。④は最後の手段。
 
 ---
@@ -109,6 +112,8 @@ Soft Prompt（Prefix-Tuning 等）や PEFT（LoRA 等）は本プロジェクト
 ## 参考
 
 - [docs/DESIGN.md](DESIGN.md) — 設計ドキュメント・鉄の掟（第11章）
-- `src/evalloop/optimize.py` — GEPA 実装（Instruction 粒度のみ対応、代理指標のdocstring）
+- `src/evalloop/optimizers/` — 最適化手法パッケージ（`gepa.py` / `miprov2.py` / `copro.py`、共通契約は `base.py`、代理指標は `metrics.py`）
+- `src/evalloop/optimize.py` — オーケストレーション（手法選択 → variant生成 → run/report/compare）
 - Issue #60 — 本ガイドの作成指示
+- Issue #67 — 3手法対応ドキュメント更新（本改訂）
 - APO 計画全22件 — [APO-xx] で参照される依存関係
