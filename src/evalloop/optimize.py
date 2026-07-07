@@ -179,7 +179,7 @@ def _find_latest_base_run(task_name: str, paths: TaskPaths) -> str | None:
     return candidates[-1]["run_id"]
 
 
-def optimize(config: Config, paths: TaskPaths) -> OptimizeOutcome:
+def optimize(config: Config, paths: TaskPaths, *, force: bool = False) -> OptimizeOutcome:
     cfg = config
     score_fn = _score_fn_for(cfg)  # resolve the training metric first: fail fast on unsupported types
 
@@ -190,6 +190,18 @@ def optimize(config: Config, paths: TaskPaths) -> OptimizeOutcome:
         raise OptimizeError("golden.jsonl has no split=='train' cases; nothing to optimize against")
     train_ids = {c.id for c in train_cases}
     assert_split_disjoint(train_ids, test_ids)  # iron rule #1, re-checked independently of build.py
+
+    # APO-09: preflight checks (train size, label coverage, holdout presence).
+    # Runs after split separation is confirmed and before any LM call. Errors
+    # abort unless force=True; warnings are always printed.
+    from evalloop import preflight as preflight_mod
+
+    preflight_result = preflight_mod.run_preflight(
+        cfg, train_cases, len(test_ids), force=force
+    )
+    for line in preflight_mod.format_preflight(preflight_result):
+        print(line)
+    preflight_mod.check_or_raise(preflight_result, force=force)
 
     target_model = cfg.model_by_alias(cfg.optimize.target_alias)
     task_lm = dspy.LM(

@@ -109,7 +109,7 @@ def test_optimize_end_to_end_with_stubbed_miprov2_and_promptfoo(isolated_root, m
     monkeypatch.setattr(run_mod, "get_promptfoo_version", lambda: "0.0.0-test")
     monkeypatch.setattr(run_mod, "get_node_version", lambda: "v22.22.0")
 
-    outcome = optimize_mod.optimize(cfg, paths)
+    outcome = optimize_mod.optimize(cfg, paths, force=True)
 
     # iron rule #1: everything the optimizer saw must come from the TRAIN
     # split (scaffold trainset inputs are サンプル1..4; test rows are 101..104)

@@ -387,13 +387,21 @@ def pivot(
 
 
 @app.command()
-def optimize(task: str = _TASK_OPTION) -> None:
+def optimize(
+    task: str = _TASK_OPTION,
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Demote preflight errors (small train set, label coverage) to warnings and continue. "
+        "Use only when you accept the overfitting risk.",
+    ),
+) -> None:
     """Run dspy GEPA on split=='train' only; then run/report/compare on the optimized variant."""
     from evalloop import optimize as optimize_mod
 
     cfg, paths = _load_task_or_exit(task)
     try:
-        optimize_mod.optimize(cfg, paths)
+        optimize_mod.optimize(cfg, paths, force=force)
     except optimize_mod.OptimizeError as e:
         console.print(f"[bold red]optimize failed:[/bold red] {e}")
         raise typer.Exit(1) from e
