@@ -26,6 +26,8 @@ optimize:
   target_alias: qwen7b
   reflection_provider: anthropic/claude-opus-4-8
   auto: light
+  # method: gepa                 # 最適化手法の選択（省略時 gepa）。miprov2/copro は APO-06/07 で追加予定
+  # params: {}                   # 手法固有パラメータの受け皿。GEPAでは params.auto が上の auto より優先される
 
 blog:
   jpy_per_usd: 150

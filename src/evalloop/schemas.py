@@ -82,11 +82,30 @@ class JudgeConfig:
     rubric_file: str = "prompts/base/judge_rubric.txt"
 
 
+# [APO-04] known prompt-optimization methods; [APO-06]/[APO-07] extend this set
+KNOWN_OPTIMIZE_METHODS = {"gepa"}
+
+
 @dataclass
 class OptimizeConfig:
     target_alias: str
     reflection_provider: str
     auto: str = "light"
+    # [APO-04] method selection: gepa | miprov2 | copro (extended stepwise)
+    method: str = "gepa"
+    # method-specific parameter bag, passed through to the chosen optimizer
+    params: dict = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.method not in KNOWN_OPTIMIZE_METHODS:
+            raise SchemaError(
+                f"optimize.method must be one of {sorted(KNOWN_OPTIMIZE_METHODS)}, got {self.method!r} "
+                "-- fail fast at config load rather than mid-optimize"
+            )
+        # backward compat: the legacy top-level `auto` stays, but it is really a
+        # GEPA parameter -- an explicit params.auto takes precedence over it
+        if "auto" in self.params:
+            self.auto = str(self.params["auto"])
 
 
 @dataclass
@@ -242,6 +261,8 @@ def load_task(task: str | None = None, root: Path | None = None) -> tuple[Config
         target_alias=optimize_raw["target_alias"],
         reflection_provider=optimize_raw["reflection_provider"],
         auto=optimize_raw.get("auto", "light"),
+        method=optimize_raw.get("method", "gepa"),  # unset = GEPA, the historical behavior
+        params=optimize_raw.get("params") or {},
     )
     blog_raw = raw.get("blog") or {}
     blog = BlogConfig(

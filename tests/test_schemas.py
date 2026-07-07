@@ -152,6 +152,45 @@ def test_load_task_run_overrides_merge_over_global_defaults(tmp_path):
     assert cfg.run.cost_warn_usd == 9.0
 
 
+# ---------------------------------------------------------------------------
+# optimize.method / optimize.params ([APO-04])
+# ---------------------------------------------------------------------------
+
+
+def _set_optimize(root, name="t1", **extra):
+    task_yaml = root / "tasks" / name / "task.yaml"
+    raw = yaml.safe_load(task_yaml.read_text(encoding="utf-8"))
+    raw["optimize"].update(extra)
+    task_yaml.write_text(yaml.safe_dump(raw, allow_unicode=True), encoding="utf-8")
+
+
+def test_optimize_method_and_params_roundtrip(tmp_path):
+    scaffold_task(tmp_path)
+    _set_optimize(tmp_path, method="gepa", params={"auto": "medium", "seed": 7})
+    cfg, _ = load_task("t1", root=tmp_path)
+    assert cfg.optimize.method == "gepa"
+    assert cfg.optimize.params == {"auto": "medium", "seed": 7}
+    # backward-compat rule: params.auto takes precedence over the legacy
+    # top-level auto (which scaffold_task writes as "light")
+    assert cfg.optimize.auto == "medium"
+
+
+def test_optimize_method_defaults_to_gepa_for_legacy_task_yaml(tmp_path):
+    # a task.yaml without method/params keys (every pre-APO-04 task) must be
+    # fully compatible
+    cfg, _ = scaffold_task(tmp_path)
+    assert cfg.optimize.method == "gepa"
+    assert cfg.optimize.params == {}
+    assert cfg.optimize.auto == "light"
+
+
+def test_optimize_unknown_method_fails_fast_at_load(tmp_path):
+    scaffold_task(tmp_path)
+    _set_optimize(tmp_path, method="genetic-annealing")
+    with pytest.raises(SchemaError, match="optimize.method"):
+        load_task("t1", root=tmp_path)
+
+
 def test_task_resolution_precedence_flag_env_default(tmp_path, monkeypatch):
     scaffold_task(tmp_path, name="from-default", default_task="from-default")
     scaffold_task(tmp_path, name="from-env", default_task="from-default")
