@@ -70,9 +70,16 @@ models:
     # （`--models gptoss20b` で選択。OLLAMA_BASE_URL/OLLAMA_API_KEY が必要）
     price_in_per_mtok: 0.0      # サブスク/無料枠ベースで従量単価なし
     price_out_per_mtok: 0.0
+  - provider: ollama:chat:glm-5.2:cloud
+    alias: glm52
+    tier: frontier
+    # Ollama経由でGLM-5.2（cloud版）を使う。ローカルOllamaデーモンが
+    # glm-5.2:cloud をpull済みであること（ollama pull glm-5.2:cloud）
+    price_in_per_mtok: 0.0
+    price_out_per_mtok: 0.0
 
 run:
   repeat: 1                     # 安定測定フェーズでは3にする（promptfoo --repeat）
   temperature: 0.0
-  max_tokens: 1024
+  max_tokens: 8192
   cost_warn_usd: 3.0            # 実行前概算(USD)がこれを超えたら確認プロンプトを出す

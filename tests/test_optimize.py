@@ -164,7 +164,7 @@ def test_text_metric_ignores_case_punctuation_and_articles():
 def test_text_metric_partial_overlap_scores_between_zero_and_one():
     score, feedback = optimize_mod.text_score_and_feedback("governed by the laws of the State of New York", GOLD_SPAN)
     assert 0.0 < score < 1.0
-    assert "F1" in feedback
+    assert "recall-weighted" in feedback
 
 
 def test_text_metric_disjoint_scores_zero():
@@ -212,6 +212,35 @@ def test_text_metric_missing_span_is_penalized():
     expected = f"{GOLD_SPAN}; A second clause about termination fees"
     score, _ = optimize_mod.text_score_and_feedback(GOLD_SPAN, expected)
     assert 0.0 < score < 1.0
+
+
+def test_text_metric_under_extraction_to_single_word_scores_low():
+    # the first GEPA run (20260706-075752) degraded to outputting a single
+    # heading word like "Effective Date" -- recall-weighted scoring should
+    # punish this much harder than over-extraction (rubric tolerates extra
+    # text but fails on missing core content).
+    score, _ = optimize_mod.text_score_and_feedback("Agreement", GOLD_SPAN)
+    assert 0.0 < score < 0.5
+
+
+def test_text_metric_over_extraction_scores_higher_than_under_extraction():
+    # over-extraction (gold + extra) should beat under-extraction (one word)
+    # because the rubric tolerates mild over-extraction but fails truncation.
+    under, _ = optimize_mod.text_score_and_feedback("Agreement", GOLD_SPAN)
+    over, _ = optimize_mod.text_score_and_feedback(
+        f"{GOLD_SPAN} and some surrounding context", GOLD_SPAN
+    )
+    assert over > under
+
+
+def test_text_metric_full_extraction_with_extra_keeps_high_score():
+    # gold fully covered + mild extra context -- recall is 1.0 so the score
+    # should stay close to 1.0 (the rubric tolerates this; the old F1 metric
+    # would have pulled it down via precision).
+    score, _ = optimize_mod.text_score_and_feedback(
+        f"{GOLD_SPAN} Additional surrounding sentences.", GOLD_SPAN
+    )
+    assert score >= 0.8
 
 
 # ---------------------------------------------------------------------------

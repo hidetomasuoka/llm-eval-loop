@@ -31,6 +31,14 @@ class AliasStats:
     p50_latency_ms: float | None
     cache_rate: float
     error_count: int
+    # token usage: prompt/completion tokens actually consumed. model_tokens
+    # are the evaluated model's own output tokens; judge_tokens are the llm-rubric
+    # grader's tokens (0 for non-judged answer_types). Useful when prices are $0
+    # (e.g. local/Ollama models) -- cost alone is uninformative there.
+    model_prompt_tokens: int = 0
+    model_completion_tokens: int = 0
+    judge_prompt_tokens: int = 0
+    judge_completion_tokens: int = 0
     # uncertainty additions (issue #11): a single pass rate hides both the
     # binomial sampling error and the run-to-run noise repeat runs reveal
     pass_ci_low: float | None = None
@@ -96,6 +104,19 @@ def compute_alias_stats(results: list[CaseResult]) -> list[AliasStats]:
         latencies = [r.latency_ms for r in rows if r.latency_ms is not None]
         cache_hits = sum(1 for r in rows if r.cached)
         errors = sum(1 for r in rows if r.error)
+        # token usage: model tokens come from CaseResult.token_usage (response
+        # tokenUsage, parsed in schemas.py); judge tokens live under
+        # gradingResult.tokensUsed which schemas.py does not surface, so pull
+        # them from CaseResult.raw here (the only place that needs them).
+        model_prompt = sum((r.token_usage or {}).get("prompt", 0) or 0 for r in rows)
+        model_completion = sum((r.token_usage or {}).get("completion", 0) or 0 for r in rows)
+        judge_prompt = 0
+        judge_completion = 0
+        for r in rows:
+            grading = (r.raw or {}).get("gradingResult") or {}
+            jt = grading.get("tokensUsed") or {}
+            judge_prompt += jt.get("prompt", 0) or 0
+            judge_completion += jt.get("completion", 0) or 0
         stats.append(
             AliasStats(
                 alias=alias,
@@ -106,6 +127,10 @@ def compute_alias_stats(results: list[CaseResult]) -> list[AliasStats]:
                 p50_latency_ms=_percentile50(latencies),
                 cache_rate=(cache_hits / len(rows)) if rows else 0.0,
                 error_count=errors,
+                model_prompt_tokens=model_prompt,
+                model_completion_tokens=model_completion,
+                judge_prompt_tokens=judge_prompt,
+                judge_completion_tokens=judge_completion,
                 pass_ci_low=ci_low,
                 pass_ci_high=ci_high,
                 repeat_pass_rates=repeat_pass_rates,
@@ -140,17 +165,19 @@ def render_markdown(run_id: str, meta: dict, stats: list[AliasStats], warnings_l
 
     lines.append(
         "| alias | n | pass_rate | pass_95ci | repeat_stddev | total_cost_usd | avg_cost_usd "
-        "| p50_latency_ms | cache_rate | errors |"
+        "| model_tokens | judge_tokens | p50_latency_ms | cache_rate | errors |"
     )
-    lines.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
+    lines.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
     for s in stats:
         ci = (
             f"[{format(s.pass_ci_low, '.1%')}, {format(s.pass_ci_high, '.1%')}]"
             if s.pass_ci_low is not None and s.pass_ci_high is not None
             else "n/a"
         )
+        model_tok = s.model_prompt_tokens + s.model_completion_tokens
+        judge_tok = s.judge_prompt_tokens + s.judge_completion_tokens
         lines.append(
-            "| {alias} | {n} | {pass_rate} | {ci} | {stddev} | {total_cost} | {avg_cost} | {p50} | {cache} | {errors} |".format(
+            "| {alias} | {n} | {pass_rate} | {ci} | {stddev} | {total_cost} | {avg_cost} | {model_tok} | {judge_tok} | {p50} | {cache} | {errors} |".format(
                 alias=s.alias,
                 n=s.n,
                 pass_rate=fmt(s.pass_rate, ".1%"),
@@ -158,6 +185,8 @@ def render_markdown(run_id: str, meta: dict, stats: list[AliasStats], warnings_l
                 stddev=fmt(s.repeat_stddev, ".1%"),
                 total_cost=fmt(s.total_cost_usd, ".4f"),
                 avg_cost=fmt(s.avg_cost_usd, ".6f"),
+                model_tok=model_tok,
+                judge_tok=judge_tok,
                 p50=fmt(s.p50_latency_ms, ".0f"),
                 cache=fmt(s.cache_rate, ".1%"),
                 errors=s.error_count,
@@ -168,6 +197,11 @@ def render_markdown(run_id: str, meta: dict, stats: list[AliasStats], warnings_l
         "> pass_95ci: Wilson score interval over all graded rows (optimistic when repeat>1 -- "
         "repeats of the same case are not independent samples). repeat_stddev: stddev of the "
         "per-repeat pass rates; n/a when repeat=1."
+    )
+    lines.append(
+        "> model_tokens / judge_tokens: total (prompt+completion) tokens consumed by the "
+        "evaluated model / llm-rubric grader respectively. judge_tokens is 0 for answer_types "
+        "without an LLM judge. Useful when unit prices are $0 (e.g. local/Ollama models)."
     )
     lines.append("")
 
