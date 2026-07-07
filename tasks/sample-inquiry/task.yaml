@@ -26,8 +26,20 @@ optimize:
   target_alias: qwen7b
   reflection_provider: anthropic/claude-opus-4-8
   auto: light
-  # method: gepa                 # 最適化手法の選択（省略時 gepa）。miprov2/copro は APO-06/07 で追加予定
+  # 最適化手法の選択（省略時 gepa）。3手法から選べる:
+  #   gepa     : 進化的プロンプト最適化（デフォルト）。auto で反復強度を light/medium/heavy から選ぶ
+  #   miprov2  : ベイズ最適化（instructionのみ、demosは未対応）。params.val_ratio / params.seed を調整
+  #   copro    : coordinate ascent 的反復。params.breadth / params.depth / params.init_temperature を調整
+  # どの手法も学習は決定的な代理メトリクスで行い、最終評価はllm-rubric/label_matchのまま（既知の制約）
+  # 手法選定の判断は docs/APO_GUIDE.md（症状→粒度→手法の診断ガイド）を参照
+  # method: gepa
   # params: {}                   # 手法固有パラメータの受け皿。GEPAでは params.auto が上の auto より優先される
+  # 例: MIPROv2 の場合
+  # method: miprov2
+  # params: {val_ratio: 0.2, seed: 0}
+  # 例: COPRO の場合
+  # method: copro
+  # params: {breadth: 10, depth: 3, init_temperature: 1.4}
 
 blog:
   jpy_per_usd: 150
