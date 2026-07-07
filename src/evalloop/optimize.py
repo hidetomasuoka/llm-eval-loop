@@ -30,6 +30,10 @@ import yaml
 from evalloop import report as report_mod
 from evalloop import run as run_mod
 from evalloop.optimizers.base import OptimizeError, PromptOptimizer
+from evalloop.optimizers.copro import (
+    CoproOptimizer,
+    run_copro,  # noqa: F401 -- monkeypatch target by convention; CoproOptimizer calls it through this module
+)
 from evalloop.optimizers.gepa import (
     GepaOptimizer,
     run_gepa,  # noqa: F401 -- historical monkeypatch target; GepaOptimizer calls it through this module
@@ -213,6 +217,7 @@ def optimize(config: Config, paths: TaskPaths) -> OptimizeOutcome:
     optimizer_classes: dict[str, type] = {
         GepaOptimizer.name: GepaOptimizer,
         MiproV2Optimizer.name: MiproV2Optimizer,
+        CoproOptimizer.name: CoproOptimizer,
     }
     optimizer: PromptOptimizer = optimizer_classes[cfg.optimize.method]()
     started = time.monotonic()

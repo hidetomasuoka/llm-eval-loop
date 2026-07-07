@@ -82,8 +82,8 @@ class JudgeConfig:
     rubric_file: str = "prompts/base/judge_rubric.txt"
 
 
-# [APO-04] known prompt-optimization methods; [APO-07] adds copro
-KNOWN_OPTIMIZE_METHODS = {"gepa", "miprov2"}
+# [APO-04] known prompt-optimization methods
+KNOWN_OPTIMIZE_METHODS = {"gepa", "miprov2", "copro"}
 
 
 @dataclass
