@@ -18,3 +18,7 @@
 {"id": "case-0018", "input": "ボタンを押すと真っ白な画面のままフリーズします。", "expected": "障害報告", "split": "test", "meta": {"category": "基本", "difficulty": "easy", "source": "self-made"}}
 {"id": "case-0019", "input": "モバイルアプリにプッシュ通知機能を追加してほしいです。", "expected": "機能要望", "split": "test", "meta": {"category": "基本", "difficulty": "easy", "source": "self-made"}}
 {"id": "case-0020", "input": "このサービスはISO27001を取得していますか。", "expected": "その他", "split": "test", "meta": {"category": "曖昧", "difficulty": "hard", "source": "self-made"}}
+{"id": "case-0021", "input": "貴社サービスの会社案内やパンフレットを郵送していただくことはできますか。", "expected": "その他", "split": "train", "meta": {"category": "基本", "difficulty": "easy", "source": "self-made"}}
+{"id": "case-0022", "input": "電話サポートの受付時間と年末年始の営業日について教えてください。", "expected": "その他", "split": "train", "meta": {"category": "基本", "difficulty": "easy", "source": "self-made"}}
+{"id": "case-0023", "input": "帳票のPDFダウンロードを実行すると毎回タイムアウトのエラー画面が表示されます。", "expected": "障害報告", "split": "train", "meta": {"category": "基本", "difficulty": "easy", "source": "self-made"}}
+{"id": "case-0024", "input": "ダッシュボードのグラフをCSV形式でエクスポートできる機能を追加してほしいです。", "expected": "機能要望", "split": "train", "meta": {"category": "基本", "difficulty": "easy", "source": "self-made"}}

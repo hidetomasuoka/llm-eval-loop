@@ -56,6 +56,7 @@ from evalloop.optimizers.miprov2 import (
     run_miprov2,  # noqa: F401 -- monkeypatch target by convention; MiproV2Optimizer calls it through this module
 )
 from evalloop.paths import REPO_ROOT, TaskPaths
+from evalloop.preflight import preflight_optimize
 from evalloop.schemas import Config, assert_split_disjoint, load_golden_jsonl, parse_promptfoo_output
 
 # ---------------------------------------------------------------------------
@@ -179,7 +180,7 @@ def _find_latest_base_run(task_name: str, paths: TaskPaths) -> str | None:
     return candidates[-1]["run_id"]
 
 
-def optimize(config: Config, paths: TaskPaths) -> OptimizeOutcome:
+def optimize(config: Config, paths: TaskPaths, force: bool = False) -> OptimizeOutcome:
     cfg = config
     score_fn = _score_fn_for(cfg)  # resolve the training metric first: fail fast on unsupported types
 
@@ -190,6 +191,11 @@ def optimize(config: Config, paths: TaskPaths) -> OptimizeOutcome:
         raise OptimizeError("golden.jsonl has no split=='train' cases; nothing to optimize against")
     train_ids = {c.id for c in train_cases}
     assert_split_disjoint(train_ids, test_ids)  # iron rule #1, re-checked independently of build.py
+
+    # APO-09: validate data volume/distribution before spending a single
+    # rollout; failures raise here (or are demoted to warnings by --force)
+    for warning in preflight_optimize(cfg, train_cases, len(test_ids), force=force):
+        print(f"[preflight] WARNING: {warning}")
 
     target_model = cfg.model_by_alias(cfg.optimize.target_alias)
     task_lm = dspy.LM(

@@ -68,7 +68,9 @@ def test_optimize_end_to_end_with_stubbed_copro_and_promptfoo(isolated_root, mon
     monkeypatch.setattr(optimize_mod, "run_copro", fake_copro)
     _stub_promptfoo(monkeypatch)
 
-    outcome = optimize_mod.optimize(cfg, paths)
+    # scaffold's 4-case train split keeps the membership assertions exact;
+    # force=True demotes the APO-09 preflight errors to warnings
+    outcome = optimize_mod.optimize(cfg, paths, force=True)
 
     # iron rule #1: COPRO has no valset -- the WHOLE train split (and nothing
     # else) is handed over (scaffold train inputs are サンプル1..4; test rows
@@ -113,6 +115,6 @@ def test_copro_defaults_match_pinned_dspy_signature(isolated_root, monkeypatch):
     monkeypatch.setattr(optimize_mod, "run_copro", fake_copro)
     _stub_promptfoo(monkeypatch)
 
-    optimize_mod.optimize(cfg, paths)
+    optimize_mod.optimize(cfg, paths, force=True)
 
     assert captured == {"breadth": 10, "depth": 3, "init_temperature": 1.4}
