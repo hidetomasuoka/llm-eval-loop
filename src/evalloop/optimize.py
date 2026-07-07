@@ -29,6 +29,7 @@ import yaml
 
 from evalloop import report as report_mod
 from evalloop import run as run_mod
+from evalloop.build import CHARS_PER_TOKEN_ESTIMATE, ESTIMATED_OUTPUT_TOKENS
 from evalloop.optimizers.base import OptimizeError, PromptOptimizer
 from evalloop.optimizers.copro import (
     CoproOptimizer,
@@ -56,7 +57,14 @@ from evalloop.optimizers.miprov2 import (
     run_miprov2,  # noqa: F401 -- monkeypatch target by convention; MiproV2Optimizer calls it through this module
 )
 from evalloop.paths import REPO_ROOT, TaskPaths
-from evalloop.schemas import Config, assert_split_disjoint, load_golden_jsonl, parse_promptfoo_output
+from evalloop.schemas import (
+    Config,
+    GoldenCase,
+    ModelConfig,
+    assert_split_disjoint,
+    load_golden_jsonl,
+    parse_promptfoo_output,
+)
 
 # ---------------------------------------------------------------------------
 # promptfoo provider id -> dspy/litellm model string
@@ -87,20 +95,112 @@ def _dspy_temperature(supports_sampling_params: bool, temperature: float) -> flo
     return temperature if supports_sampling_params else None
 
 
-def _reflection_supports_sampling(cfg: Config) -> bool:
-    """optimize.reflection_provider is a dspy/litellm string; if it corresponds
-    to a registry model marked supports_sampling_params=false, temperature must
-    not be sent to it either (the bundled configs point reflection at
-    anthropic/claude-opus-4-8, which 400s on it). Providers with no registry
-    match default to True (send temperature, the historical behavior).
+def _reflection_registry_model(cfg: Config) -> ModelConfig | None:
+    """optimize.reflection_provider is a dspy/litellm string; map it back to
+    its config.yaml model registry entry when one exists (for sampling-param
+    and price lookups). Returns None when nothing in the registry matches.
     """
     for m in cfg.models:
         try:
             if promptfoo_provider_to_dspy_lm(m.provider) == cfg.optimize.reflection_provider:
-                return m.supports_sampling_params
+                return m
         except OptimizeError:
             continue  # registry entries with unmapped provider prefixes can't match
-    return True
+    return None
+
+
+def _reflection_supports_sampling(cfg: Config) -> bool:
+    """A registry model marked supports_sampling_params=false must not receive
+    temperature on the dspy path either (the bundled configs point reflection
+    at anthropic/claude-opus-4-8, which 400s on it). Providers with no
+    registry match default to True (send temperature, the historical behavior).
+    """
+    model = _reflection_registry_model(cfg)
+    return model.supports_sampling_params if model is not None else True
+
+
+# ---------------------------------------------------------------------------
+# pre-run cost estimate (APO-10): build.py already warns before an eval run;
+# optimize multiplies that by the optimizer's iteration budget, which is where
+# surprise costs come from (OPRO's own docs warn about this). Everything here
+# is a deliberate order-of-magnitude guess -- the goal is a digit-count
+# warning before the first rollout is spent, not accounting.
+# ---------------------------------------------------------------------------
+
+# "How many optimizer rounds" per method. Actual counts depend on dspy
+# internals and early stopping; one round is modeled as evaluating one
+# candidate instruction over the full train split plus one reflection call.
+#   gepa / miprov2: the candidate budget scales with optimize.auto
+#   copro: breadth candidates per depth round (see _rollout_factor)
+_AUTO_ROLLOUT_FACTORS = {"light": 10, "medium": 25, "heavy": 60}
+
+# A reflection/proposal call carries the current instructions plus a batch of
+# failing examples with feedback (much larger than a single task rollout) and
+# returns a rewritten instruction.
+REFLECTION_INPUT_TOKENS_ESTIMATE = 3000
+REFLECTION_OUTPUT_TOKENS_ESTIMATE = 500
+
+
+@dataclass
+class OptimizeCostEstimate:
+    method: str
+    train_case_count: int
+    rollout_factor: int  # optimizer rounds (candidates evaluated)
+    rollout_count: int  # target-model calls: rollout_factor x train cases
+    reflection_call_count: int  # instruction proposals by the reflection model
+    target_usd: float
+    reflection_usd: float | None  # None -- reflection provider absent from the price registry
+    total_usd: float
+
+
+def _rollout_factor(cfg: Config) -> int:
+    if cfg.optimize.method == "copro":
+        breadth = int(cfg.optimize.params.get("breadth", 10))
+        depth = int(cfg.optimize.params.get("depth", 3))
+        return breadth * depth
+    return _AUTO_ROLLOUT_FACTORS.get(cfg.optimize.auto, _AUTO_ROLLOUT_FACTORS["medium"])
+
+
+def estimate_optimize_cost(
+    cfg: Config, train_cases: list[GoldenCase], prompt_template: str
+) -> OptimizeCostEstimate:
+    """Rough optimize cost from the config.yaml price table: target-model
+    rollouts (train size x method factor) plus reflection calls, using
+    build.py's chars-per-token heuristic for the per-call token counts.
+    """
+    factor = _rollout_factor(cfg)
+    rollout_count = factor * len(train_cases)
+    reflection_call_count = factor  # ~one instruction proposal per optimizer round
+
+    avg_input_chars = len(prompt_template) + (
+        sum(len(c.input) for c in train_cases) / len(train_cases) if train_cases else 0
+    )
+    in_tokens = max(1, int(avg_input_chars / CHARS_PER_TOKEN_ESTIMATE))
+    out_tokens = ESTIMATED_OUTPUT_TOKENS.get(cfg.task.answer_type, 100)
+
+    target = cfg.model_by_alias(cfg.optimize.target_alias)
+    target_usd = rollout_count * (
+        in_tokens / 1_000_000 * target.price_in_per_mtok + out_tokens / 1_000_000 * target.price_out_per_mtok
+    )
+
+    reflection_model = _reflection_registry_model(cfg)
+    reflection_usd = None
+    if reflection_model is not None:
+        reflection_usd = reflection_call_count * (
+            REFLECTION_INPUT_TOKENS_ESTIMATE / 1_000_000 * reflection_model.price_in_per_mtok
+            + REFLECTION_OUTPUT_TOKENS_ESTIMATE / 1_000_000 * reflection_model.price_out_per_mtok
+        )
+
+    return OptimizeCostEstimate(
+        method=cfg.optimize.method,
+        train_case_count=len(train_cases),
+        rollout_factor=factor,
+        rollout_count=rollout_count,
+        reflection_call_count=reflection_call_count,
+        target_usd=target_usd,
+        reflection_usd=reflection_usd,
+        total_usd=target_usd + (reflection_usd or 0.0),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -179,7 +279,9 @@ def _find_latest_base_run(task_name: str, paths: TaskPaths) -> str | None:
     return candidates[-1]["run_id"]
 
 
-def optimize(config: Config, paths: TaskPaths, *, force: bool = False) -> OptimizeOutcome:
+def optimize(
+    config: Config, paths: TaskPaths, *, force: bool = False, yes: bool = False, confirm_fn=None
+) -> OptimizeOutcome:
     cfg = config
     score_fn = _score_fn_for(cfg)  # resolve the training metric first: fail fast on unsupported types
 
@@ -206,6 +308,39 @@ def optimize(config: Config, paths: TaskPaths, *, force: bool = False) -> Optimi
         console.print(line)
     preflight_mod.check_or_raise(preflight_result, force=force)
 
+    original_template = (REPO_ROOT / cfg.task.prompt_file).read_text(encoding="utf-8")
+
+    # APO-10: order-of-magnitude cost warning + confirmation BEFORE the first
+    # rollout is spent (mirrors build.py's --yes pattern)
+    estimate = estimate_optimize_cost(cfg, train_cases, original_template)
+    print(f"[optimize] estimated cost (rough, order-of-magnitude only -- method={estimate.method}):")
+    print(
+        f"[optimize]   target {cfg.optimize.target_alias}: ~{estimate.rollout_count} rollouts "
+        f"({estimate.train_case_count} train cases x factor {estimate.rollout_factor}) = ${estimate.target_usd:.4f}"
+    )
+    reflection_cost = (
+        f"${estimate.reflection_usd:.4f}"
+        if estimate.reflection_usd is not None
+        else "price unknown (provider not in the config.yaml model registry)"
+    )
+    print(
+        f"[optimize]   reflection {cfg.optimize.reflection_provider}: "
+        f"~{estimate.reflection_call_count} calls = {reflection_cost}"
+    )
+    print(f"[optimize]   TOTAL: ~${estimate.total_usd:.4f} (excludes the post-optimize eval run)")
+    print(
+        "[optimize] tip: 初回は小さいデータ・軽い設定から始めることを推奨 "
+        "(auto: light / 小さめの train split / 評価は `evalloop run --limit N`)"
+    )
+
+    if estimate.total_usd > cfg.run.cost_warn_usd and not yes:
+        confirm = confirm_fn or (lambda msg: input(f"{msg} [y/N] ").strip().lower() == "y")
+        if not confirm(
+            f"Estimated optimize cost ${estimate.total_usd:.4f} exceeds cost_warn_usd "
+            f"(${cfg.run.cost_warn_usd:.2f}). Continue?"
+        ):
+            raise OptimizeError("aborted by user: optimize cost estimate exceeded cost_warn_usd")
+
     target_model = cfg.model_by_alias(cfg.optimize.target_alias)
     task_lm = dspy.LM(
         promptfoo_provider_to_dspy_lm(target_model.provider),
@@ -218,7 +353,6 @@ def optimize(config: Config, paths: TaskPaths, *, force: bool = False) -> Optimi
         max_tokens=32000,
     )
 
-    original_template = (REPO_ROOT / cfg.task.prompt_file).read_text(encoding="utf-8")
     base_instructions = extract_instructions_from_template(original_template)
 
     def metric(gold, pred, trace=None, pred_name=None, pred_trace=None):

@@ -8,6 +8,7 @@ from evalloop import build as build_mod
 from evalloop import optimize as optimize_mod
 from evalloop import run as run_mod
 from evalloop.paths import REPO_ROOT, TaskPaths
+from evalloop.schemas import GoldenCase, load_task
 from tests.conftest import scaffold_task
 
 # NOTE: tests that exercise the real build/run/report orchestration scaffold a
@@ -546,3 +547,169 @@ def test_optimize_end_to_end_with_text_task(isolated_root, monkeypatch):
     # a rollout that echoes the gold answer must score 1.0 through the real
     # metric wiring (incl. the 該当条項なし sentinel case)
     assert captured["scores"] == [1.0] * 12
+
+
+# ---------------------------------------------------------------------------
+# pre-run cost estimate (APO-10): price-table math, per-method factors, and
+# the --yes confirmation contract
+# ---------------------------------------------------------------------------
+
+
+# scaffold registry variant with real prices so the estimate math is non-zero
+PRICED_GLOBAL_MODELS = [
+    {"provider": "ollama:chat:qwen2.5:7b", "alias": "qwen7b", "tier": "local"},
+    {
+        "provider": "anthropic:messages:claude-haiku-4-5",
+        "alias": "haiku45",
+        "tier": "small",
+        "price_in_per_mtok": 1.0,
+        "price_out_per_mtok": 5.0,
+    },
+    {
+        "provider": "anthropic:messages:claude-opus-4-8",
+        "alias": "opus48",
+        "tier": "large",
+        "price_in_per_mtok": 15.0,
+        "price_out_per_mtok": 75.0,
+    },
+]
+
+
+def _train_case(i: int, input_text: str) -> GoldenCase:
+    return GoldenCase(
+        id=f"cost-{i:04d}",
+        input=input_text,
+        expected="契約照会",
+        split="train",
+        category="基本",
+        difficulty=None,
+        source="self-made",
+    )
+
+
+def _set_optimize_method(paths, root, method, params=None):
+    raw = yaml.safe_load(paths.task_config.read_text(encoding="utf-8"))
+    raw["optimize"]["method"] = method
+    if params is not None:
+        raw["optimize"]["params"] = params
+    paths.task_config.write_text(yaml.safe_dump(raw, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    return load_task(paths.task, root=root)
+
+
+def test_estimate_optimize_cost_gepa_price_table_math(isolated_root):
+    cfg, _paths = scaffold_task(
+        isolated_root,
+        global_models=PRICED_GLOBAL_MODELS,
+        optimize_target="haiku45",
+        reflection_provider="anthropic/claude-opus-4-8",
+    )
+    # controlled sizes: 20-char template + 30-char inputs = 50 chars -> 25
+    # input tokens at 2.0 chars/token; label output = 12 tokens
+    train = [_train_case(i, "x" * 30) for i in range(4)]
+    est = optimize_mod.estimate_optimize_cost(cfg, train, "p" * 20)
+
+    assert est.method == "gepa"
+    assert est.rollout_factor == 10  # auto=light
+    assert est.rollout_count == 40  # 4 train cases x 10
+    assert est.reflection_call_count == 10
+    # target: 40 calls x (25 in-tokens x $1/M + 12 out-tokens x $5/M)
+    assert est.target_usd == pytest.approx(40 * (25 * 1.0 + 12 * 5.0) / 1_000_000)
+    # reflection: 10 calls x (3000 in-tokens x $15/M + 500 out-tokens x $75/M)
+    assert est.reflection_usd == pytest.approx(10 * (3000 * 15.0 + 500 * 75.0) / 1_000_000)
+    assert est.total_usd == pytest.approx(est.target_usd + est.reflection_usd)
+
+
+def test_estimate_optimize_cost_auto_budget_scaling(isolated_root):
+    cfg, paths = scaffold_task(isolated_root)
+    train = [_train_case(i, "x" * 30) for i in range(4)]
+    light = optimize_mod.estimate_optimize_cost(cfg, train, "p")
+
+    cfg_heavy, _ = _set_optimize_method(paths, isolated_root, "gepa", params={"auto": "heavy"})
+    heavy = optimize_mod.estimate_optimize_cost(cfg_heavy, train, "p")
+
+    assert light.rollout_factor < heavy.rollout_factor
+    assert light.rollout_count < heavy.rollout_count
+
+
+def test_estimate_optimize_cost_copro_factor_is_breadth_times_depth(isolated_root):
+    _cfg, paths = scaffold_task(isolated_root)
+    cfg, _ = _set_optimize_method(paths, isolated_root, "copro", params={"breadth": 5, "depth": 2})
+    train = [_train_case(i, "x" * 30) for i in range(3)]
+    est = optimize_mod.estimate_optimize_cost(cfg, train, "p")
+    assert est.rollout_factor == 10  # breadth 5 x depth 2
+    assert est.rollout_count == 30
+
+    # no params -> the pinned dspy defaults (breadth 10 x depth 3)
+    cfg_default, _ = _set_optimize_method(paths, isolated_root, "copro", params={})
+    assert optimize_mod.estimate_optimize_cost(cfg_default, train, "p").rollout_factor == 30
+
+
+def test_estimate_optimize_cost_reflection_price_unknown(isolated_root):
+    # DEFAULT_GLOBAL_MODELS has no registry entry matching the reflection
+    # provider string -> price unknown (None), counted as 0 in the total
+    cfg, _paths = scaffold_task(isolated_root)
+    train = [_train_case(i, "x" * 30) for i in range(4)]
+    est = optimize_mod.estimate_optimize_cost(cfg, train, "p")
+    assert est.reflection_usd is None
+    assert est.total_usd == est.target_usd
+
+
+def test_optimize_aborts_when_estimate_exceeds_cost_warn(isolated_root):
+    # priced target + tiny cost_warn_usd -> the confirmation fires; declining
+    # aborts BEFORE any dspy/promptfoo work, so no stubs are needed
+    cfg, paths = scaffold_task(
+        isolated_root,
+        golden_rows=_label_type_golden_rows(),
+        global_models=PRICED_GLOBAL_MODELS,
+        optimize_target="haiku45",
+        global_run={"cost_warn_usd": 0.000001},
+    )
+    build_mod.build(cfg, paths, yes=True)
+
+    with pytest.raises(optimize_mod.OptimizeError, match="aborted by user"):
+        optimize_mod.optimize(cfg, paths, confirm_fn=lambda msg: False)
+
+
+def test_optimize_yes_skips_cost_confirmation(isolated_root, monkeypatch):
+    cfg, paths = scaffold_task(
+        isolated_root,
+        golden_rows=_label_type_golden_rows(),
+        global_models=PRICED_GLOBAL_MODELS,
+        optimize_target="haiku45",
+        global_run={"cost_warn_usd": 0.000001},
+    )
+    build_mod.build(cfg, paths, yes=True)
+
+    fake_optimized = types.SimpleNamespace(
+        signature=types.SimpleNamespace(instructions="cost-estimate test instructions")
+    )
+    monkeypatch.setattr(optimize_mod, "run_gepa", lambda *a, **k: fake_optimized)
+
+    def fake_eval(config_path, output_path, **kwargs):
+        cfg_yaml = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        rows = [
+            {
+                "vars": {"case_id": f"case-{i:04d}", "expected": "契約照会", "category": "基本"},
+                "provider": {"id": p["id"], "label": p["label"]},
+                "response": {"output": "契約照会"},
+                "gradingResult": {"pass": True, "score": 1},
+                "success": True,
+                "cost": 0.0,
+            }
+            for i, p in enumerate(cfg_yaml["providers"], start=1)
+        ]
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json.dumps({"results": {"results": rows}}), encoding="utf-8")
+
+        class _P:
+            returncode = 0
+            stderr = ""
+
+        return _P()
+
+    _stub_run_env(monkeypatch, fake_eval)
+
+    outcome = optimize_mod.optimize(
+        cfg, paths, yes=True, confirm_fn=lambda msg: pytest.fail("confirm_fn must not be called with --yes")
+    )
+    assert outcome.run_id  # the full pipeline ran non-interactively

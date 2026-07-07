@@ -107,6 +107,7 @@ uv run evalloop pivot <run_id>                              # 失敗カテゴリ
 uv run evalloop calibrate --run-id <run_id>                 # LLMジャッジと人手ラベルの一致率を確認
 uv run evalloop optimize                                    # dspy（GEPA / MIPROv2 / COPRO）でプロンプトを改善（train splitのみ使用）
 #   -> task.yaml の optimize.method で手法を選択（未設定=gepa）。最適化後、自動でrun/report/compare(直近のベースrunがあれば)まで実行される
+#   -> 実行前に概算コスト（train件数×手法別の反復目安×価格表の単価）を表示し、run.cost_warn_usd 超過なら確認プロンプト（--yes で抑止、CI向け）
 #   ※ いずれの手法も学習は決定的な代理メトリクス（textタスクはトークンF1）で行い、最終評価はllm-rubricのまま（既知の制約参照）
 #   ※ どの失敗症状にどの最適化手法を当てるかは docs/APO_GUIDE.md（症状→粒度→手法の診断ガイド）を参照
 uv run evalloop blog --runs <run_id>                        # ブログ用の図表・記事ドラフトをblog/に出力
