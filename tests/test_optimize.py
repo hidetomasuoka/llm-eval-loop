@@ -429,6 +429,7 @@ def test_optimize_end_to_end_with_stubbed_gepa_and_promptfoo(isolated_root, monk
 
     _stub_run_env(monkeypatch, fake_eval)
 
+    # 12 train cases clear preflight, so the default (non-force) path runs
     outcome = optimize_mod.optimize(cfg, paths)
 
     assert outcome.task_path.exists()
@@ -537,6 +538,7 @@ def test_optimize_end_to_end_with_text_task(isolated_root, monkeypatch):
 
     _stub_run_env(monkeypatch, fake_eval)
 
+    # 12 train cases clear preflight, so the default (non-force) path runs
     outcome = optimize_mod.optimize(cfg, paths)
 
     assert outcome.task_path.exists()

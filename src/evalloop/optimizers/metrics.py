@@ -79,6 +79,12 @@ def _normalize_label(value) -> str:
     return s.strip()
 
 
+# Public alias: label normalization is part of the metric's contract (pinned by
+# tests/fixtures/label_normalization_cases.json), not an implementation detail.
+# Cross-module consumers (preflight.py) import this name.
+normalize_label = _normalize_label
+
+
 def label_score_and_feedback(output: str, expected: str, labels: list[str]) -> tuple[float, str]:
     norm_output = _normalize_label(output or "")
     norm_expected = _normalize_label(expected)

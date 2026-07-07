@@ -392,7 +392,8 @@ def optimize(
     force: bool = typer.Option(
         False,
         "--force",
-        help="Demote preflight ERRORS (tiny/skewed train split) to warnings for a deliberate small-data experiment",
+        help="Demote preflight errors (small train set, label coverage) to warnings and continue. "
+        "Use only when you accept the overfitting risk.",
     ),
 ) -> None:
     """Run the configured optimizer (optimize.method) on split=='train' only; then run/report/compare on the variant."""
