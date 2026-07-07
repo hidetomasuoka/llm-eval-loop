@@ -81,6 +81,7 @@ uv run evalloop calibrate --run-id <run_id>                 # agreement rate bet
 uv run evalloop optimize                                    # improve the prompt with dspy GEPA (uses the train split only)
 #   -> afterwards run/report/compare (against the latest base run, if any) execute automatically
 #   NOTE: GEPA trains against a deterministic proxy metric (token F1 for text tasks); the final eval stays llm-rubric (see Known constraints)
+#   NOTE: for which failure symptoms warrant which optimization technique, see docs/APO_GUIDE.md (a symptom → granularity → method diagnostic guide)
 uv run evalloop blog --runs <run_id>                        # figures/tables/article draft into blog/
 ```
 
@@ -110,7 +111,7 @@ Then run everything with `--task <name>`. Model definitions (provider IDs, price
 | `evalloop failures RUN_ID` | Extract failing cases, append note rows to notes.csv (idempotent) |
 | `evalloop cluster [--notes PATH]` | An LLM drafts a failure taxonomy from notes.csv |
 | `evalloop pivot RUN_ID` | Failure-category × model cross-tab |
-| `evalloop optimize` | Prompt optimization with dspy GEPA, then automatic run/report/compare |
+| `evalloop optimize` | Prompt optimization with dspy GEPA, then automatic run/report/compare (method selection: see [docs/APO_GUIDE.md](docs/APO_GUIDE.md)) |
 | `evalloop compare --runs A,B` | Before/after comparison of two runs |
 | `evalloop blog --runs A[,B] [--slug NAME]` | Publish-guarded export of the blog bundle |
 
@@ -177,6 +178,7 @@ Each task documents its data source and how to re-obtain it in `tasks/<name>/PRO
 ## Known constraints
 
 - `evalloop optimize` supports all three answer types, but the GEPA **training metric is a deterministic proxy, not the final evaluation**: `label` uses the label-match port, `text` (e.g. the active CUAD-100 task) uses SQuAD-style token F1 against the gold span(s), and `json` uses a deep-equality port. For text tasks the final promptfoo evaluation still uses the llm-rubric judge, so training metric and final grading can diverge — measuring that divergence is part of the GEPA case study
+- The "training metric is a proxy" constraint above is **not GEPA-specific** — it is common to any future optimizer (OPRO, APE, EASE, etc.) this harness may add. Fast in-process candidate evaluation requires a structured verdict (label match, token F1, deep-equal, etc.); invoking an LLM judge per candidate rollout is forbidden by the iron rule (Python never calls a model provider directly). So "train on a proxy metric, verify on a separate final metric" is a harness-wide APO premise (see [docs/APO_GUIDE.md](docs/APO_GUIDE.md) for method selection)
 - With a small local model (qwen2.5:7b) as judge, instruction following is less stable than with frontier models (e.g. it occasionally returns grading rationales in languages other than English/Japanese). Prefer a judge substantially stronger than the models being evaluated (as `config.yaml` is designed to do)
 - `tasks/cuad100/human_labels.jsonl` is intentionally empty because there are no human labels for the CUAD-100 task yet. Using `evalloop calibrate` there requires a human review pass first (the `sample-inquiry` task ships 10 synthetic labels for the calibration demo)
 
