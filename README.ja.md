@@ -108,6 +108,7 @@ uv run evalloop calibrate --run-id <run_id>                 # LLMジャッジと
 uv run evalloop optimize                                    # dspy GEPAでプロンプトを改善（train splitのみ使用）
 #   -> 最適化後、自動でrun/report/compare(直近のベースrunがあれば)まで実行される
 #   ※ GEPAの学習は決定的な代理メトリクス（textタスクはトークンF1）で行い、最終評価はllm-rubricのまま（既知の制約参照）
+#   ※ どの失敗症状にどの最適化手法を当てるかは docs/APO_GUIDE.md（症状→粒度→手法の診断ガイド）を参照
 uv run evalloop blog --runs <run_id>                        # ブログ用の図表・記事ドラフトをblog/に出力
 ```
 
@@ -149,7 +150,7 @@ uv run evalloop blog --runs <run_id>                        # ブログ用の図
 | `evalloop failures RUN_ID` | 失敗ケース抽出、notes.csvにメモ欄を追記（冪等） |
 | `evalloop cluster [--notes PATH]` | notes.csvからLLMが失敗タクソノミー案を生成 |
 | `evalloop pivot RUN_ID` | 失敗カテゴリ×モデルのクロス集計 |
-| `evalloop optimize` | dspy GEPAでプロンプト最適化、自動でrun/report/compare |
+| `evalloop optimize` | dspy GEPAでプロンプト最適化、自動でrun/report/compare（手法選定は [docs/APO_GUIDE.md](docs/APO_GUIDE.md) 参照） |
 | `evalloop compare --runs A,B` | 2つのrunのbefore/after比較 |
 | `evalloop blog --runs A[,B] [--slug NAME]` | 公開ガード通過後にブログ用一式を生成 |
 
@@ -257,6 +258,12 @@ run成果物の生出力（output.json / meta.json）にはローカル絶対パ
   `json` はdeep-equalityの移植を使う。textタスクの最終評価（promptfoo側）は従来どおり
   llm-rubricジャッジのままなので、学習メトリクスと最終採点は乖離しうる —
   その乖離の計測自体がGEPAケーススタディの対象である
+- 上記「学習メトリクスが代理指標である制約」はGEPA固有ではなく、将来追加される
+  他のオプティマイザ（OPRO・APE・EASE等）にも共通する。プロセス内で高速に評価を
+  回すには構造化判定（ラベル一致・トークンF1・deep-equal等）が必要で、LLMジャッジを
+  毎候補ロールアウトで呼ぶことは鉄の掟（Pythonからモデルproviderを直接呼ばない）上
+  できない。よって「代理指標で学習し、最終評価は別指標で検証」は本ハーネスの
+  APO全体に共通する前提となる（手法選定は [docs/APO_GUIDE.md](docs/APO_GUIDE.md) 参照）
 - ローカル小型モデル（qwen2.5:7b）をジャッジに使うと、まれに英語・日本語以外の言語で
   採点理由を返すなど、フロンティアモデルほど指示追従が安定しない。ジャッジには
   極力、評価対象より十分強いモデルを使うことを推奨（`config.yaml`本来の設計どおり）
