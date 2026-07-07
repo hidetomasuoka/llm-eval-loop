@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -204,6 +205,7 @@ def optimize(config: Config, paths: TaskPaths) -> OptimizeOutcome:
     trainset = [dspy.Example(input=c.input, expected=c.expected).with_inputs("input") for c in train_cases]
 
     optimizer: PromptOptimizer = GepaOptimizer()  # optimizer selection: GEPA is the only method so far
+    started = time.monotonic()
     result = optimizer.optimize(
         base_instructions=base_instructions,
         trainset=trainset,
@@ -212,10 +214,14 @@ def optimize(config: Config, paths: TaskPaths) -> OptimizeOutcome:
         reflection_lm=reflection_lm,
         cfg=cfg,
     )
+    duration_seconds = round(time.monotonic() - started, 3)
     optimized_template = render_optimized_template(result.optimized_instructions, original_template)
 
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-    out_dir = paths.optimized_dir / cfg.optimize.target_alias / ts
+    # method identity comes from the optimizer that actually ran (APO-05):
+    # it names the output dir, the variant, and the log record, so
+    # cross-method comparisons (APO-13) can tell runs apart
+    out_dir = paths.optimized_dir / cfg.optimize.target_alias / f"{result.method}-{ts}"
     out_dir.mkdir(parents=True, exist_ok=True)
     task_path = out_dir / "task.txt"
     task_path.write_text(optimized_template, encoding="utf-8")
@@ -226,6 +232,12 @@ def optimize(config: Config, paths: TaskPaths) -> OptimizeOutcome:
                 "target_alias": cfg.optimize.target_alias,
                 "reflection_provider": cfg.optimize.reflection_provider,
                 "auto": cfg.optimize.auto,
+                "method": result.method,
+                # effective params: the raw method params with the resolved
+                # auto (params.auto precedence is applied at config load)
+                "params": {**cfg.optimize.params, "auto": cfg.optimize.auto},
+                "duration_seconds": duration_seconds,
+                "train_case_count": len(train_cases),
                 "train_case_ids": sorted(train_ids),
                 "base_instructions": base_instructions,
                 "optimized_instructions": result.optimized_instructions,
@@ -241,7 +253,7 @@ def optimize(config: Config, paths: TaskPaths) -> OptimizeOutcome:
     print(f"[optimize] wrote {task_path}")
     print(f"[optimize] wrote {log_path}")
 
-    variant_name = f"{cfg.optimize.target_alias}_{ts}"
+    variant_name = f"{cfg.optimize.target_alias}_{result.method}_{ts}"
     variant_config = build_variant_config(cfg.optimize.target_alias, task_path, paths)
     paths.variants_dir.mkdir(parents=True, exist_ok=True)
     variant_path = paths.variants_dir / f"{variant_name}.yaml"
