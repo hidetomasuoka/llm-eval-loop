@@ -236,7 +236,7 @@ def test_restrict_models_narrows_and_rejects_unknown(tmp_path):
 def test_load_golden_jsonl_parses_real_project_data():
     # the pristine sample task dataset must be intact (tracked demo data)
     cases = load_golden_jsonl(REPO_ROOT / "tasks" / "sample-inquiry" / "golden.jsonl")
-    assert len(cases) == 20
+    assert len(cases) == 24  # 12 train / 12 test (train extended to 3 per label for the APO-09 preflight)
     train = [c for c in cases if c.split == "train"]
     test = [c for c in cases if c.split == "test"]
     assert len(train) > 0
