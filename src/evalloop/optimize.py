@@ -194,13 +194,16 @@ def optimize(config: Config, paths: TaskPaths, *, force: bool = False) -> Optimi
     # APO-09: preflight checks (train size, label coverage, holdout presence).
     # Runs after split separation is confirmed and before any LM call. Errors
     # abort unless force=True; warnings are always printed.
+    from rich.console import Console
+
     from evalloop import preflight as preflight_mod
 
     preflight_result = preflight_mod.run_preflight(
         cfg, train_cases, len(test_ids), force=force
     )
+    console = Console()  # format_preflight() lines carry rich markup; plain print would show the tags
     for line in preflight_mod.format_preflight(preflight_result):
-        print(line)
+        console.print(line)
     preflight_mod.check_or_raise(preflight_result, force=force)
 
     target_model = cfg.model_by_alias(cfg.optimize.target_alias)

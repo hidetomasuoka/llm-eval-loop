@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from evalloop.optimizers.base import OptimizeError
+from evalloop.optimizers.metrics import normalize_label
 from evalloop.schemas import GoldenCase
 
 if TYPE_CHECKING:
@@ -98,19 +99,19 @@ def run_preflight(
     # --- error (label tasks only): label coverage ------------------------------
     # task.labels is non-empty iff answer_type == "label" (enforced by TaskConfig.__post_init__)
     if cfg.task.labels:
-        task_labels = set(cfg.task.labels)
-        # normalize expected the same way the training metric does: strip quotes,
-        # punctuation, full-width -> half-width. We only need counts here, so a
-        # coarse strip is sufficient -- reuse _normalize_label from metrics.py
-        from evalloop.optimizers.metrics import _normalize_label  # local import: avoid cycle
-
+        # count AND compare in the training metric's normalized space (strip
+        # quotes/trailing punctuation, full-width -> half-width): normalizing
+        # only the train side would misreport a task.yaml spelling variant as
+        # unseen/singleton. Error messages keep the task.yaml spelling so the
+        # user can find the label they actually wrote.
+        norm_by_label = {label: normalize_label(label) for label in cfg.task.labels}
         seen_counts: dict[str, int] = {}
         for c in train_cases:
-            norm = _normalize_label(str(c.expected))
+            norm = normalize_label(str(c.expected))
             seen_counts[norm] = seen_counts.get(norm, 0) + 1
 
         # a task.yaml label that never appears in train
-        unseen = sorted(task_labels - set(seen_counts))
+        unseen = sorted(label for label, norm in norm_by_label.items() if norm not in seen_counts)
         for label in unseen:
             result.errors.append(
                 f"task.yaml label {label!r} never appears in the train split; the optimizer "
@@ -119,12 +120,15 @@ def run_preflight(
 
         # a label seen only once
         singletons = sorted(
-            label for label, count in seen_counts.items() if count < MIN_LABEL_OCCURRENCES and label in task_labels
+            label
+            for label, norm in norm_by_label.items()
+            if 0 < seen_counts.get(norm, 0) < MIN_LABEL_OCCURRENCES
         )
         for label in singletons:
             result.errors.append(
-                f"label {label!r} appears only {seen_counts[label]} time(s) in train; need at least "
-                f"{MIN_LABEL_OCCURRENCES} for the optimizer to learn a boundary (--force to override)"
+                f"label {label!r} appears only {seen_counts[norm_by_label[label]]} time(s) in train; "
+                f"need at least {MIN_LABEL_OCCURRENCES} for the optimizer to learn a boundary "
+                "(--force to override)"
             )
 
     # --- warning: no holdout ----------------------------------------------------

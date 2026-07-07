@@ -168,6 +168,41 @@ def test_singleton_label_force_demotes(isolated_root):
     assert any("[forced]" in w and "only 1 time" in w for w in result.warnings)
 
 
+def test_label_coverage_normalizes_task_yaml_spelling_variants(isolated_root):
+    # task.yaml labels written with quotes / trailing punctuation / full-width
+    # chars must match train expected values in the training metric's
+    # normalized space -- comparing the raw task.yaml strings against the
+    # normalized counts misreported them as unseen (PR #96 review finding)
+    task_labels = ["「契約照会」", "障害報告。", "ＡＢ"]
+    plain = ["契約照会", "障害報告", "AB"]  # what golden.jsonl actually contains
+    rows = [
+        {"id": f"c{i}", "input": "x", "expected": plain[i % 3], "split": "train",
+         "meta": {"category": "基本", "source": "self-made"}}
+        for i in range(12)
+    ]
+    cfg, _p = scaffold_task(isolated_root, answer_type="label", labels=task_labels, golden_rows=rows)
+    train = _cases(rows, "train")
+    result = run_preflight(cfg, train, 4)
+    assert result.ok, f"spelling variants misjudged as uncovered: {result.errors}"
+
+
+def test_singleton_reported_with_task_yaml_spelling(isolated_root):
+    # the singleton check must also compare in normalized space, and the error
+    # must quote the task.yaml spelling so the user can find the label they wrote
+    task_labels = ["A", "Ｂ。"]  # full-width + trailing punctuation in task.yaml
+    rows = [
+        {"id": f"c{i}", "input": "x", "expected": "B" if i == 0 else "A", "split": "train",
+         "meta": {"category": "基本", "source": "self-made"}}
+        for i in range(10)
+    ]
+    cfg, _p = scaffold_task(isolated_root, answer_type="label", labels=task_labels, golden_rows=rows)
+    train = _cases(rows, "train")
+    result = run_preflight(cfg, train, 4)
+    assert not result.ok
+    assert any("'Ｂ。'" in e and "only 1 time" in e for e in result.errors)
+    assert not any("never appears" in e for e in result.errors)
+
+
 # ---------------------------------------------------------------------------
 # warning: no holdout
 # ---------------------------------------------------------------------------
