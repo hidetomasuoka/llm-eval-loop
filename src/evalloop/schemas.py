@@ -543,7 +543,12 @@ def parse_promptfoo_output(path: str | Path) -> ParsedRun:
         output_text = response.get("output", row.get("output"))
 
         grading = row.get("gradingResult") or {}
-        token_usage = response.get("tokenUsage") or _nested_get(grading, "tokensUsed", default={}) or {}
+        # token_usage means the MODEL's own consumption (response.tokenUsage).
+        # Never fall back to gradingResult.tokensUsed here: that is the
+        # llm-rubric judge's consumption, which report.py surfaces separately
+        # -- mixing them double-counted judge tokens in the model column
+        # whenever a provider omitted response.tokenUsage (issue #85).
+        token_usage = response.get("tokenUsage") or {}
         cached = bool(response.get("cached", False))
 
         counter_key = (case_id, alias)
