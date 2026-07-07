@@ -30,9 +30,9 @@ import yaml
 from evalloop import report as report_mod
 from evalloop import run as run_mod
 from evalloop.optimizers.base import OptimizeError, PromptOptimizer
-from evalloop.optimizers.gepa import GepaOptimizer
 from evalloop.optimizers.gepa import (
-    run_gepa as run_gepa,  # noqa: F401 -- historical monkeypatch target; GepaOptimizer calls it through this module
+    GepaOptimizer,
+    run_gepa,  # noqa: F401 -- historical monkeypatch target; GepaOptimizer calls it through this module
 )
 
 # Backward-compatible re-exports: calibrate.py and the test suite import these
@@ -46,6 +46,10 @@ from evalloop.optimizers.metrics import (  # noqa: F401
     label_score_and_feedback,
     render_optimized_template,
     text_score_and_feedback,
+)
+from evalloop.optimizers.miprov2 import (
+    MiproV2Optimizer,
+    run_miprov2,  # noqa: F401 -- monkeypatch target by convention; MiproV2Optimizer calls it through this module
 )
 from evalloop.paths import REPO_ROOT, TaskPaths
 from evalloop.schemas import Config, assert_split_disjoint, load_golden_jsonl, parse_promptfoo_output
@@ -204,7 +208,13 @@ def optimize(config: Config, paths: TaskPaths) -> OptimizeOutcome:
 
     trainset = [dspy.Example(input=c.input, expected=c.expected).with_inputs("input") for c in train_cases]
 
-    optimizer: PromptOptimizer = GepaOptimizer()  # optimizer selection: GEPA is the only method so far
+    # optimizer selection by cfg.optimize.method (validated against
+    # KNOWN_OPTIMIZE_METHODS at config load, so this lookup cannot miss)
+    optimizer_classes: dict[str, type] = {
+        GepaOptimizer.name: GepaOptimizer,
+        MiproV2Optimizer.name: MiproV2Optimizer,
+    }
+    optimizer: PromptOptimizer = optimizer_classes[cfg.optimize.method]()
     started = time.monotonic()
     result = optimizer.optimize(
         base_instructions=base_instructions,
