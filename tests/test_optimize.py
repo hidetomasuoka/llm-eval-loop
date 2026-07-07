@@ -435,6 +435,18 @@ def test_optimize_end_to_end_with_stubbed_gepa_and_promptfoo(isolated_root, monk
     assert outcome.variant_path.exists()
     assert outcome.run_id
     assert (paths.runs_dir / outcome.run_id / "output.json").exists()
+
+    # APO-05: the method names the variant and the output directory so
+    # cross-method comparisons can tell runs apart
+    assert "_gepa_" in outcome.variant_name
+    assert outcome.task_path.parent.name.startswith("gepa-")
+
+    # APO-05: pin the optimize_log.json schema
+    log = json.loads((outcome.task_path.parent / "optimize_log.json").read_text(encoding="utf-8"))
+    assert log["method"] == "gepa"
+    assert log["params"]["auto"] == "light"  # effective params include the resolved auto
+    assert isinstance(log["duration_seconds"], float)
+    assert log["train_case_count"] == len(log["train_case_ids"])
     # the isolated index.jsonl only holds this variant run (base runs are
     # variant=None), so compare is skipped -- deterministically, unlike when
     # this read the developer's real results/index.jsonl
