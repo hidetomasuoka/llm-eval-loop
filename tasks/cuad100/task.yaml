@@ -15,7 +15,7 @@ task:
   json_schema_file: null
 
 # グローバル registry（config.yaml）からの alias 選択
-models: [qwen7b, haiku45, sonnet46, opus48, fable5]
+models: [glm52]
 
 judge:
   # llm-rubric の grader。必ず明示する（環境キー依存の暗黙デフォルトグレーダーは禁止）
@@ -25,13 +25,13 @@ judge:
   # sonnet46と同一providerを使っている。そのため build には
   # `evalloop build --task cuad100 --allow-same-judge` が必要（sonnet46の行だけ
   # 自己採点になる既知のトレードオフとして許容している）。
-  provider: anthropic:messages:claude-sonnet-4-6
+  provider: ollama:chat:glm-5.2:cloud
   threshold: 0.8
   agreement_threshold: 0.85     # human_labels.jsonl とのジャッジ一致率のしきい値
 
 optimize:
-  target_alias: qwen7b                              # GEPAで最適化する対象モデル
-  reflection_provider: anthropic/claude-opus-4-8     # dspy側の表記（大型モデル）
+  target_alias: glm52                                # GEPAで最適化する対象モデル
+  reflection_provider: ollama_chat/glm-5.2:cloud      # dspy側の表記（GLM-5.2 cloud、無料）
   auto: light
 
 blog:
