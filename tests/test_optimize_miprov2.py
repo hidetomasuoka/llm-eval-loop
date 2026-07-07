@@ -109,6 +109,9 @@ def test_optimize_end_to_end_with_stubbed_miprov2_and_promptfoo(isolated_root, m
     monkeypatch.setattr(run_mod, "get_promptfoo_version", lambda: "0.0.0-test")
     monkeypatch.setattr(run_mod, "get_node_version", lambda: "v22.22.0")
 
+    # the scaffold's 4-case train split is deliberately tiny so the val-split
+    # assertions below stay exact; force=True demotes the APO-09 preflight
+    # errors to warnings (and covers the --force path end to end)
     outcome = optimize_mod.optimize(cfg, paths, force=True)
 
     # iron rule #1: everything the optimizer saw must come from the TRAIN

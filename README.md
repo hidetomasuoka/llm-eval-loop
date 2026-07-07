@@ -48,7 +48,7 @@ Every evaluation task lives in its own directory under `tasks/<name>/` (issue #4
 
 ## Quickstart
 
-Works on a fresh clone with the bundled `sample-inquiry` task (20 synthetic inquiry-classification cases, `answer_type=label`, graded by a deterministic assert — no LLM judge, and with a local Ollama model no API key at all):
+Works on a fresh clone with the bundled `sample-inquiry` task (24 synthetic inquiry-classification cases, `answer_type=label`, graded by a deterministic assert — no LLM judge, and with a local Ollama model no API key at all):
 
 ```bash
 uv run evalloop build --models qwen7b          # sample-inquiry is the default task
@@ -78,9 +78,9 @@ uv run evalloop cluster                                    # an LLM drafts categ
 #   -> review, then save as data/taxonomy.yaml (the draft never overwrites it automatically)
 uv run evalloop pivot <run_id>                              # failure-category x model cross-tab
 uv run evalloop calibrate --run-id <run_id>                 # agreement rate between the LLM judge and human labels
-uv run evalloop optimize                                    # improve the prompt with dspy GEPA (uses the train split only)
-#   -> afterwards run/report/compare (against the latest base run, if any) execute automatically
-#   NOTE: GEPA trains against a deterministic proxy metric (token F1 for text tasks); the final eval stays llm-rubric (see Known constraints)
+uv run evalloop optimize                                    # improve the prompt with dspy (GEPA / MIPROv2 / COPRO, uses the train split only)
+#   -> select the method via optimize.method in task.yaml (unset = gepa). afterwards run/report/compare (against the latest base run, if any) execute automatically
+#   NOTE: every method trains against a deterministic proxy metric (token F1 for text tasks); the final eval stays llm-rubric (see Known constraints)
 #   NOTE: for which failure symptoms warrant which optimization technique, see docs/APO_GUIDE.md (a symptom → granularity → method diagnostic guide)
 uv run evalloop blog --runs <run_id>                        # figures/tables/article draft into blog/
 ```
@@ -172,13 +172,13 @@ Raw run outputs (output.json / meta.json) can contain local absolute paths and p
 
 Each task documents its data source and how to re-obtain it in `tasks/<name>/PROVENANCE.md`. All data ever bundled here comes from public datasets or was created synthetically for this project; **none of it is related to real customer data, business data, or actual inquiries**.
 
-- `tasks/sample-inquiry/` (tracked, opt-in) — **20 self-made dummy cases** for 4-way inquiry classification (`meta.source: "self-made"`; invented texts imitating generic SaaS inquiries) plus **10 synthetic fixtures** for the judge-calibration demo (`output_raw` values are fictional model outputs)
+- `tasks/sample-inquiry/` (tracked, opt-in) — **24 self-made dummy cases** for 4-way inquiry classification (`meta.source: "self-made"`; invented texts imitating generic SaaS inquiries) plus **10 synthetic fixtures** for the judge-calibration demo (`output_raw` values are fictional model outputs)
 - `tasks/cuad100/` (data untracked) — a 100-case subset extracted from [CUAD v1](https://www.atticusprojectai.org/cuad) (published by The Atticus Project, **CC BY 4.0**), obtained via the `chenghao/cuad_qa` mirror on Hugging Face; see its PROVENANCE.md for the file fingerprint and recovery steps
 
 ## Known constraints
 
-- `evalloop optimize` supports all three answer types, but the GEPA **training metric is a deterministic proxy, not the final evaluation**: `label` uses the label-match port, `text` (e.g. the active CUAD-100 task) uses SQuAD-style token F1 against the gold span(s), and `json` uses a deep-equality port. For text tasks the final promptfoo evaluation still uses the llm-rubric judge, so training metric and final grading can diverge — measuring that divergence is part of the GEPA case study
-- The "training metric is a proxy" constraint above is **not GEPA-specific** — it is common to any future optimizer (OPRO, APE, EASE, etc.) this harness may add. Fast in-process candidate evaluation requires a structured verdict (label match, token F1, deep-equal, etc.); invoking an LLM judge per candidate rollout is forbidden by the iron rule (Python never calls a model provider directly). So "train on a proxy metric, verify on a separate final metric" is a harness-wide APO premise (see [docs/APO_GUIDE.md](docs/APO_GUIDE.md) for method selection)
+- `evalloop optimize` supports all three answer types and three optimization methods (select via `optimize.method`: `gepa` / `miprov2` / `copro`, unset = gepa). Every method's **training metric is a deterministic proxy, not the final evaluation**: `label` uses the label-match port, `text` (e.g. the active CUAD-100 task) uses SQuAD-style token F1 against the gold span(s), and `json` uses a deep-equality port. For text tasks the final promptfoo evaluation still uses the llm-rubric judge, so training metric and final grading can diverge — measuring that divergence is part of the optimization case study
+- The "training metric is a proxy" constraint above is common to **GEPA, MIPROv2, and COPRO**, and to any future optimizer (OPRO, APE, EASE, etc.) this harness may add. Fast in-process candidate evaluation requires a structured verdict (label match, token F1, deep-equal, etc.); invoking an LLM judge per candidate rollout is forbidden by the iron rule (Python never calls a model provider directly). So "train on a proxy metric, verify on a separate final metric" is a harness-wide APO premise (see [docs/APO_GUIDE.md](docs/APO_GUIDE.md) for method selection)
 - With a small local model (qwen2.5:7b) as judge, instruction following is less stable than with frontier models (e.g. it occasionally returns grading rationales in languages other than English/Japanese). Prefer a judge substantially stronger than the models being evaluated (as `config.yaml` is designed to do)
 - `tasks/cuad100/human_labels.jsonl` is intentionally empty because there are no human labels for the CUAD-100 task yet. Using `evalloop calibrate` there requires a human review pass first (the `sample-inquiry` task ships 10 synthetic labels for the calibration demo)
 

@@ -68,6 +68,8 @@ def test_optimize_end_to_end_with_stubbed_copro_and_promptfoo(isolated_root, mon
     monkeypatch.setattr(optimize_mod, "run_copro", fake_copro)
     _stub_promptfoo(monkeypatch)
 
+    # scaffold's 4-case train split keeps the membership assertions exact;
+    # force=True demotes the APO-09 preflight errors to warnings
     outcome = optimize_mod.optimize(cfg, paths, force=True)
 
     # iron rule #1: COPRO has no valset -- the WHOLE train split (and nothing

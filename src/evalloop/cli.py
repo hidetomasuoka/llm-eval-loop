@@ -396,7 +396,7 @@ def optimize(
         "Use only when you accept the overfitting risk.",
     ),
 ) -> None:
-    """Run dspy GEPA on split=='train' only; then run/report/compare on the optimized variant."""
+    """Run the configured optimizer (optimize.method) on split=='train' only; then run/report/compare on the variant."""
     from evalloop import optimize as optimize_mod
 
     cfg, paths = _load_task_or_exit(task)

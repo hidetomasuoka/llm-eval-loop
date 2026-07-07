@@ -17,7 +17,7 @@ from evalloop.preflight import (
     format_preflight,
     run_preflight,
 )
-from evalloop.schemas import GoldenCase
+from evalloop.schemas import GoldenCase, load_golden_jsonl, load_task
 from tests.conftest import DEFAULT_LABELS, default_golden_rows, scaffold_task
 
 # ---------------------------------------------------------------------------
@@ -322,4 +322,19 @@ def test_sample_inquiry_style_task_passes(isolated_root):
     result = run_preflight(cfg, train, 10)
     assert result.ok, f"expected pass, got errors={result.errors} warnings={result.warnings}"
     # 12 < 30 so the small-train warning should fire
+    assert any("overfitting risk" in w for w in result.warnings)
+
+
+def test_real_sample_inquiry_task_passes_preflight():
+    # acceptance (issue #68): the REAL tracked dataset -- extended to 24 cases
+    # (train 12 = 3 per label) in PR #97 -- must clear preflight without --force
+    cfg, paths = load_task("sample-inquiry")
+    cases = load_golden_jsonl(paths.golden)
+    train = [c for c in cases if c.split == "train"]
+    test_count = sum(1 for c in cases if c.split == "test")
+
+    result = run_preflight(cfg, train, test_count)
+
+    assert result.ok, f"errors={result.errors}"
+    # 12 train < 30 -> the overfitting warning still fires
     assert any("overfitting risk" in w for w in result.warnings)

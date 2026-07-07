@@ -360,9 +360,11 @@ def test_compare_missing_run_raises(isolated_root):
 
 
 def _label_type_golden_rows():
+    # 12 train cases = 3 per label: enough to clear the APO-09 preflight
+    # errors (train>=10, every label >=2) so the e2e path runs without --force
     labels = ["契約照会", "障害報告", "機能要望", "その他"]
     rows = []
-    for i in range(8):
+    for i in range(12):
         rows.append(
             {
                 "id": f"case-{i + 1:04d}",
@@ -427,7 +429,8 @@ def test_optimize_end_to_end_with_stubbed_gepa_and_promptfoo(isolated_root, monk
 
     _stub_run_env(monkeypatch, fake_eval)
 
-    outcome = optimize_mod.optimize(cfg, paths, force=True)
+    # 12 train cases clear preflight, so the default (non-force) path runs
+    outcome = optimize_mod.optimize(cfg, paths)
 
     assert outcome.task_path.exists()
     assert paths.optimized_dir in outcome.task_path.parents
@@ -461,7 +464,9 @@ def _text_type_golden_rows():
         "該当条項なし",
     ]
     rows = []
-    for i in range(6):
+    # 12 train cases clear the APO-09 preflight minimum (text tasks have no
+    # per-label check, only the size checks)
+    for i in range(12):
         rows.append(
             {
                 "id": f"case-{i + 1:04d}",
@@ -533,10 +538,11 @@ def test_optimize_end_to_end_with_text_task(isolated_root, monkeypatch):
 
     _stub_run_env(monkeypatch, fake_eval)
 
-    outcome = optimize_mod.optimize(cfg, paths, force=True)
+    # 12 train cases clear preflight, so the default (non-force) path runs
+    outcome = optimize_mod.optimize(cfg, paths)
 
     assert outcome.task_path.exists()
     assert "optimized text instructions" in outcome.task_path.read_text(encoding="utf-8")
     # a rollout that echoes the gold answer must score 1.0 through the real
     # metric wiring (incl. the 該当条項なし sentinel case)
-    assert captured["scores"] == [1.0] * 6
+    assert captured["scores"] == [1.0] * 12
