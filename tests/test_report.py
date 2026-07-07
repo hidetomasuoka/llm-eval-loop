@@ -7,7 +7,18 @@ from evalloop.paths import TaskPaths
 from evalloop.schemas import CaseResult
 
 
-def _cr(alias, passed, cost=0.001, latency_ms=100, cached=False, error=None, case_id="case-0001", repeat_index=0):
+def _cr(
+    alias,
+    passed,
+    cost=0.001,
+    latency_ms=100,
+    cached=False,
+    error=None,
+    case_id="case-0001",
+    repeat_index=0,
+    token_usage=None,
+    raw=None,
+):
     return CaseResult(
         case_id=case_id,
         alias=alias,
@@ -21,10 +32,29 @@ def _cr(alias, passed, cost=0.001, latency_ms=100, cached=False, error=None, cas
         cost=cost,
         latency_ms=latency_ms,
         cached=cached,
-        token_usage={},
+        token_usage=token_usage or {},
         error=error,
         repeat_index=repeat_index,
+        raw=raw or {},
     )
+
+
+def test_compute_alias_stats_separates_model_and_judge_tokens():
+    """Judge consumption must never leak into the model_tokens column, even
+    for rows where the provider omitted response.tokenUsage (issue #85)."""
+    judged = {"gradingResult": {"tokensUsed": {"prompt": 100, "completion": 20}}}
+    results = [
+        # model tokens present AND judge tokens present -> counted separately
+        _cr("haiku45", True, token_usage={"prompt": 50, "completion": 10}, raw=judged),
+        # provider omitted response.tokenUsage (e.g. Ollama): model side is 0,
+        # judge side is still counted exactly once
+        _cr("haiku45", False, case_id="case-0002", raw=judged),
+    ]
+    s = report_mod.compute_alias_stats(results)[0]
+    assert s.model_prompt_tokens == 50
+    assert s.model_completion_tokens == 10
+    assert s.judge_prompt_tokens == 200
+    assert s.judge_completion_tokens == 40
 
 
 def test_compute_alias_stats_pass_rate_and_cost():

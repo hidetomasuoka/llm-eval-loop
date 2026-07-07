@@ -123,6 +123,31 @@ def test_parse_row_missing_case_id_warns_but_keeps_row(tmp_path):
     assert any("case_id" in w for w in parsed.warnings)
 
 
+def test_token_usage_never_falls_back_to_judge_tokens(tmp_path):
+    # gradingResult.tokensUsed is the llm-rubric JUDGE's consumption; when a
+    # provider omits response.tokenUsage, the model-side usage must stay empty
+    # instead of silently absorbing the judge's numbers (issue #85)
+    sample = {
+        "results": {
+            "results": [
+                {
+                    "vars": {"case_id": "case-0001", "expected": "x", "category": "基本"},
+                    "provider": {"id": "ollama:chat:qwen2.5:7b", "label": "qwen7b"},
+                    "response": {"output": "x"},  # no tokenUsage
+                    "gradingResult": {"pass": True, "score": 1, "tokensUsed": {"prompt": 100, "completion": 20}},
+                    "success": True,
+                }
+            ]
+        }
+    }
+    p = tmp_path / "output.json"
+    p.write_text(json.dumps(sample, ensure_ascii=False), encoding="utf-8")
+
+    parsed = parse_promptfoo_output(p)
+
+    assert parsed.results[0].token_usage == {}
+
+
 def test_repeat_index_counts_per_case_and_provider(tmp_path):
     # a multi-provider run interleaves providers for the same case; the repeat
     # counter must be per (case, alias) or one provider's repeats would spread
