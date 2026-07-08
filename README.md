@@ -80,6 +80,7 @@ uv run evalloop pivot <run_id>                              # failure-category x
 uv run evalloop calibrate --run-id <run_id>                 # agreement rate between the LLM judge and human labels
 uv run evalloop optimize                                    # improve the prompt with dspy (GEPA / MIPROv2 / COPRO, uses the train split only)
 #   -> select the method via optimize.method in task.yaml (unset = gepa). afterwards run/report/compare (against the latest base run, if any) execute automatically
+#   -> a rough cost estimate (train size x per-method iteration factor x registry prices) is shown first; exceeding run.cost_warn_usd prompts for confirmation (--yes suppresses, for CI)
 #   NOTE: every method trains against a deterministic proxy metric (token F1 for text tasks); the final eval stays llm-rubric (see Known constraints)
 #   NOTE: for which failure symptoms warrant which optimization technique, see docs/APO_GUIDE.md (a symptom → granularity → method diagnostic guide)
 uv run evalloop blog --runs <run_id>                        # figures/tables/article draft into blog/

@@ -33,8 +33,9 @@ JSON_FIELD_MATCH_JS = ASSERTS_DIR / "json_field_match.js"
 # Japanese/English business text). TODO: swap for a real tokenizer
 # (e.g. anthropic's token counting API) if estimates prove too far off from
 # the actual costs recorded in meta.json after real runs.
-_CHARS_PER_TOKEN_ESTIMATE = 2.0
-_ESTIMATED_OUTPUT_TOKENS = {"label": 12, "json": 120, "text": 200}
+# Public: optimize.py reuses the same heuristic for its pre-run estimate (APO-10).
+CHARS_PER_TOKEN_ESTIMATE = 2.0
+ESTIMATED_OUTPUT_TOKENS = {"label": 12, "json": 120, "text": 200}
 
 
 class BuildError(RuntimeError):
@@ -57,8 +58,8 @@ def estimate_cost(config: Config, test_cases: list[GoldenCase], prompt_template:
     avg_input_chars = len(prompt_template) + (
         sum(len(c.input) for c in test_cases) / len(test_cases) if test_cases else 0
     )
-    est_input_tokens = max(1, int(avg_input_chars / _CHARS_PER_TOKEN_ESTIMATE))
-    est_output_tokens = _ESTIMATED_OUTPUT_TOKENS.get(config.task.answer_type, 100)
+    est_input_tokens = max(1, int(avg_input_chars / CHARS_PER_TOKEN_ESTIMATE))
+    est_output_tokens = ESTIMATED_OUTPUT_TOKENS.get(config.task.answer_type, 100)
 
     per_model: dict[str, float] = {}
     for model in config.models:

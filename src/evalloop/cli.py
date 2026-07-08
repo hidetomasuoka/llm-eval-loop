@@ -395,13 +395,14 @@ def optimize(
         help="Demote preflight errors (small train set, label coverage) to warnings and continue. "
         "Use only when you accept the overfitting risk.",
     ),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip the cost-estimate confirmation prompt"),
 ) -> None:
     """Run the configured optimizer (optimize.method) on split=='train' only; then run/report/compare on the variant."""
     from evalloop import optimize as optimize_mod
 
     cfg, paths = _load_task_or_exit(task)
     try:
-        optimize_mod.optimize(cfg, paths, force=force)
+        optimize_mod.optimize(cfg, paths, force=force, yes=yes, confirm_fn=lambda msg: typer.confirm(msg))
     except optimize_mod.OptimizeError as e:
         console.print(f"[bold red]optimize failed:[/bold red] {e}")
         raise typer.Exit(1) from e
