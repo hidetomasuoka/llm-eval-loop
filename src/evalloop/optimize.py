@@ -327,18 +327,27 @@ def _make_variant_slug(
         token = _format_param_token(key, params[key])
         if token:
             parts.append(token)
-    parts.append(f"n{train_case_count}")
+    train_token = f"n{train_case_count}"
+    parts.append(train_token)
     slug = "-".join(p for p in parts if p)
     slug = re.sub(r"-{2,}", "-", slug).strip("-")
+    # truncate earlier segments first so the trailing n{train} identity stays
     if len(slug) > _SLUG_MAX_LEN:
-        slug = slug[:_SLUG_MAX_LEN].rstrip("-.")
+        max_prefix_len = _SLUG_MAX_LEN - len(train_token) - 1
+        prefix = "-".join(parts[:-1])[:max_prefix_len].rstrip("-.")
+        slug = f"{prefix}-{train_token}" if prefix else train_token
 
     occupied = occupied or set()
     if slug not in occupied:
         return slug
     suffix = _instructions_hash(base_instructions, optimized_instructions)
-    base = slug[: _SLUG_MAX_LEN - 5].rstrip("-.")
-    return f"{base}-{suffix}"
+    # keep n{train} at the end after the collision hash when possible
+    max_prefix_len = _SLUG_MAX_LEN - len(train_token) - 5  # -{4hex}-nN
+    if max_prefix_len > 0:
+        prefix = "-".join(parts[:-1])[:max_prefix_len].rstrip("-.")
+        if prefix:
+            return f"{prefix}-{suffix}-{train_token}"
+    return f"{train_token}-{suffix}"[:_SLUG_MAX_LEN]
 
 
 def _make_variant_summary(
@@ -359,7 +368,9 @@ def _make_variant_summary(
         if isinstance(value, (int, float, bool)):
             extras.append(f"{key}={value}")
         elif isinstance(value, str) and len(value) <= 32:
-            extras.append(f"{key}={value}")
+            one_line = re.sub(r"\s+", " ", value).strip()
+            if one_line:
+                extras.append(f"{key}={one_line}")
     extra_s = (" " + " ".join(extras)) if extras else ""
     return (
         f"{method} auto={auto}{extra_s} train={train_case_count}; "

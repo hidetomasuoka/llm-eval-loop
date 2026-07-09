@@ -130,15 +130,24 @@ def test_optimize_end_to_end_with_stubbed_miprov2_and_promptfoo(isolated_root, m
     # APO-05 identity plumbing applies to this method too (slug suffix included)
     assert "_miprov2_" in outcome.variant_name
     assert outcome.task_path.parent.name.startswith("miprov2-")
-    assert "val0.25" in outcome.variant_name or "seed7" in outcome.variant_name
+    assert "val0.25" in outcome.variant_name and "seed7" in outcome.variant_name
     assert "miprov2 optimized instructions" in outcome.task_path.read_text(encoding="utf-8")
     assert (paths.runs_dir / outcome.run_id / "output.json").exists()
 
     log = json.loads((outcome.task_path.parent / "optimize_log.json").read_text(encoding="utf-8"))
     assert log["method"] == "miprov2"
     assert log["params"] == {"val_ratio": 0.25, "seed": 7, "auto": "light"}
-    assert log["slug"]
+    assert log["slug"] == "light-seed7-val0.25-n4"
     assert "miprov2 auto=light" in log["summary"]
     assert log["val_ratio"] == 0.25 and log["seed"] == 7  # extra_log (effective values) merged
     assert log["train_size"] == 3 and log["val_size"] == 1
     assert paths.optimized_index.exists()
+    index_lines = [json.loads(l) for l in paths.optimized_index.read_text(encoding="utf-8").splitlines() if l.strip()]
+    assert len(index_lines) == 1
+    entry = index_lines[0]
+    assert entry["variant_name"] == outcome.variant_name
+    assert entry["slug"] == "light-seed7-val0.25-n4"
+    assert entry["method"] == "miprov2"
+    assert entry["run_id"] == outcome.run_id
+    assert entry["base_run_id"] is None
+    assert entry["optimize_log"].endswith("/optimize_log.json")

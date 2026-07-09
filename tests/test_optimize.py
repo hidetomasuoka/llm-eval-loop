@@ -444,15 +444,15 @@ def test_optimize_end_to_end_with_stubbed_gepa_and_promptfoo(isolated_root, monk
     # cross-method comparisons can tell runs apart; slug encodes auto/n{train}
     assert "_gepa_" in outcome.variant_name
     assert outcome.task_path.parent.name.startswith("gepa-")
-    assert outcome.task_path.parent.name.endswith("-light-n8")
-    assert outcome.variant_name.endswith("_light-n8")
+    assert outcome.task_path.parent.name.endswith("-light-n12")
+    assert outcome.variant_name.endswith("_light-n12")
 
     # APO-05: pin the optimize_log.json schema (plus slug/summary)
     log = json.loads((outcome.task_path.parent / "optimize_log.json").read_text(encoding="utf-8"))
     assert log["method"] == "gepa"
     assert log["params"]["auto"] == "light"  # effective params include the resolved auto
-    assert log["slug"] == "light-n8"
-    assert "gepa auto=light train=8" in log["summary"]
+    assert log["slug"] == "light-n12"
+    assert "gepa auto=light train=12" in log["summary"]
     assert "instructions" in log["summary"]
     assert isinstance(log["duration_seconds"], float)
     assert log["train_case_count"] == len(log["train_case_ids"])
@@ -463,7 +463,7 @@ def test_optimize_end_to_end_with_stubbed_gepa_and_promptfoo(isolated_root, monk
     assert len(index_lines) == 1
     entry = index_lines[0]
     assert entry["variant_name"] == outcome.variant_name
-    assert entry["slug"] == "light-n8"
+    assert entry["slug"] == "light-n12"
     assert entry["method"] == "gepa"
     assert entry["run_id"] == outcome.run_id
     assert entry["base_run_id"] is None
@@ -519,9 +519,20 @@ def test_make_variant_slug_collision_appends_hash():
         optimized_instructions="opt",
         occupied={"light-n4"},
     )
-    assert slug.startswith("light-n4-")
-    assert len(slug.split("-")[-1]) == 4
+    assert slug.endswith("-n4")
     assert slug != "light-n4"
+    # form: light-{4hex}-n4
+    parts = slug.split("-")
+    assert parts[0] == "light" and parts[-1] == "n4" and len(parts[-2]) == 4
+
+
+def test_make_variant_slug_truncation_preserves_train_token():
+    # many long param tokens would exceed _SLUG_MAX_LEN if truncated from the right
+    params = {f"param{i}": f"value{i}xx" for i in range(8)}
+    params["auto"] = "light"
+    slug = optimize_mod._make_variant_slug(auto="light", params=params, train_case_count=99)
+    assert slug.endswith("-n99")
+    assert len(slug) <= optimize_mod._SLUG_MAX_LEN
 
 
 def test_make_variant_summary():
@@ -534,6 +545,20 @@ def test_make_variant_summary():
         optimized_instructions="abcdefgh",
     )
     assert summary == "gepa auto=light train=20; instructions 4→8 chars"
+
+
+def test_make_variant_summary_normalizes_string_newlines():
+    summary = optimize_mod._make_variant_summary(
+        method="gepa",
+        auto="light",
+        params={"auto": "light", "note": "a\nb\tc"},
+        train_case_count=3,
+        base_instructions="x",
+        optimized_instructions="yy",
+    )
+    assert "\n" not in summary
+    assert "note=a b c" in summary
+    assert summary.count("\n") == 0
 
 
 def test_slug_from_dir_name():
