@@ -17,8 +17,10 @@ Iron rules enforced here:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import re
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -236,6 +238,153 @@ def build_variant_config(target_alias: str, task_path: Path, paths: TaskPaths) -
 
 
 # ---------------------------------------------------------------------------
+# variant slug / summary (auto-generated identity for optimized artifacts)
+# ---------------------------------------------------------------------------
+
+_SLUG_MAX_LEN = 40
+_PARAM_KEY_SHORT = {
+    "val_ratio": "val",
+    "seed": "seed",
+    "breadth": "br",
+    "depth": "d",
+    "init_temperature": "temp",
+}
+# {method}-{YYYYMMDD-HHMMSS} or {method}-{YYYYMMDD-HHMMSS}-{slug}
+_OPTIMIZED_DIR_RE = re.compile(r"^[^-]+-\d{8}-\d{6}(?:-(.+))?$")
+
+
+def _slug_from_dir_name(name: str) -> str | None:
+    """Extract the auto slug from an optimized dir name, if present."""
+    m = _OPTIMIZED_DIR_RE.match(name)
+    if not m:
+        return None
+    return m.group(1)
+
+
+def _occupied_slugs(alias_dir: Path) -> set[str]:
+    if not alias_dir.is_dir():
+        return set()
+    found: set[str] = set()
+    for child in alias_dir.iterdir():
+        if not child.is_dir():
+            continue
+        slug = _slug_from_dir_name(child.name)
+        if slug:
+            found.add(slug)
+    return found
+
+
+def _sanitize_slug_part(value: str) -> str:
+    # allow '.' so float params stay readable (e.g. val0.2)
+    s = re.sub(r"[^a-z0-9.]+", "-", str(value).lower())
+    return s.strip("-.")
+
+
+def _short_param_key(key: str) -> str:
+    if key in _PARAM_KEY_SHORT:
+        return _PARAM_KEY_SHORT[key]
+    cleaned = re.sub(r"[^a-z0-9]+", "", str(key).lower())
+    return (cleaned[:6] if cleaned else "p")
+
+
+def _format_param_token(key: str, value) -> str | None:
+    """Turn a scalar param into a compact slug token; skip nested/long values."""
+    short = _short_param_key(key)
+    if isinstance(value, bool):
+        return f"{short}{int(value)}"
+    if isinstance(value, int):
+        return f"{short}{value}"
+    if isinstance(value, float):
+        return f"{short}{value:g}"
+    if isinstance(value, str) and len(value) <= 16 and not re.search(r"[\s/]", value):
+        part = _sanitize_slug_part(value)
+        return f"{short}{part}" if part else None
+    return None
+
+
+def _instructions_hash(base_instructions: str, optimized_instructions: str) -> str:
+    payload = f"{base_instructions}\0{optimized_instructions}".encode()
+    return hashlib.sha256(payload).hexdigest()[:4]
+
+
+def _make_variant_slug(
+    *,
+    auto: str,
+    params: dict,
+    train_case_count: int,
+    base_instructions: str = "",
+    optimized_instructions: str = "",
+    occupied: set[str] | None = None,
+) -> str:
+    """Build a short deterministic slug: auto + scalar params + n{train}.
+
+    On collision with `occupied`, append a 4-hex hash of the instructions diff.
+    """
+    parts = [_sanitize_slug_part(auto) or "auto"]
+    for key in sorted(params):
+        if key == "auto":
+            continue
+        token = _format_param_token(key, params[key])
+        if token:
+            parts.append(token)
+    train_token = f"n{train_case_count}"
+    parts.append(train_token)
+    slug = "-".join(p for p in parts if p)
+    slug = re.sub(r"-{2,}", "-", slug).strip("-")
+    # truncate earlier segments first so the trailing n{train} identity stays
+    if len(slug) > _SLUG_MAX_LEN:
+        max_prefix_len = _SLUG_MAX_LEN - len(train_token) - 1
+        prefix = "-".join(parts[:-1])[:max_prefix_len].rstrip("-.")
+        slug = f"{prefix}-{train_token}" if prefix else train_token
+
+    occupied = occupied or set()
+    if slug not in occupied:
+        return slug
+    suffix = _instructions_hash(base_instructions, optimized_instructions)
+    # keep n{train} at the end after the collision hash when possible
+    max_prefix_len = _SLUG_MAX_LEN - len(train_token) - 5  # -{4hex}-nN
+    if max_prefix_len > 0:
+        prefix = "-".join(parts[:-1])[:max_prefix_len].rstrip("-.")
+        if prefix:
+            return f"{prefix}-{suffix}-{train_token}"
+    return f"{train_token}-{suffix}"[:_SLUG_MAX_LEN]
+
+
+def _make_variant_summary(
+    *,
+    method: str,
+    auto: str,
+    params: dict,
+    train_case_count: int,
+    base_instructions: str,
+    optimized_instructions: str,
+) -> str:
+    """One-line auto summary: settings + instruction char-length delta."""
+    extras: list[str] = []
+    for key in sorted(params):
+        if key == "auto":
+            continue
+        value = params[key]
+        if isinstance(value, (int, float, bool)):
+            extras.append(f"{key}={value}")
+        elif isinstance(value, str) and len(value) <= 32:
+            one_line = re.sub(r"\s+", " ", value).strip()
+            if one_line:
+                extras.append(f"{key}={one_line}")
+    extra_s = (" " + " ".join(extras)) if extras else ""
+    return (
+        f"{method} auto={auto}{extra_s} train={train_case_count}; "
+        f"instructions {len(base_instructions)}→{len(optimized_instructions)} chars"
+    )
+
+
+def _append_optimized_index(paths: TaskPaths, entry: dict) -> None:
+    paths.optimized_dir.mkdir(parents=True, exist_ok=True)
+    with paths.optimized_index.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+
+# ---------------------------------------------------------------------------
 # optimize orchestration
 # ---------------------------------------------------------------------------
 
@@ -382,13 +531,35 @@ def optimize(
     optimized_template = render_optimized_template(result.optimized_instructions, original_template)
 
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-    # method identity comes from the optimizer that actually ran (APO-05):
-    # it names the output dir, the variant, and the log record, so
-    # cross-method comparisons (APO-13) can tell runs apart
-    out_dir = paths.optimized_dir / cfg.optimize.target_alias / f"{result.method}-{ts}"
+    # effective params: the raw method params with the resolved auto
+    # (params.auto precedence is applied at config load)
+    effective_params = {**cfg.optimize.params, "auto": cfg.optimize.auto}
+    # method identity comes from the optimizer that actually ran (APO-05);
+    # slug encodes auto/params/train size so variants are distinguishable
+    # without opening optimize_log.json
+    occupied_slugs = _occupied_slugs(paths.optimized_dir / cfg.optimize.target_alias)
+    slug = _make_variant_slug(
+        auto=cfg.optimize.auto,
+        params=effective_params,
+        train_case_count=len(train_cases),
+        base_instructions=base_instructions,
+        optimized_instructions=result.optimized_instructions,
+        occupied=occupied_slugs,
+    )
+    summary = _make_variant_summary(
+        method=result.method,
+        auto=cfg.optimize.auto,
+        params=effective_params,
+        train_case_count=len(train_cases),
+        base_instructions=base_instructions,
+        optimized_instructions=result.optimized_instructions,
+    )
+    dir_name = f"{result.method}-{ts}-{slug}"
+    out_dir = paths.optimized_dir / cfg.optimize.target_alias / dir_name
     out_dir.mkdir(parents=True, exist_ok=True)
     task_path = out_dir / "task.txt"
     task_path.write_text(optimized_template, encoding="utf-8")
+    created_at = datetime.now(timezone.utc).isoformat()
     log_path = out_dir / "optimize_log.json"
     log_path.write_text(
         json.dumps(
@@ -397,15 +568,15 @@ def optimize(
                 "reflection_provider": cfg.optimize.reflection_provider,
                 "auto": cfg.optimize.auto,
                 "method": result.method,
-                # effective params: the raw method params with the resolved
-                # auto (params.auto precedence is applied at config load)
-                "params": {**cfg.optimize.params, "auto": cfg.optimize.auto},
+                "params": effective_params,
+                "slug": slug,
+                "summary": summary,
                 "duration_seconds": duration_seconds,
                 "train_case_count": len(train_cases),
                 "train_case_ids": sorted(train_ids),
                 "base_instructions": base_instructions,
                 "optimized_instructions": result.optimized_instructions,
-                "created_at": datetime.now(timezone.utc).isoformat(),
+                "created_at": created_at,
                 # method-specific extras (currently empty for GEPA)
                 **result.extra_log,
             },
@@ -417,7 +588,7 @@ def optimize(
     print(f"[optimize] wrote {task_path}")
     print(f"[optimize] wrote {log_path}")
 
-    variant_name = f"{cfg.optimize.target_alias}_{result.method}_{ts}"
+    variant_name = f"{cfg.optimize.target_alias}_{result.method}_{ts}_{slug}"
     variant_config = build_variant_config(cfg.optimize.target_alias, task_path, paths)
     paths.variants_dir.mkdir(parents=True, exist_ok=True)
     variant_path = paths.variants_dir / f"{variant_name}.yaml"
@@ -433,6 +604,26 @@ def optimize(
         compare_path = compare(base_run_id, outcome.run_id, paths)
     else:
         print(f"[optimize] no prior base run found in {paths.index}; skipping compare")
+
+    rel_dir = f"{cfg.optimize.target_alias}/{dir_name}"
+    _append_optimized_index(
+        paths,
+        {
+            "variant_name": variant_name,
+            "created_at": created_at,
+            "method": result.method,
+            "target_alias": cfg.optimize.target_alias,
+            "slug": slug,
+            "dir": rel_dir,
+            "summary": summary,
+            "params": effective_params,
+            "train_case_count": len(train_cases),
+            "run_id": outcome.run_id,
+            "base_run_id": base_run_id,
+            "optimize_log": f"{rel_dir}/optimize_log.json",
+        },
+    )
+    print(f"[optimize] appended {paths.optimized_index}")
 
     return OptimizeOutcome(
         variant_name=variant_name,
