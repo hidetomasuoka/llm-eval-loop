@@ -78,6 +78,11 @@ class TaskPaths:
     def optimized_dir(self) -> Path:
         return self.task_dir / "optimized"
 
+    @property
+    def optimized_index(self) -> Path:
+        """Append-only ledger of optimize variants (slug, summary, run links)."""
+        return self.optimized_dir / "index.jsonl"
+
     # --- generated artifacts (all gitignored) --------------------------------
     @property
     def build_dir(self) -> Path:

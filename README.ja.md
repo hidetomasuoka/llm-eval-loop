@@ -229,7 +229,7 @@ fresh clone後はクイックスタートの手順どおり `uv run evalloop bui
 | `evalloop run` | `results/<task>/runs/{run_id}/`, `results/<task>/index.jsonl`（マシンローカルの監査台帳） |
 | `evalloop report` | `results/<task>/reports/` |
 | `evalloop failures` / `cluster` | `tasks/<task>/notes.csv`, `tasks/<task>/taxonomy.draft.yaml` |
-| `evalloop optimize` | `promptfoo/<task>/variants/`（`tasks/<task>/optimized/` は実験成果物として任意にコミット可） |
+| `evalloop optimize` | `promptfoo/<task>/variants/` と `tasks/<task>/optimized/<alias>/{method}-{ts}-{slug}/`、および `tasks/<task>/optimized/index.jsonl`（実験成果物として任意にコミット可） |
 | `evalloop blog` | `blog/<task>/` |
 
 run成果物の生出力（output.json / meta.json）にはローカル絶対パスやプロバイダのエラー

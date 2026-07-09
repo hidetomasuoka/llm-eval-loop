@@ -87,18 +87,22 @@ def test_optimize_end_to_end_with_stubbed_copro_and_promptfoo(isolated_root, mon
     pred = types.SimpleNamespace(output="契約照会")
     assert captured["metric"](gold, pred) == 1.0
 
-    # APO-05 identity plumbing applies to this method too
+    # APO-05 identity plumbing applies to this method too (slug suffix included)
     assert "_copro_" in outcome.variant_name
     assert outcome.task_path.parent.name.startswith("copro-")
+    assert "br5" in outcome.variant_name or "d2" in outcome.variant_name
     assert "copro optimized instructions" in outcome.task_path.read_text(encoding="utf-8")
     assert (paths.runs_dir / outcome.run_id / "output.json").exists()
 
     log = json.loads((outcome.task_path.parent / "optimize_log.json").read_text(encoding="utf-8"))
     assert log["method"] == "copro"
     assert log["params"] == {"breadth": 5, "depth": 2, "auto": "light"}
+    assert log["slug"]
+    assert "copro auto=light" in log["summary"]
     # extra_log (effective values) merged
     assert log["breadth"] == 5 and log["depth"] == 2 and log["init_temperature"] == 1.4
     assert log["train_size"] == 4
+    assert paths.optimized_index.exists()
 
 
 def test_copro_defaults_match_pinned_dspy_signature(isolated_root, monkeypatch):

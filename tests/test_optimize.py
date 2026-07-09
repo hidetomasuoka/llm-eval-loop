@@ -441,21 +441,113 @@ def test_optimize_end_to_end_with_stubbed_gepa_and_promptfoo(isolated_root, monk
     assert (paths.runs_dir / outcome.run_id / "output.json").exists()
 
     # APO-05: the method names the variant and the output directory so
-    # cross-method comparisons can tell runs apart
+    # cross-method comparisons can tell runs apart; slug encodes auto/n{train}
     assert "_gepa_" in outcome.variant_name
     assert outcome.task_path.parent.name.startswith("gepa-")
+    assert outcome.task_path.parent.name.endswith("-light-n8")
+    assert outcome.variant_name.endswith("_light-n8")
 
-    # APO-05: pin the optimize_log.json schema
+    # APO-05: pin the optimize_log.json schema (plus slug/summary)
     log = json.loads((outcome.task_path.parent / "optimize_log.json").read_text(encoding="utf-8"))
     assert log["method"] == "gepa"
     assert log["params"]["auto"] == "light"  # effective params include the resolved auto
+    assert log["slug"] == "light-n8"
+    assert "gepa auto=light train=8" in log["summary"]
+    assert "instructions" in log["summary"]
     assert isinstance(log["duration_seconds"], float)
     assert log["train_case_count"] == len(log["train_case_ids"])
+
+    # optimized/index.jsonl records the variant with run linkage
+    assert paths.optimized_index.exists()
+    index_lines = [json.loads(l) for l in paths.optimized_index.read_text(encoding="utf-8").splitlines() if l.strip()]
+    assert len(index_lines) == 1
+    entry = index_lines[0]
+    assert entry["variant_name"] == outcome.variant_name
+    assert entry["slug"] == "light-n8"
+    assert entry["method"] == "gepa"
+    assert entry["run_id"] == outcome.run_id
+    assert entry["base_run_id"] is None
+    assert entry["optimize_log"].endswith("/optimize_log.json")
+
     # the isolated index.jsonl only holds this variant run (base runs are
     # variant=None), so compare is skipped -- deterministically, unlike when
     # this read the developer's real results/index.jsonl
     assert outcome.base_run_id is None
     assert outcome.compare_path is None
+
+
+# ---------------------------------------------------------------------------
+# variant slug / summary helpers
+# ---------------------------------------------------------------------------
+
+
+def test_make_variant_slug_basic():
+    assert optimize_mod._make_variant_slug(auto="light", params={"auto": "light"}, train_case_count=20) == "light-n20"
+
+
+def test_make_variant_slug_includes_scalar_params():
+    slug = optimize_mod._make_variant_slug(
+        auto="medium",
+        params={"auto": "medium", "val_ratio": 0.2, "seed": 42},
+        train_case_count=40,
+    )
+    assert slug == "medium-seed42-val0.2-n40"
+
+
+def test_make_variant_slug_skips_nested_and_long_strings():
+    slug = optimize_mod._make_variant_slug(
+        auto="light",
+        params={
+            "auto": "light",
+            "nested": {"a": 1},
+            "long": "x" * 40,
+            "breadth": 5,
+        },
+        train_case_count=10,
+    )
+    assert slug == "light-br5-n10"
+    assert "nested" not in slug
+    assert "xxxx" not in slug
+
+
+def test_make_variant_slug_collision_appends_hash():
+    slug = optimize_mod._make_variant_slug(
+        auto="light",
+        params={"auto": "light"},
+        train_case_count=4,
+        base_instructions="base",
+        optimized_instructions="opt",
+        occupied={"light-n4"},
+    )
+    assert slug.startswith("light-n4-")
+    assert len(slug.split("-")[-1]) == 4
+    assert slug != "light-n4"
+
+
+def test_make_variant_summary():
+    summary = optimize_mod._make_variant_summary(
+        method="gepa",
+        auto="light",
+        params={"auto": "light"},
+        train_case_count=20,
+        base_instructions="abcd",
+        optimized_instructions="abcdefgh",
+    )
+    assert summary == "gepa auto=light train=20; instructions 4→8 chars"
+
+
+def test_slug_from_dir_name():
+    assert optimize_mod._slug_from_dir_name("gepa-20260708-094533-light-n20") == "light-n20"
+    assert optimize_mod._slug_from_dir_name("gepa-20260708-094533") is None
+    assert optimize_mod._slug_from_dir_name("20260706-075752") is None
+
+
+def test_occupied_slugs(tmp_path):
+    alias = tmp_path / "glm52"
+    (alias / "gepa-20260708-094533-light-n20").mkdir(parents=True)
+    (alias / "gepa-20260708-100000").mkdir()  # no slug
+    (alias / "20260706-075752").mkdir()  # legacy
+    assert optimize_mod._occupied_slugs(alias) == {"light-n20"}
 
 
 def _text_type_golden_rows():

@@ -164,7 +164,7 @@ Everything the `evalloop` commands generate is gitignored and lives in per-task 
 | `evalloop run` | `results/<task>/runs/{run_id}/`, `results/<task>/index.jsonl` (machine-local audit ledger) |
 | `evalloop report` | `results/<task>/reports/` |
 | `evalloop failures` / `cluster` | `tasks/<task>/notes.csv`, `tasks/<task>/taxonomy.draft.yaml` |
-| `evalloop optimize` | `promptfoo/<task>/variants/` (`tasks/<task>/optimized/` may optionally be committed as experiment artifacts) |
+| `evalloop optimize` | `promptfoo/<task>/variants/` and `tasks/<task>/optimized/<alias>/{method}-{ts}-{slug}/` plus `tasks/<task>/optimized/index.jsonl` (may optionally be committed as experiment artifacts) |
 | `evalloop blog` | `blog/<task>/` |
 
 Raw run outputs (output.json / meta.json) can contain local absolute paths and provider error payloads, so they are never committed to the public repository. Task **data** (`golden.jsonl`, `human_labels.jsonl`, `notes.csv`, `taxonomy*.yaml`) is also gitignored by default per the data policy above; only the task's "code" (`task.yaml`, `prompts/`, `PROVENANCE.md`) and the global `config.yaml` are tracked.
