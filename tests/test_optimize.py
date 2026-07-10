@@ -459,7 +459,9 @@ def test_optimize_end_to_end_with_stubbed_gepa_and_promptfoo(isolated_root, monk
 
     # optimized/index.jsonl records the variant with run linkage
     assert paths.optimized_index.exists()
-    index_lines = [json.loads(l) for l in paths.optimized_index.read_text(encoding="utf-8").splitlines() if l.strip()]
+    index_lines = [
+        json.loads(line) for line in paths.optimized_index.read_text(encoding="utf-8").splitlines() if line.strip()
+    ]
     assert len(index_lines) == 1
     entry = index_lines[0]
     assert entry["variant_name"] == outcome.variant_name
