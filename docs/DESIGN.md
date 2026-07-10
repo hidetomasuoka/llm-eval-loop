@@ -252,7 +252,7 @@ blog:
 ### 8.2 run.py
 
 - run_id = `YYYYMMDD-HHMMSS-{4桁hex}`。subprocess で promptfoo eval を実行し、output.json を run ディレクトリへ
-- meta.json に: 使用config snapshot、プロンプトファイルのsha256、repeat、実測コスト合計（output.jsonから集計）、ジャッジ校正状態、promptfooバージョン
+- meta.json に: 実際に使用したpromptfoo configのpath/sha256、同configから一意に解決した実効プロンプトファイルのpath/sha256（inline・複数promptはnull）、repeat、実測コスト合計（output.jsonから集計）、ジャッジ校正状態、promptfooバージョン
 - index.jsonl へ追記（**追記のみ、削除機能は作らない**）。promptfoo自体が完全に失敗して output.json が生成されなかった場合でも、meta.json/index.jsonlには記録してから例外を送出する（孤立したrun_idディレクトリを残さないため）
 - promptfooのキャッシュはデフォルト有効のまま使う（`--no-cache` はフラグで明示したときのみ）。`--share`は常に無効（`--no-share`固定）
 - `npx` の実行は `shutil.which("npx")` で解決する（Windowsでは`npx`が`npx.cmd`のため、素の`subprocess.run(["npx",...])`は失敗する）

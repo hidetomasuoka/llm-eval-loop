@@ -62,6 +62,46 @@ def sha256_of_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _load_promptfoo_config(path: Path) -> dict:
+    """Best-effort load of the exact promptfoo config used for a run."""
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def _effective_prompt_path(promptfoo_config_path: Path, promptfoo_config: dict) -> Path | None:
+    """Resolve a single file-backed prompt from the evaluated config.
+
+    Promptfoo supports inline and multi-prompt configs. Those do not have one
+    unambiguous file identity, so callers record an explicit null path/hash.
+    """
+    prompts = promptfoo_config.get("prompts")
+    if isinstance(prompts, str):
+        prompts = [prompts]
+    if not isinstance(prompts, list) or len(prompts) != 1:
+        return None
+    prompt_ref = prompts[0]
+    if not isinstance(prompt_ref, str) or not prompt_ref.startswith("file://"):
+        return None
+
+    prompt_path = Path(prompt_ref.removeprefix("file://"))
+    if not prompt_path.is_absolute():
+        prompt_path = promptfoo_config_path.parent / prompt_path
+    prompt_path = prompt_path.resolve()
+    return prompt_path if prompt_path.is_file() else None
+
+
+def _display_path(path: Path | None) -> str | None:
+    if path is None:
+        return None
+    try:
+        return str(path.relative_to(REPO_ROOT))
+    except ValueError:
+        return str(path)
+
+
 def get_promptfoo_version() -> str:
     """Best-effort: promptfoo's CLI docs (as of this writing) don't document a
     `--version` flag explicitly, but Commander-based CLIs register one by
@@ -187,6 +227,8 @@ def run(
     if not promptfoo_config_path.exists():
         raise RunError(f"{promptfoo_config_path} does not exist; run `evalloop build --task {paths.task}` first")
 
+    built = _load_promptfoo_config(promptfoo_config_path)
+    prompt_path = _effective_prompt_path(promptfoo_config_path, built)
     effective_repeat = repeat if repeat is not None else config.run.repeat
 
     run_id = new_run_id()
@@ -226,26 +268,15 @@ def run(
     # audit trail and no orphaned empty run_id directory is left behind.
     output_missing = not output_path.exists()
     actual_cost = _actual_cost_from_output(output_path) if output_path.exists() else 0.0
-    prompt_path = REPO_ROOT / config.task.prompt_file
-
-    try:
-        promptfoo_config_display = str(promptfoo_config_path.relative_to(REPO_ROOT))
-    except ValueError:
-        promptfoo_config_display = str(promptfoo_config_path)
-    try:
-        prompt_file_display = str(prompt_path.relative_to(REPO_ROOT))
-    except ValueError:
-        prompt_file_display = str(prompt_path)
+    promptfoo_config_display = _display_path(promptfoo_config_path)
+    prompt_file_display = _display_path(prompt_path)
 
     # meta must reflect what was actually evaluated: `build --models` may have
     # narrowed the provider set relative to the task config, and the built
     # promptfoo config -- not the task config -- is the ground truth (issue #49)
-    built_aliases: set[str] = set()
-    try:
-        built = yaml.safe_load(promptfoo_config_path.read_text(encoding="utf-8")) or {}
-        built_aliases = {p.get("label") for p in built.get("providers", []) if isinstance(p, dict) and p.get("label")}
-    except (OSError, yaml.YAMLError):
-        pass  # unreadable build artifact -> fall back to the full task config below
+    built_aliases = {
+        p.get("label") for p in (built.get("providers") or []) if isinstance(p, dict) and p.get("label")
+    }
     evaluated_models = [m for m in config.models if m.alias in built_aliases] or list(config.models)
 
     meta = {
@@ -256,8 +287,9 @@ def run(
         "answer_type": config.task.answer_type,
         "variant": variant,
         "promptfoo_config_path": promptfoo_config_display,
+        "promptfoo_config_sha256": sha256_of_file(promptfoo_config_path),
         "prompt_file": prompt_file_display,
-        "prompt_sha256": sha256_of_file(prompt_path),
+        "prompt_sha256": sha256_of_file(prompt_path) if prompt_path is not None else None,
         # dataset-version reproducibility (issue #47): which golden.jsonl this
         # run actually evaluated. Task data is not tracked in git, so the hash
         # is the only durable identity.
