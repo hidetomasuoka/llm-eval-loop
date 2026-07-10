@@ -469,6 +469,11 @@ def optimize(
     optimize_cases = select_eval_subset(
         train_cases, strategy=scheduler_strategy, budget=eval_budget, seed=scheduler_seed
     )
+    if cfg.optimize.method == MiproV2Optimizer.name and len(optimize_cases) < 2:
+        raise OptimizeError(
+            "miprov2 needs at least 2 cases after eval scheduling to carve out a validation set; "
+            f"scheduler {scheduler_strategy!r} selected {len(optimize_cases)} case(s)"
+        )
     optimize_ids = {c.id for c in optimize_cases}
     if scheduler_strategy != "full":
         print(

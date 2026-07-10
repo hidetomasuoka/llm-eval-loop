@@ -72,9 +72,10 @@ def select_eval_subset(
 
     if strategy == "coverage":
         features = [_char_ngrams(case.input) for case in items]
+        input_lengths = [len(" ".join(case.input.split())) for case in items]
         # Stable first pick: the longest input tends to carry the most surface
         # features; ties fall back to the original order.
-        first = max(range(len(items)), key=lambda i: (len(features[i]), -i))
+        first = max(range(len(items)), key=lambda i: (input_lengths[i], len(features[i]), -i))
         selected = [first]
         remaining = set(range(len(items))) - {first}
         while len(selected) < k:
@@ -82,6 +83,7 @@ def select_eval_subset(
                 remaining,
                 key=lambda i: (
                     min(1.0 - _jaccard(features[i], features[j]) for j in selected),
+                    input_lengths[i],
                     len(features[i]),
                     -i,
                 ),

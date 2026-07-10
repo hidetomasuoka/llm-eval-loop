@@ -34,7 +34,7 @@ APO には **train / holdout 分割が取れる評価セット** が前提とな
 - **train split**: 最適化に使うケース群。GEPA等はこのみを読む（`optimize.py` は `split=='train'` のみ抽出し、test と ID が交差すると即異常終了）
 - **holdout（test）split**: 最適化に使わず、最終評価のみに使う。ここでの改善確認が「汎化した」と言える唯一の証拠
 - **評価指標**: GEPA はプロセス内高速 metric を必要とするため、最終評価（llm-rubric）とは**異なる代理指標**を使う（`optimize.py` の docstring 参照）。代理指標と最終評価の divergence は測定対象であり、隠さない。
-- **候補評価の少量化**: `optimize.params.eval_scheduler` に `full`（既定）/ `random` / `coverage`、`eval_budget` に件数を指定すると、APO候補評価に使う train 例だけを少量化できる。test split は引き続き一切使わない。
+- **候補評価の少量化**: `optimize.params.eval_scheduler` に `full`（既定）/ `random` / `coverage`、`eval_budget` に件数を指定すると、APO候補評価に使う train 例だけを少量化できる。test split は引き続き一切使わない。MIPROv2 は train/validation 分割が必要なため、スケジューラ適用後も最低2件必要。
 
 train/holdout が取れない（評価セットが小さすぎる・ラベルがない）場合は、まず評価セット整備が先。APO は評価セットの上に成り立つ。
 

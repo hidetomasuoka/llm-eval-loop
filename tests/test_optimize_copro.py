@@ -103,7 +103,9 @@ def test_optimize_end_to_end_with_stubbed_copro_and_promptfoo(isolated_root, mon
     assert log["breadth"] == 5 and log["depth"] == 2 and log["init_temperature"] == 1.4
     assert log["train_size"] == 4
     assert paths.optimized_index.exists()
-    index_lines = [json.loads(l) for l in paths.optimized_index.read_text(encoding="utf-8").splitlines() if l.strip()]
+    index_lines = [
+        json.loads(line) for line in paths.optimized_index.read_text(encoding="utf-8").splitlines() if line.strip()
+    ]
     assert len(index_lines) == 1
     entry = index_lines[0]
     assert entry["variant_name"] == outcome.variant_name

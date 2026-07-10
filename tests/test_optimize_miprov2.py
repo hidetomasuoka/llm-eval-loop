@@ -161,7 +161,9 @@ def test_optimize_end_to_end_with_stubbed_miprov2_and_promptfoo(isolated_root, m
     assert log["val_ratio"] == 0.25 and log["seed"] == 7  # extra_log (effective values) merged
     assert log["train_size"] == 3 and log["val_size"] == 1
     assert paths.optimized_index.exists()
-    index_lines = [json.loads(l) for l in paths.optimized_index.read_text(encoding="utf-8").splitlines() if l.strip()]
+    index_lines = [
+        json.loads(line) for line in paths.optimized_index.read_text(encoding="utf-8").splitlines() if line.strip()
+    ]
     assert len(index_lines) == 1
     entry = index_lines[0]
     assert entry["variant_name"] == outcome.variant_name
@@ -238,3 +240,14 @@ def test_miprov2_passes_demo_params_to_dspy_wrapper(isolated_root, monkeypatch):
     log = json.loads((outcome.task_path.parent / "optimize_log.json").read_text(encoding="utf-8"))
     assert log["max_bootstrapped_demos"] == 2
     assert log["max_labeled_demos"] == 4
+
+
+def test_optimize_rejects_miprov2_eval_budget_one_before_model_calls(isolated_root):
+    cfg, paths = _scaffold_miprov2_task(
+        isolated_root,
+        params={"eval_scheduler": "random", "eval_budget": 1, "seed": 3},
+    )
+    build_mod.build(cfg, paths, yes=True)
+
+    with pytest.raises(OptimizeError, match="at least 2 cases after eval scheduling"):
+        optimize_mod.optimize(cfg, paths, force=True)
