@@ -77,8 +77,27 @@ def test_optimize_end_to_end_with_stubbed_miprov2_and_promptfoo(isolated_root, m
 
     captured = {}
 
-    def fake_miprov2(student, trainset, valset, metric, prompt_model, task_model, auto, seed):
-        captured.update(trainset=trainset, valset=valset, metric=metric, auto=auto, seed=seed)
+    def fake_miprov2(
+        student,
+        trainset,
+        valset,
+        metric,
+        prompt_model,
+        task_model,
+        auto,
+        seed,
+        max_bootstrapped_demos=0,
+        max_labeled_demos=0,
+    ):
+        captured.update(
+            trainset=trainset,
+            valset=valset,
+            metric=metric,
+            auto=auto,
+            seed=seed,
+            max_bootstrapped_demos=max_bootstrapped_demos,
+            max_labeled_demos=max_labeled_demos,
+        )
         return types.SimpleNamespace(signature=types.SimpleNamespace(instructions="miprov2 optimized instructions"))
 
     monkeypatch.setattr(optimize_mod, "run_miprov2", fake_miprov2)
@@ -151,3 +170,71 @@ def test_optimize_end_to_end_with_stubbed_miprov2_and_promptfoo(isolated_root, m
     assert entry["run_id"] == outcome.run_id
     assert entry["base_run_id"] is None
     assert entry["optimize_log"].endswith("/optimize_log.json")
+
+
+def test_miprov2_passes_demo_params_to_dspy_wrapper(isolated_root, monkeypatch):
+    cfg, paths = _scaffold_miprov2_task(
+        isolated_root,
+        params={
+            "val_ratio": 0.25,
+            "seed": 3,
+            "max_bootstrapped_demos": 2,
+            "max_labeled_demos": 4,
+        },
+    )
+    build_mod.build(cfg, paths, yes=True)
+
+    captured = {}
+
+    def fake_miprov2(
+        student,
+        trainset,
+        valset,
+        metric,
+        prompt_model,
+        task_model,
+        auto,
+        seed,
+        max_bootstrapped_demos=0,
+        max_labeled_demos=0,
+    ):
+        captured.update(
+            max_bootstrapped_demos=max_bootstrapped_demos,
+            max_labeled_demos=max_labeled_demos,
+            seed=seed,
+        )
+        return types.SimpleNamespace(signature=types.SimpleNamespace(instructions="miprov2 demos optimized"))
+
+    monkeypatch.setattr(optimize_mod, "run_miprov2", fake_miprov2)
+
+    def fake_eval(config_path, output_path, **kwargs):
+        cfg_yaml = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        rows = [
+            {
+                "vars": {"case_id": "case-0001", "expected": "契約照会", "category": "基本"},
+                "provider": {"id": cfg_yaml["providers"][0]["id"], "label": cfg_yaml["providers"][0]["label"]},
+                "response": {"output": "契約照会"},
+                "gradingResult": {"pass": True, "score": 1},
+                "success": True,
+                "cost": 0.0,
+            }
+        ]
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json.dumps({"results": {"results": rows}}), encoding="utf-8")
+
+        class _P:
+            returncode = 0
+            stderr = ""
+
+        return _P()
+
+    monkeypatch.setattr(run_mod, "run_promptfoo_eval", fake_eval)
+    monkeypatch.setattr(run_mod, "get_promptfoo_version", lambda: "0.0.0-test")
+    monkeypatch.setattr(run_mod, "get_node_version", lambda: "v22.22.0")
+
+    outcome = optimize_mod.optimize(cfg, paths, force=True)
+
+    assert captured == {"max_bootstrapped_demos": 2, "max_labeled_demos": 4, "seed": 3}
+    log = json.loads((outcome.task_path.parent / "optimize_log.json").read_text(encoding="utf-8"))
+    assert log["max_bootstrapped_demos"] == 2
+    assert log["max_labeled_demos"] == 4

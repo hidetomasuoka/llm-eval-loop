@@ -1,6 +1,6 @@
 """MIPROv2 prompt optimizer: dspy.teleprompt.MIPROv2 behind the PromptOptimizer
-contract. Instruction-only in this iteration -- demo bootstrapping stays
-disabled until [APO-17].
+contract. The default remains instruction-only for backward compatibility,
+but params.max_bootstrapped_demos / max_labeled_demos can enable few-shot demo search.
 
 Confirmed against the installed dspy==3.2.1 API (`inspect.signature`):
     MIPROv2(metric, prompt_model=None, task_model=None, ...,
@@ -15,7 +15,8 @@ Differences from GEPA that this module absorbs:
       _scalar_metric (feedback text is simply unused by MIPROv2)
     - the validation set: GEPA splits internally; MIPROv2 wants an explicit
       valset, carved 8:2 out of the TRAIN split with a fixed seed
-      (params.val_ratio / params.seed). The test split is never touched --
+      (params.val_ratio / params.seed). Optional demo counts are passed through
+      from params.max_bootstrapped_demos / max_labeled_demos. The test split is never touched --
       iron rule #1 is re-asserted upstream in optimize().
 """
 
@@ -62,7 +63,18 @@ def split_train_val(trainset: list, val_ratio: float, seed: int) -> tuple[list, 
     return train_part, val_part
 
 
-def run_miprov2(student, trainset, valset, metric, prompt_model, task_model, auto: str, seed: int):
+def run_miprov2(
+    student,
+    trainset,
+    valset,
+    metric,
+    prompt_model,
+    task_model,
+    auto: str,
+    seed: int,
+    max_bootstrapped_demos: int = 0,
+    max_labeled_demos: int = 0,
+):
     """Thin, monkeypatchable wrapper around the real dspy.teleprompt.MIPROv2
     call, mirroring run_gepa() so orchestration can be unit-tested without
     real API calls.
@@ -73,9 +85,8 @@ def run_miprov2(student, trainset, valset, metric, prompt_model, task_model, aut
         metric=metric,
         prompt_model=prompt_model,  # instruction proposal -- the reflection role
         task_model=task_model,
-        # instruction-only for now: demo bootstrapping is [APO-17]
-        max_bootstrapped_demos=0,
-        max_labeled_demos=0,
+        max_bootstrapped_demos=max_bootstrapped_demos,
+        max_labeled_demos=max_labeled_demos,
         auto=auto,
         seed=seed,
     )
@@ -89,7 +100,7 @@ def run_miprov2(student, trainset, valset, metric, prompt_model, task_model, aut
 
 
 class MiproV2Optimizer:
-    """PromptOptimizer implementation backed by dspy's MIPROv2 (instruction-only)."""
+    """PromptOptimizer implementation backed by dspy's MIPROv2."""
 
     name = "miprov2"
 
@@ -106,6 +117,10 @@ class MiproV2Optimizer:
         params = cfg.optimize.params
         val_ratio = float(params.get("val_ratio", 0.2))
         seed = int(params.get("seed", 0))
+        max_bootstrapped_demos = int(params.get("max_bootstrapped_demos", 0))
+        max_labeled_demos = int(params.get("max_labeled_demos", 0))
+        if max_bootstrapped_demos < 0 or max_labeled_demos < 0:
+            raise OptimizeError("miprov2 demo counts must be non-negative")
 
         dspy.configure(lm=task_lm)
         signature = dspy.Signature("input -> output", instructions=base_instructions)
@@ -127,6 +142,8 @@ class MiproV2Optimizer:
             task_lm,
             cfg.optimize.auto,
             seed,
+            max_bootstrapped_demos,
+            max_labeled_demos,
         )
         return OptimizeResult(
             optimized_instructions=optimized_program.signature.instructions,
@@ -137,5 +154,7 @@ class MiproV2Optimizer:
                 "seed": seed,
                 "train_size": len(train_part),
                 "val_size": len(val_part),
+                "max_bootstrapped_demos": max_bootstrapped_demos,
+                "max_labeled_demos": max_labeled_demos,
             },
         )

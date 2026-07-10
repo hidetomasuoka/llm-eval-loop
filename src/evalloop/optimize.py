@@ -58,6 +58,7 @@ from evalloop.optimizers.miprov2 import (
     MiproV2Optimizer,
     run_miprov2,  # noqa: F401 -- monkeypatch target by convention; MiproV2Optimizer calls it through this module
 )
+from evalloop.optimizers.schedulers import select_eval_subset
 from evalloop.paths import REPO_ROOT, TaskPaths
 from evalloop.schemas import (
     Config,
@@ -461,7 +462,21 @@ def optimize(
 
     # APO-10: order-of-magnitude cost warning + confirmation BEFORE the first
     # rollout is spent (mirrors build.py's --yes pattern)
-    estimate = estimate_optimize_cost(cfg, train_cases, original_template)
+    scheduler_strategy = str(cfg.optimize.params.get("eval_scheduler", "full"))
+    eval_budget_raw = cfg.optimize.params.get("eval_budget")
+    eval_budget = int(eval_budget_raw) if eval_budget_raw is not None else None
+    scheduler_seed = int(cfg.optimize.params.get("seed", 0))
+    optimize_cases = select_eval_subset(
+        train_cases, strategy=scheduler_strategy, budget=eval_budget, seed=scheduler_seed
+    )
+    optimize_ids = {c.id for c in optimize_cases}
+    if scheduler_strategy != "full":
+        print(
+            f"[optimize] eval scheduler {scheduler_strategy!r}: "
+            f"using {len(optimize_cases)}/{len(train_cases)} train cases for candidate evaluation"
+        )
+
+    estimate = estimate_optimize_cost(cfg, optimize_cases, original_template)
     print(f"[optimize] estimated cost (rough, order-of-magnitude only -- method={estimate.method}):")
     print(
         f"[optimize]   target {cfg.optimize.target_alias}: ~{estimate.rollout_count} rollouts "
@@ -508,7 +523,7 @@ def optimize(
         score, feedback = score_fn(getattr(pred, "output", ""), gold.expected)
         return dspy.Prediction(score=score, feedback=feedback)
 
-    trainset = [dspy.Example(input=c.input, expected=c.expected).with_inputs("input") for c in train_cases]
+    trainset = [dspy.Example(input=c.input, expected=c.expected).with_inputs("input") for c in optimize_cases]
 
     # optimizer selection by cfg.optimize.method (validated against
     # KNOWN_OPTIMIZE_METHODS at config load, so this lookup cannot miss)
@@ -541,7 +556,7 @@ def optimize(
     slug = _make_variant_slug(
         auto=cfg.optimize.auto,
         params=effective_params,
-        train_case_count=len(train_cases),
+        train_case_count=len(optimize_cases),
         base_instructions=base_instructions,
         optimized_instructions=result.optimized_instructions,
         occupied=occupied_slugs,
@@ -550,7 +565,7 @@ def optimize(
         method=result.method,
         auto=cfg.optimize.auto,
         params=effective_params,
-        train_case_count=len(train_cases),
+        train_case_count=len(optimize_cases),
         base_instructions=base_instructions,
         optimized_instructions=result.optimized_instructions,
     )
@@ -572,8 +587,11 @@ def optimize(
                 "slug": slug,
                 "summary": summary,
                 "duration_seconds": duration_seconds,
-                "train_case_count": len(train_cases),
-                "train_case_ids": sorted(train_ids),
+                "train_case_count": len(optimize_cases),
+                "train_case_ids": sorted(optimize_ids),
+                "full_train_case_count": len(train_cases),
+                "eval_scheduler": scheduler_strategy,
+                "eval_budget": eval_budget,
                 "base_instructions": base_instructions,
                 "optimized_instructions": result.optimized_instructions,
                 "created_at": created_at,
@@ -617,7 +635,7 @@ def optimize(
             "dir": rel_dir,
             "summary": summary,
             "params": effective_params,
-            "train_case_count": len(train_cases),
+            "train_case_count": len(optimize_cases),
             "run_id": outcome.run_id,
             "base_run_id": base_run_id,
             "optimize_log": f"{rel_dir}/optimize_log.json",
