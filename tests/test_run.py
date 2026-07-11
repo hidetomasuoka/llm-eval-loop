@@ -1,7 +1,9 @@
 import hashlib
 import json
+import os
 
 import pytest
+import yaml
 
 from evalloop import run as run_mod
 from evalloop.paths import REPO_ROOT, TaskPaths
@@ -28,7 +30,6 @@ def _make_config():
         task=TaskConfig(
             name="t1",
             answer_type="label",
-            # must point at a real, tracked file: run() records its sha256
             prompt_file="tasks/sample-inquiry/prompts/task.txt",
             labels=["契約照会", "障害報告", "機能要望", "その他"],
         ),
@@ -78,6 +79,16 @@ def _prepare_env(monkeypatch, paths):
     paths.promptfoo_config.write_text("providers: []\n", encoding="utf-8")
 
 
+def _file_ref(path, start):
+    return "file://" + os.path.relpath(path, start=start).replace(os.sep, "/")
+
+
+def _fake_success_eval(config_path, output_path, **kwargs):
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps({"results": {"results": []}}), encoding="utf-8")
+    return _FakeCompletedProcess(returncode=0)
+
+
 def test_npx_base_cmd_uses_pinned_version_not_latest(monkeypatch):
     # @latestはサプライチェーン露出＋再現性ドリフトのため禁止（issue #19）
     monkeypatch.setattr(run_mod.shutil, "which", lambda name: "/fake/npx")
@@ -98,6 +109,62 @@ def test_run_variant_missing_raises(isolated_root):
     paths = TaskPaths(root=isolated_root, task="t1")
     with pytest.raises(run_mod.RunError):
         run_mod.run(_make_config(), paths, variant="does-not-exist")
+
+
+def test_run_base_meta_records_effective_prompt_and_config_hash(isolated_root, monkeypatch):
+    paths = TaskPaths(root=isolated_root, task="t1")
+    _prepare_env(monkeypatch, paths)
+    paths.prompt_file.parent.mkdir(parents=True, exist_ok=True)
+    prompt_bytes = b"base prompt {{input}}\n"
+    paths.prompt_file.write_bytes(prompt_bytes)
+    paths.promptfoo_config.write_text(
+        yaml.safe_dump(
+            {"providers": [], "prompts": [_file_ref(paths.prompt_file, paths.promptfoo_config.parent)]},
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    config_bytes = paths.promptfoo_config.read_bytes()
+    monkeypatch.setattr(run_mod, "run_promptfoo_eval", _fake_success_eval)
+
+    outcome = run_mod.run(_make_config(), paths)
+
+    assert outcome.meta["prompt_file"] == str(paths.prompt_file.relative_to(REPO_ROOT))
+    assert outcome.meta["prompt_sha256"] == hashlib.sha256(prompt_bytes).hexdigest()
+    assert outcome.meta["promptfoo_config_sha256"] == hashlib.sha256(config_bytes).hexdigest()
+
+
+def test_run_variant_meta_records_optimized_prompt_and_config_hash(isolated_root, monkeypatch):
+    paths = TaskPaths(root=isolated_root, task="t1")
+    _prepare_env(monkeypatch, paths)
+    variant_name = "optimized"
+    variant_path = paths.variants_dir / f"{variant_name}.yaml"
+    variant_path.parent.mkdir(parents=True, exist_ok=True)
+    optimized_prompt = paths.optimized_dir / "qwen7b" / "run-1" / "task.txt"
+    optimized_prompt.parent.mkdir(parents=True, exist_ok=True)
+    prompt_bytes = b"optimized prompt {{input}}\n"
+    optimized_prompt.write_bytes(prompt_bytes)
+    variant_path.write_text(
+        yaml.safe_dump(
+            {"providers": [], "prompts": [_file_ref(optimized_prompt, variant_path.parent)]},
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    config_bytes = variant_path.read_bytes()
+    monkeypatch.setattr(run_mod, "run_promptfoo_eval", _fake_success_eval)
+
+    outcome = run_mod.run(_make_config(), paths, variant=variant_name)
+
+    assert outcome.meta["prompt_file"] == str(optimized_prompt.relative_to(REPO_ROOT))
+    assert outcome.meta["prompt_sha256"] == hashlib.sha256(prompt_bytes).hexdigest()
+    assert outcome.meta["promptfoo_config_sha256"] == hashlib.sha256(config_bytes).hexdigest()
+
+
+def test_effective_prompt_path_is_unknown_for_inline_or_multiple_prompts(isolated_root):
+    config_path = isolated_root / "promptfoo.yaml"
+    assert run_mod._effective_prompt_path(config_path, {"prompts": ["inline prompt"]}) is None
+    assert run_mod._effective_prompt_path(config_path, {"prompts": ["file://a.txt", "file://b.txt"]}) is None
 
 
 def test_run_total_failure_still_records_ledger_entry(isolated_root, monkeypatch):

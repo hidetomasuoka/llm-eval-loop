@@ -21,10 +21,9 @@ judge:
   # llm-rubric の grader。必ず明示する（環境キー依存の暗黙デフォルトグレーダーは禁止）
   # 被評価モデルと同一providerの場合、build は既定で停止する（--allow-same-judge でのみ回避）
   #
-  # 注意: このタスクは models に5段階の全ティアを含めており、judgeにはそのうち
-  # sonnet46と同一providerを使っている。そのため build には
-  # `evalloop build --task cuad100 --allow-same-judge` が必要（sonnet46の行だけ
-  # 自己採点になる既知のトレードオフとして許容している）。
+  # 注意: 現在のチェックイン設定は models: [glm52] で、judgeにも同じGLM-5.2
+  # providerを使う。そのため build には `--allow-same-judge` が必要で、glm52の
+  # 結果全体が自己採点になる。独立したjudgeへ変更すればフラグは不要になる。
   provider: ollama:chat:glm-5.2:cloud
   threshold: 0.8
   agreement_threshold: 0.85     # human_labels.jsonl とのジャッジ一致率のしきい値

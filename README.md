@@ -66,7 +66,7 @@ uv run evalloop build --task cuad100 --allow-same-judge
 uv run evalloop run --task cuad100 --limit 10
 ```
 
-> `--allow-same-judge` is required because `tasks/cuad100/task.yaml` includes the judge (same provider as sonnet46) among the 5 evaluated models — a known, documented tradeoff in which only the sonnet46 row is self-graded. Point the judge at a model outside the evaluated set and the flag becomes unnecessary.
+> The checked-in CUAD configuration currently evaluates only `glm52` and uses the same `ollama:chat:glm-5.2:cloud` provider as its judge. Therefore the entire glm52 result is self-graded, and `--allow-same-judge` is required. Point the judge at a provider outside the evaluated model set to remove both the flag and this self-grading bias.
 
 If everything looks good, drop `--limit` to run the full set, then continue into failure analysis, the improvement loop, and blog export.
 

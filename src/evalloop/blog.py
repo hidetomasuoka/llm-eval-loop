@@ -311,10 +311,19 @@ def render_tables_md(runs: list[RunData]) -> str:
 
 def render_conditions_md(runs: list[RunData], config, fig03_written: bool) -> str:
     primary = runs[-1]
-    prompt_path = REPO_ROOT / primary.meta.get("prompt_file", config.task.prompt_file)
-    prompt_sha8 = primary.meta.get("prompt_sha256", "")[:8] if primary.meta.get("prompt_sha256") else (
-        hashlib.sha256(prompt_path.read_bytes()).hexdigest()[:8] if prompt_path.exists() else "unknown"
-    )
+    if "prompt_sha256" in primary.meta:
+        recorded_prompt_sha = primary.meta.get("prompt_sha256")
+        prompt_sha8 = recorded_prompt_sha[:8] if recorded_prompt_sha else "unknown"
+    else:
+        # Backward compatibility for older meta.json files that predate prompt
+        # hashing. New runs record an explicit null when no single file-backed
+        # prompt can be identified, and must remain "unknown" rather than
+        # silently falling back to the task's base prompt.
+        recorded_prompt_file = primary.meta.get("prompt_file")
+        prompt_path = REPO_ROOT / (recorded_prompt_file or config.task.prompt_file)
+        prompt_sha8 = hashlib.sha256(prompt_path.read_bytes()).hexdigest()[:8] if prompt_path.exists() else "unknown"
+    promptfoo_config_sha = primary.meta.get("promptfoo_config_sha256")
+    promptfoo_config_sha8 = promptfoo_config_sha[:8] if promptfoo_config_sha else "unknown"
     total_cost = sum(s.total_cost_usd for s in primary.stats)
     jpy = config.blog.jpy_per_usd
 
@@ -332,6 +341,7 @@ def render_conditions_md(runs: list[RunData], config, fig03_written: bool) -> st
         f"- repeat: {primary.meta.get('repeat')}",
         f"- temperature: {config.run.temperature}",
         f"- prompt sha256 (first 8): `{prompt_sha8}`",
+        f"- promptfoo config sha256 (first 8): `{promptfoo_config_sha8}`",
         f"- judge: `{primary.meta.get('judge', {}).get('provider')}`"
         f" (calibration: {primary.meta.get('judge', {}).get('calibration_status', 'uncalibrated')},"
         f" agreement: {report_mod.fmt(primary.meta.get('judge', {}).get('agreement_rate'), '.1%')})",

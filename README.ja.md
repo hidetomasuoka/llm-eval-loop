@@ -91,9 +91,10 @@ uv run evalloop build --task cuad100 --allow-same-judge
 uv run evalloop run --task cuad100 --limit 10
 ```
 
-> `--allow-same-judge` が必要なのは、`tasks/cuad100/task.yaml` がjudge（sonnet46と同一
-> provider）を評価対象5モデルの中に含めているため（sonnet46の行だけ自己採点になる既知の
-> トレードオフ）。judgeを評価対象外のモデルにすれば不要になる。
+> 現在チェックインされているCUAD設定は `glm52` だけを評価し、judgeにも同じ
+> `ollama:chat:glm-5.2:cloud` providerを使う。そのためglm52の結果全体が自己採点となり、
+> `--allow-same-judge` が必要。judgeを評価対象外のproviderへ変更すれば、このフラグと
+> 自己採点バイアスの両方を解消できる。
 
 問題なければ `--limit` を外してフルセットで実行し、失敗分析・改善ループ・ブログ出力に進める。
 
