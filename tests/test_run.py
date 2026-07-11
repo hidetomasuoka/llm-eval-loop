@@ -25,13 +25,14 @@ class _FakeCompletedProcess:
         self.stderr = stderr
 
 
-def _make_config():
+def _make_config(answer_type="label"):
     return Config(
         task=TaskConfig(
             name="t1",
-            answer_type="label",
+            answer_type=answer_type,
             prompt_file="tasks/sample-inquiry/prompts/task.txt",
             labels=["契約照会", "障害報告", "機能要望", "その他"],
+            json_schema_file="tasks/t1/schema.json" if answer_type == "json" else None,
         ),
         models=[
             ModelConfig(provider="anthropic:messages:claude-haiku-4-5-20251001", alias="haiku45", tier="small"),
@@ -132,6 +133,32 @@ def test_run_base_meta_records_effective_prompt_and_config_hash(isolated_root, m
     assert outcome.meta["prompt_file"] == str(paths.prompt_file.relative_to(REPO_ROOT))
     assert outcome.meta["prompt_sha256"] == hashlib.sha256(prompt_bytes).hexdigest()
     assert outcome.meta["promptfoo_config_sha256"] == hashlib.sha256(config_bytes).hexdigest()
+
+
+@pytest.mark.parametrize(
+    ("answer_type", "grader_type", "calibration_status"),
+    [
+        ("label", "label-match", "not_applicable"),
+        ("json", "json-field-match", "not_applicable"),
+        ("text", "llm-rubric", "uncalibrated"),
+    ],
+)
+def test_run_meta_records_effective_grader(
+    isolated_root, monkeypatch, answer_type, grader_type, calibration_status
+):
+    paths = TaskPaths(root=isolated_root, task="t1")
+    _prepare_env(monkeypatch, paths)
+    monkeypatch.setattr(run_mod, "run_promptfoo_eval", _fake_success_eval)
+
+    outcome = run_mod.run(_make_config(answer_type), paths)
+
+    assert outcome.meta["grader"]["type"] == grader_type
+    assert outcome.meta["grader"]["calibration_status"] == calibration_status
+    if answer_type == "text":
+        assert outcome.meta["grader"]["provider"] == "anthropic:messages:claude-sonnet-4-6"
+        assert outcome.meta["grader"]["agreement_rate"] is None
+    else:
+        assert "provider" not in outcome.meta["grader"]
 
 
 def test_run_variant_meta_records_optimized_prompt_and_config_hash(isolated_root, monkeypatch):
