@@ -191,6 +191,26 @@ def test_conditions_preserves_explicit_unknown_prompt_identity():
     assert "prompt sha256 (first 8): `unknown`" in md
 
 
+def test_conditions_legacy_prompt_hash_is_resolved_from_repo_root(tmp_path, monkeypatch):
+    repo_root = tmp_path / "repo"
+    prompt_path = repo_root / "tasks/sample-inquiry/prompts/task.txt"
+    prompt_path.parent.mkdir(parents=True)
+    prompt_path.write_text("legacy prompt", encoding="utf-8")
+    work_dir = tmp_path / "elsewhere"
+    work_dir.mkdir()
+    monkeypatch.setattr(blog_mod, "REPO_ROOT", repo_root)
+    monkeypatch.chdir(work_dir)
+
+    config = _mk_config("label", judge_provider="p:judge", model_provider="p:model")
+    run = _mk_run_data()
+    run.meta.pop("prompt_file")
+    run.meta.pop("prompt_sha256")
+
+    md = blog_mod.render_conditions_md([run], config, fig03_written=False)
+
+    assert "prompt sha256 (first 8): `e1331ea0`" in md
+
+
 # ---------------------------------------------------------------------------
 # full blog() orchestration
 # ---------------------------------------------------------------------------

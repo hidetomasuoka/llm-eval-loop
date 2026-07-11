@@ -320,7 +320,7 @@ def render_conditions_md(runs: list[RunData], config, fig03_written: bool) -> st
         # prompt can be identified, and must remain "unknown" rather than
         # silently falling back to the task's base prompt.
         recorded_prompt_file = primary.meta.get("prompt_file")
-        prompt_path = REPO_ROOT / recorded_prompt_file if recorded_prompt_file else Path(config.task.prompt_file)
+        prompt_path = REPO_ROOT / (recorded_prompt_file or config.task.prompt_file)
         prompt_sha8 = hashlib.sha256(prompt_path.read_bytes()).hexdigest()[:8] if prompt_path.exists() else "unknown"
     promptfoo_config_sha = primary.meta.get("promptfoo_config_sha256")
     promptfoo_config_sha8 = promptfoo_config_sha[:8] if promptfoo_config_sha else "unknown"
