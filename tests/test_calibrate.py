@@ -81,7 +81,18 @@ def _write_run_output(paths, run_id, rows):
     run_dir.mkdir(parents=True)
     (run_dir / "output.json").write_text(json.dumps({"results": {"results": rows}}), encoding="utf-8")
     (run_dir / "meta.json").write_text(
-        json.dumps({"judge": {"provider": "j", "calibration_status": "uncalibrated", "agreement_rate": None}}),
+        json.dumps(
+            {
+                "answer_type": "text",
+                "grader": {
+                    "type": "llm-rubric",
+                    "provider": "j",
+                    "calibration_status": "uncalibrated",
+                    "agreement_rate": None,
+                },
+                "judge": {"provider": "j", "calibration_status": "uncalibrated", "agreement_rate": None},
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -156,6 +167,8 @@ def test_calibrate_run_id_mode_high_agreement(calibrate_env):
     meta = json.loads((paths.runs_dir / "run-1" / "meta.json").read_text(encoding="utf-8"))
     assert meta["judge"]["calibration_status"] == "calibrated"
     assert meta["judge"]["agreement_rate"] == pytest.approx(1.0)
+    assert meta["grader"]["calibration_status"] == "calibrated"
+    assert meta["grader"]["agreement_rate"] == pytest.approx(1.0)
 
 
 def test_calibrate_run_id_mode_low_agreement_warns(calibrate_env):
@@ -186,6 +199,7 @@ def test_calibrate_run_id_mode_low_agreement_warns(calibrate_env):
 
     meta = json.loads((paths.runs_dir / "run-2" / "meta.json").read_text(encoding="utf-8"))
     assert meta["judge"]["calibration_status"] == "low_agreement"
+    assert meta["grader"]["calibration_status"] == "low_agreement"
 
 
 def test_calibrate_skips_case_missing_from_golden(calibrate_env):

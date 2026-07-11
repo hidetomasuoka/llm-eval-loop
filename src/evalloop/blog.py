@@ -309,8 +309,18 @@ def render_tables_md(runs: list[RunData]) -> str:
     return "\n".join(lines)
 
 
+def _effective_grader(meta: dict) -> dict:
+    if meta.get("grader"):
+        return meta["grader"]
+    if meta.get("answer_type") == "text":
+        return {"type": "llm-rubric", **(meta.get("judge") or {})}
+    grader_type = "json-field-match" if meta.get("answer_type") == "json" else "label-match"
+    return {"type": grader_type, "calibration_status": "not_applicable"}
+
+
 def render_conditions_md(runs: list[RunData], config, fig03_written: bool) -> str:
     primary = runs[-1]
+    grader = _effective_grader(primary.meta)
     if "prompt_sha256" in primary.meta:
         recorded_prompt_sha = primary.meta.get("prompt_sha256")
         prompt_sha8 = recorded_prompt_sha[:8] if recorded_prompt_sha else "unknown"
@@ -324,6 +334,14 @@ def render_conditions_md(runs: list[RunData], config, fig03_written: bool) -> st
         prompt_sha8 = hashlib.sha256(prompt_path.read_bytes()).hexdigest()[:8] if prompt_path.exists() else "unknown"
     promptfoo_config_sha = primary.meta.get("promptfoo_config_sha256")
     promptfoo_config_sha8 = promptfoo_config_sha[:8] if promptfoo_config_sha else "unknown"
+    if grader["type"] == "llm-rubric":
+        grader_line = (
+            f"- grader: `llm-rubric` (provider: `{grader.get('provider')}`, "
+            f"calibration: {grader.get('calibration_status', 'uncalibrated')}, "
+            f"agreement: {report_mod.fmt(grader.get('agreement_rate'), '.1%')})"
+        )
+    else:
+        grader_line = f"- grader: `{grader['type']}` (calibration: {grader['calibration_status']})"
     total_cost = sum(s.total_cost_usd for s in primary.stats)
     jpy = config.blog.jpy_per_usd
 
@@ -342,9 +360,7 @@ def render_conditions_md(runs: list[RunData], config, fig03_written: bool) -> st
         f"- temperature: {config.run.temperature}",
         f"- prompt sha256 (first 8): `{prompt_sha8}`",
         f"- promptfoo config sha256 (first 8): `{promptfoo_config_sha8}`",
-        f"- judge: `{primary.meta.get('judge', {}).get('provider')}`"
-        f" (calibration: {primary.meta.get('judge', {}).get('calibration_status', 'uncalibrated')},"
-        f" agreement: {report_mod.fmt(primary.meta.get('judge', {}).get('agreement_rate'), '.1%')})",
+        grader_line,
         f"- total cost: ${total_cost:.4f}" + (f" (~{'{:,.0f}'.format(total_cost * jpy)} JPY)" if jpy else ""),
         f"- promptfoo version: `{primary.meta.get('promptfoo_version')}`",
         f"- dspy version: `{__import__('dspy').__version__}`",
@@ -358,7 +374,7 @@ def render_conditions_md(runs: list[RunData], config, fig03_written: bool) -> st
     # copy-pasted command aborts unless --allow-same-judge is included.
     # Use primary.meta (the run snapshot) so that the flag matches the actual
     # config that was used for the run, not the config passed to blog().
-    _meta_judge_provider = primary.meta.get("judge", {}).get("provider", "")
+    _meta_judge_provider = grader.get("provider", "")
     _meta_models = primary.meta.get("models", [])
     same_judge = (
         primary.meta.get("answer_type") == "text"
@@ -376,6 +392,7 @@ def render_conditions_md(runs: list[RunData], config, fig03_written: bool) -> st
 
 def render_article_draft(runs: list[RunData], config, fig03_written: bool) -> str:
     primary = runs[-1]
+    grader = _effective_grader(primary.meta)
     best = max((s for s in primary.stats if s.pass_rate is not None), key=lambda s: s.pass_rate, default=None)
     cheapest_passing = min(
         (s for s in primary.stats if s.pass_rate and s.pass_rate >= config.judge.threshold),
@@ -395,7 +412,7 @@ def render_article_draft(runs: list[RunData], config, fig03_written: bool) -> st
         "## 手法",
         "",
         "TODO: 構成図（前処理→promptfoo実行→分析→GEPA→再評価→ブログ化）をここに挿入する。",
-        f"評価はpromptfooで実行し、判定は{'決定的アサート' if config.task.answer_type == 'label' else 'LLMジャッジ'}を使用した。",
+        f"評価はpromptfooで実行し、判定は{'LLMジャッジ' if grader['type'] == 'llm-rubric' else '決定的アサート'}を使用した。",
         "",
         "## 結果",
         "",
@@ -427,8 +444,15 @@ def render_article_draft(runs: list[RunData], config, fig03_written: bool) -> st
         "## 限界と注意",
         "",
         "TODO: サンプルサイズ・タスクの一般化可能性・ジャッジ校正状況などの限界を記述する。",
-        f"（このデータセットは {config.task.name} 用の自作データであり、"
-        f"ジャッジは {'未校正/低一致率' if primary.meta.get('judge', {}).get('calibration_status') != 'calibrated' else '校正済み'} である点に注意）",
+        (
+            f"（このデータセットは {config.task.name} 用の自作データであり、"
+            + (
+                f"ジャッジは {'未校正/低一致率' if grader.get('calibration_status') != 'calibrated' else '校正済み'}"
+                if grader["type"] == "llm-rubric"
+                else f"判定は {grader['type']} による決定的採点（校正対象外）"
+            )
+            + "である点に注意）"
+        ),
         "",
         "## 再現手順",
         "",

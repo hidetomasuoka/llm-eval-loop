@@ -279,6 +279,16 @@ def run(
     }
     evaluated_models = [m for m in config.models if m.alias in built_aliases] or list(config.models)
 
+    grader_type = {
+        "text": "llm-rubric",
+        "label": "label-match",
+        "json": "json-field-match",
+    }[config.task.answer_type]
+    calibration_status = "uncalibrated" if grader_type == "llm-rubric" else "not_applicable"
+    grader = {"type": grader_type, "calibration_status": calibration_status}
+    if grader_type == "llm-rubric":
+        grader.update({"provider": config.judge.provider, "agreement_rate": None})
+
     meta = {
         "run_id": run_id,
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -299,9 +309,10 @@ def run(
         "no_cache": no_cache,
         "models": [{"alias": m.alias, "provider": m.provider, "tier": m.tier} for m in evaluated_models],
         "actual_cost_usd": actual_cost,
+        "grader": grader,
         "judge": {
             "provider": config.judge.provider,
-            "calibration_status": "uncalibrated",  # updated in place by `evalloop calibrate`
+            "calibration_status": calibration_status,  # legacy compatibility; updated by calibrate
             "agreement_rate": None,
         },
         "promptfoo_version": get_promptfoo_version(),

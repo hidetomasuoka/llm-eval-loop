@@ -103,6 +103,7 @@ def _mk_config(answer_type, judge_provider, model_provider):
             answer_type=answer_type,
             prompt_file="tasks/sample-inquiry/prompts/task.txt",
             labels=["契約照会", "解約"] if answer_type == "label" else [],
+            json_schema_file="tasks/t1/schema.json" if answer_type == "json" else None,
         ),
         models=[ModelConfig(provider=model_provider, alias="m1", tier="small")],
         run=RunConfig(),
@@ -189,6 +190,40 @@ def test_conditions_preserves_explicit_unknown_prompt_identity():
     md = blog_mod.render_conditions_md([run], config, fig03_written=False)
 
     assert "prompt sha256 (first 8): `unknown`" in md
+
+
+@pytest.mark.parametrize(
+    ("answer_type", "grader_type"),
+    [("label", "label-match"), ("json", "json-field-match")],
+)
+def test_conditions_and_article_describe_deterministic_grader(answer_type, grader_type):
+    config = _mk_config(answer_type, judge_provider="p:judge", model_provider="p:model")
+    run = _mk_run_data(answer_type=answer_type, judge_provider="p:judge", model_providers=["p:model"])
+    run.meta["grader"] = {"type": grader_type, "calibration_status": "not_applicable"}
+
+    conditions = blog_mod.render_conditions_md([run], config, fig03_written=False)
+    article = blog_mod.render_article_draft([run], config, fig03_written=False)
+
+    assert f"grader: `{grader_type}` (calibration: not_applicable)" in conditions
+    assert "未校正/低一致率" not in article
+    assert "決定的採点（校正対象外）" in article
+
+
+def test_conditions_and_article_describe_llm_grader():
+    config = _mk_config("text", judge_provider="p:judge", model_provider="p:model")
+    run = _mk_run_data(answer_type="text", judge_provider="p:judge", model_providers=["p:model"])
+    run.meta["grader"] = {
+        "type": "llm-rubric",
+        "provider": "p:judge",
+        "calibration_status": "uncalibrated",
+        "agreement_rate": None,
+    }
+
+    conditions = blog_mod.render_conditions_md([run], config, fig03_written=False)
+    article = blog_mod.render_article_draft([run], config, fig03_written=False)
+
+    assert "grader: `llm-rubric` (provider: `p:judge`, calibration: uncalibrated" in conditions
+    assert "未校正/低一致率" in article
 
 
 def test_conditions_legacy_prompt_hash_is_resolved_from_repo_root(tmp_path, monkeypatch):

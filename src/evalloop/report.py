@@ -238,12 +238,17 @@ def report(run_id: str, paths: TaskPaths) -> Path:
     stats = compute_alias_stats(parsed.results)
 
     warnings_lines: list[str] = []
+    grader_meta = meta.get("grader") or {}
     judge_meta = meta.get("judge") or {}
-    uses_judge = meta.get("answer_type") == "text"
-    if uses_judge and judge_meta.get("calibration_status") != "calibrated":
+    uses_judge = grader_meta.get("type") == "llm-rubric" or (
+        not grader_meta and meta.get("answer_type") == "text"
+    )
+    calibration_status = grader_meta.get("calibration_status", judge_meta.get("calibration_status"))
+    judge_provider = grader_meta.get("provider", judge_meta.get("provider"))
+    if uses_judge and calibration_status != "calibrated":
         warnings_lines.append(
             "uncalibrated/low-agreement judge: run `evalloop calibrate` before trusting these pass rates "
-            f"(judge={judge_meta.get('provider')})"
+            f"(judge={judge_provider})"
         )
     warnings_lines.extend(f"promptfoo output.json parser warning: {w}" for w in parsed.warnings)
 

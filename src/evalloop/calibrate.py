@@ -282,8 +282,13 @@ def calibrate(config: Config, paths: TaskPaths, run_id: str | None = None) -> Ca
         if meta_path.exists():
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
             meta.setdefault("judge", {})
-            meta["judge"]["calibration_status"] = "calibrated" if result.status == "calibrated" else result.status
+            calibration_status = "calibrated" if result.status == "calibrated" else result.status
+            meta["judge"]["calibration_status"] = calibration_status
             meta["judge"]["agreement_rate"] = result.agreement_rate
+            if meta.get("answer_type") == "text" or meta.get("grader", {}).get("type") == "llm-rubric":
+                meta.setdefault("grader", {"type": "llm-rubric", "provider": meta["judge"].get("provider")})
+                meta["grader"]["calibration_status"] = calibration_status
+                meta["grader"]["agreement_rate"] = result.agreement_rate
             meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
             print(f"[calibrate] updated {meta_path} judge.calibration_status={meta['judge']['calibration_status']}")
 
