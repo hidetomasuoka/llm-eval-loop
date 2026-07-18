@@ -65,9 +65,14 @@ def test_compare_three_runs_writes_matrix_with_headers_and_disclaimer(isolated_r
     assert "pass_rate R1" in content
     assert "cost R2" in content
     assert "p50_ms R3" in content
+    assert "search_cost R1" in content
+    assert "duration_s R2" in content
     assert "qwen7b" in content
     assert "条件依存" in content
     assert "本タスク・本設定に限る" in content
+    # base run has no optimize_log → `-`; variant without log → `n/a`
+    assert "| qwen7b |" in content
+    assert "| - | - |" in content
 
 
 def test_compare_four_runs_uses_hashed_filename(isolated_root):
@@ -115,3 +120,120 @@ def test_compare_method_from_optimized_index(isolated_root):
 
     content = optimize_mod.compare(["a", "b", "c"], paths).read_text(encoding="utf-8")
     assert "method=`miprov2`" in content
+
+
+def test_compare_matrix_shows_search_cost_and_duration_from_optimize_log(isolated_root):
+    paths = TaskPaths(root=isolated_root, task="t1")
+    _write_output(paths.runs_dir, "base", [_row("case-0001", "m", True)], variant=None)
+    _write_output(
+        paths.runs_dir,
+        "opt-a",
+        [_row("case-0001", "m", True)],
+        variant="m_gepa_20260719-010000_abcd",
+    )
+    _write_output(
+        paths.runs_dir,
+        "opt-b",
+        [_row("case-0001", "m", False)],
+        variant="m_gepa_20260719-020000_efgh",
+    )
+
+    log_rel = "m/gepa-20260719-010000-abcd/optimize_log.json"
+    log_path = paths.optimized_dir / log_rel
+    log_path.parent.mkdir(parents=True)
+    log_path.write_text(
+        json.dumps({"search_cost_usd": 0.0123, "duration_seconds": 42.5}),
+        encoding="utf-8",
+    )
+    paths.optimized_index.write_text(
+        json.dumps(
+            {
+                "variant_name": "m_gepa_20260719-010000_abcd",
+                "method": "gepa",
+                "run_id": "opt-a",
+                "optimize_log": log_rel,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    content = optimize_mod.compare(["base", "opt-a", "opt-b"], paths).read_text(encoding="utf-8")
+    assert "search_cost R1" in content and "duration_s R1" in content
+    # R1 base → `-`; R2 logged → values; R3 missing log → `n/a`
+    assert "| - | - |" in content
+    assert "$0.0123" in content
+    assert "42.5" in content
+    assert "n/a" in content
+    assert "optimize_log.json" in content
+
+
+def test_compare_matrix_resolves_optimize_log_via_variant_on_reeval(isolated_root):
+    """Bugbot: re-eval keeps variant name but gets a new run_id."""
+    paths = TaskPaths(root=isolated_root, task="t1")
+    variant = "m_gepa_20260719-010000_abcd"
+    _write_output(paths.runs_dir, "base", [_row("case-0001", "m", True)], variant=None)
+    _write_output(paths.runs_dir, "orig-opt", [_row("case-0001", "m", True)], variant=variant)
+    # Later re-eval of the same variant with a different run_id
+    _write_output(paths.runs_dir, "reeval-opt", [_row("case-0001", "m", False)], variant=variant)
+
+    log_rel = "m/gepa-20260719-010000-abcd/optimize_log.json"
+    log_path = paths.optimized_dir / log_rel
+    log_path.parent.mkdir(parents=True)
+    log_path.write_text(
+        json.dumps({"search_cost_usd": 0.05, "duration_seconds": 12.0}),
+        encoding="utf-8",
+    )
+    # Index still points at the original optimize run_id
+    paths.optimized_index.write_text(
+        json.dumps(
+            {
+                "variant_name": variant,
+                "method": "gepa",
+                "run_id": "orig-opt",
+                "optimize_log": log_rel,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    content = optimize_mod.compare(["base", "reeval-opt", "orig-opt"], paths).read_text(
+        encoding="utf-8"
+    )
+    assert content.count("$0.0500") >= 2  # both variant runs resolve the log
+    assert "12.0" in content
+
+
+def test_compare_matrix_missing_optimize_log_file_is_na(isolated_root):
+    paths = TaskPaths(root=isolated_root, task="t1")
+    _write_output(paths.runs_dir, "a", [_row("case-0001", "m", True)], variant=None)
+    _write_output(
+        paths.runs_dir,
+        "b",
+        [_row("case-0001", "m", True)],
+        variant="m_gepa_x",
+    )
+    _write_output(
+        paths.runs_dir,
+        "c",
+        [_row("case-0001", "m", True)],
+        variant="m_gepa_y",
+    )
+    paths.optimized_dir.mkdir(parents=True)
+    paths.optimized_index.write_text(
+        json.dumps(
+            {
+                "variant_name": "m_gepa_x",
+                "method": "gepa",
+                "run_id": "b",
+                "optimize_log": "missing/optimize_log.json",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    content = optimize_mod.compare(["a", "b", "c"], paths).read_text(encoding="utf-8")
+    # table still renders; missing log → n/a for explore columns on R2
+    assert "search_cost R2" in content
+    assert "n/a" in content

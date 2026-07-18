@@ -122,7 +122,7 @@ Then run everything with `--task <name>`. Model definitions (provider IDs, price
 | `evalloop pivot RUN_ID` | Failure-category × model cross-tab |
 | `evalloop diagnose [--answers 1,2,3]` | Interactive symptom → granularity → method checklist (APO readiness and recommended `optimize.method`; no LLM) |
 | `evalloop optimize` | Prompt optimization with dspy (GEPA / MIPROv2 / COPRO, chosen via `optimize.method` in task.yaml), then automatic run/report/compare (method selection guide: [docs/APO_GUIDE.md](docs/APO_GUIDE.md)) |
-| `evalloop compare --runs A,B[,C...]` | Compare 2 runs (before/after deltas + cost%/tokens/prompt-length tradeoff note) or 3+ runs (model×run matrix) |
+| `evalloop compare --runs A,B[,C...]` | Compare 2 runs (before/after deltas + cost%/tokens/prompt-length tradeoff note) or 3+ runs (model×run matrix; matrix also shows optimize `search_cost` / `duration_s` from optimize_log) |
 | `evalloop blog --runs A[,B] [--slug NAME]` | Publish-guarded export of the blog bundle |
 
 ## Tests / CI
