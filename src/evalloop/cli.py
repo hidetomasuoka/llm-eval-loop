@@ -435,19 +435,19 @@ def optimize(
 
 @app.command()
 def compare(
-    runs: str = typer.Option(..., help="Two run_ids, comma-separated: A,B"),
+    runs: str = typer.Option(..., help="Two or more run_ids, comma-separated: A,B or A,B,C,..."),
     task: str = _TASK_OPTION,
 ) -> None:
-    """before/after comparison of two runs -> results/<task>/reports/compare_A_B.md."""
+    """Compare 2+ runs -> results/<task>/reports/compare_*.md (2-run delta or multi-run matrix)."""
     from evalloop import optimize as optimize_mod
 
     _cfg, paths = _load_task_or_exit(task)
-    run_ids = [r.strip() for r in runs.split(",")]
-    if len(run_ids) != 2:
-        console.print("[bold red]compare failed:[/bold red] --runs must be exactly 'A,B'")
+    run_ids = [r.strip() for r in runs.split(",") if r.strip()]
+    if len(run_ids) < 2:
+        console.print("[bold red]compare failed:[/bold red] --runs must be at least 'A,B'")
         raise typer.Exit(1)
     try:
-        optimize_mod.compare(run_ids[0], run_ids[1], paths)
+        optimize_mod.compare(run_ids, paths)
     except optimize_mod.OptimizeError as e:
         console.print(f"[bold red]compare failed:[/bold red] {e}")
         raise typer.Exit(1) from e

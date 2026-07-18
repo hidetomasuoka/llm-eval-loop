@@ -726,7 +726,7 @@ def optimize(
 
     compare_path = None
     if base_run_id:
-        compare_path = compare(base_run_id, outcome.run_id, paths)
+        compare_path = compare([base_run_id, outcome.run_id], paths)
     else:
         print(f"[optimize] no prior base run found in {paths.index}; skipping compare")
 
@@ -781,16 +781,68 @@ def _fmt_usd_signed(v):
     return f"{'+' if v >= 0 else ''}${v:.4f}" if v is not None else "n/a"
 
 
-def compare(run_a: str, run_b: str, paths: TaskPaths) -> Path:
-    output_a = paths.runs_dir / run_a / "output.json"
-    output_b = paths.runs_dir / run_b / "output.json"
-    if not output_a.exists():
-        raise OptimizeError(f"run {run_a!r} not found ({output_a})")
-    if not output_b.exists():
-        raise OptimizeError(f"run {run_b!r} not found ({output_b})")
+# Conditionality disclaimer for multi-run method matrices (APO-13 / issue #72).
+_COMPARE_MULTI_DISCLAIMER = (
+    "手法の優劣はデータセット・meta-LLM・タスク形式に条件依存する。"
+    "この結果は本タスク・本設定に限る"
+)
 
-    stats_a = {s.alias: s for s in report_mod.compute_alias_stats(parse_promptfoo_output(output_a).results)}
-    stats_b = {s.alias: s for s in report_mod.compute_alias_stats(parse_promptfoo_output(output_b).results)}
+
+def _load_run_meta(run_id: str, paths: TaskPaths) -> dict:
+    meta_path = paths.runs_dir / run_id / "meta.json"
+    if not meta_path.exists():
+        return {}
+    try:
+        raw = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def _method_for_variant(variant: str | None, paths: TaskPaths) -> str | None:
+    """Resolve optimizer method from optimized/index.jsonl or the variant slug."""
+    if not variant:
+        return None
+    index_path = paths.optimized_index
+    if index_path.exists():
+        try:
+            for line in index_path.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                entry = json.loads(line)
+                if entry.get("variant_name") == variant and entry.get("method"):
+                    return str(entry["method"])
+        except (OSError, json.JSONDecodeError, TypeError):
+            pass
+    # variant naming: {alias}_{method}_{timestamp}_{slug}
+    parts = variant.split("_")
+    if len(parts) >= 2 and parts[1] in {"gepa", "miprov2", "copro"}:
+        return parts[1]
+    return None
+
+
+def _compare_report_filename(run_ids: list[str]) -> str:
+    """Keep readable names for <=3 runs; hash-shorten at 4+ (APO-13)."""
+    if len(run_ids) <= 3:
+        return "compare_" + "_".join(run_ids) + ".md"
+    digest = hashlib.sha1("|".join(run_ids).encode("utf-8")).hexdigest()[:10]
+    return f"compare_{len(run_ids)}runs_{digest}.md"
+
+
+def _compare_pair(run_a: str, run_b: str, paths: TaskPaths) -> list[str]:
+    """Legacy before/after delta table (byte-stable for the 2-run path)."""
+    stats_a = {
+        s.alias: s
+        for s in report_mod.compute_alias_stats(
+            parse_promptfoo_output(paths.runs_dir / run_a / "output.json").results
+        )
+    }
+    stats_b = {
+        s.alias: s
+        for s in report_mod.compute_alias_stats(
+            parse_promptfoo_output(paths.runs_dir / run_b / "output.json").results
+        )
+    }
     aliases = sorted(set(stats_a) | set(stats_b))
 
     lines = [
@@ -824,9 +876,90 @@ def compare(run_a: str, run_b: str, paths: TaskPaths) -> Path:
         "(a conservative significance check; overlapping intervals mean the delta may be noise)."
     )
     lines.append("")
+    return lines
+
+
+def _compare_matrix(run_ids: list[str], paths: TaskPaths) -> list[str]:
+    """Model × run matrix for 3+ runs (accuracy / cost / latency)."""
+    per_run_stats: list[dict[str, report_mod.AliasStats]] = []
+    headers: list[str] = []
+    for run_id in run_ids:
+        meta = _load_run_meta(run_id, paths)
+        variant = meta.get("variant")
+        method = _method_for_variant(variant if isinstance(variant, str) else None, paths)
+        variant_label = variant or "(base)"
+        method_label = method or "n/a"
+        headers.append(f"`{run_id}` (variant=`{variant_label}`, method=`{method_label}`)")
+        per_run_stats.append(
+            {
+                s.alias: s
+                for s in report_mod.compute_alias_stats(
+                    parse_promptfoo_output(paths.runs_dir / run_id / "output.json").results
+                )
+            }
+        )
+
+    aliases = sorted({alias for stats in per_run_stats for alias in stats})
+    # Compact column labels R1..Rn; full run identity lives in the Runs list.
+    col_labels = [f"R{i + 1}" for i in range(len(run_ids))]
+
+    lines = [
+        "# Compare: " + " vs ".join(run_ids),
+        "",
+        "## Runs",
+        "",
+    ]
+    for label, header in zip(col_labels, headers, strict=True):
+        lines.append(f"- {label}: {header}")
+    lines.append("")
+
+    header_cells = ["alias"]
+    align_cells = ["---"]
+    for label in col_labels:
+        header_cells.extend([f"pass_rate {label}", f"cost {label}", f"p50_ms {label}"])
+        align_cells.extend(["---:", "---:", "---:"])
+    lines.append("| " + " | ".join(header_cells) + " |")
+    lines.append("|" + "|".join(align_cells) + "|")
+
+    for alias in aliases:
+        cells = [alias]
+        for stats in per_run_stats:
+            s = stats.get(alias)
+            cells.append(_fmt_pct(s.pass_rate if s else None))
+            cells.append(_fmt_usd(s.total_cost_usd if s else None))
+            cells.append(report_mod.fmt(s.p50_latency_ms if s else None, ".0f"))
+        lines.append("| " + " | ".join(cells) + " |")
+    lines.append("")
+    lines.append(f"> {_COMPARE_MULTI_DISCLAIMER}")
+    lines.append("")
+    return lines
+
+
+def compare(run_ids: list[str], paths: TaskPaths) -> Path:
+    """Compare 2+ runs into ``results/<task>/reports/compare_*.md``.
+
+    Two runs keep the legacy before/after delta table. Three or more emit a
+    model×run matrix with variant/method headers (APO-13 / issue #72).
+    """
+    cleaned = [r.strip() for r in run_ids if r and r.strip()]
+    if len(cleaned) < 2:
+        raise OptimizeError("compare requires at least 2 run_ids")
+    if len(cleaned) != len(set(cleaned)):
+        raise OptimizeError("compare run_ids must be unique")
+
+    for run_id in cleaned:
+        output = paths.runs_dir / run_id / "output.json"
+        if not output.exists():
+            raise OptimizeError(f"run {run_id!r} not found ({output})")
+
+    lines = (
+        _compare_pair(cleaned[0], cleaned[1], paths)
+        if len(cleaned) == 2
+        else _compare_matrix(cleaned, paths)
+    )
 
     paths.reports_dir.mkdir(parents=True, exist_ok=True)
-    path = paths.reports_dir / f"compare_{run_a}_{run_b}.md"
+    path = paths.reports_dir / _compare_report_filename(cleaned)
     path.write_text("\n".join(lines), encoding="utf-8")
     print(f"[compare] wrote {path}")
     return path

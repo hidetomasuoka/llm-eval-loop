@@ -339,18 +339,21 @@ def test_compare_computes_deltas(isolated_root):
     _write_output(paths.runs_dir, "before", [_row("case-0001", "qwen7b", False, cost=0.0), _row("case-0002", "qwen7b", False, cost=0.0)])
     _write_output(paths.runs_dir, "after", [_row("case-0001", "qwen7b", True, cost=0.0), _row("case-0002", "qwen7b", True, cost=0.0)])
 
-    path = optimize_mod.compare("before", "after", paths)
+    path = optimize_mod.compare(["before", "after"], paths)
     content = path.read_text(encoding="utf-8")
 
     assert path.parent == paths.reports_dir
+    assert path.name == "compare_before_after.md"
     assert "qwen7b" in content
     assert "+100.0%" in content
+    # 2-run path must stay the legacy delta form (no multi-run disclaimer).
+    assert "条件依存" not in content
 
 
 def test_compare_missing_run_raises(isolated_root):
     paths = TaskPaths(root=isolated_root, task="t1")
     with pytest.raises(optimize_mod.OptimizeError):
-        optimize_mod.compare("nope-a", "nope-b", paths)
+        optimize_mod.compare(["nope-a", "nope-b"], paths)
 
 
 # ---------------------------------------------------------------------------
