@@ -221,3 +221,65 @@ def test_optimize_embeds_demos_into_training_template(isolated_root, monkeypatch
     assert "embedded 1 demos" in out
     assert DEMOS_PLACEHOLDER not in seen["instructions"]
     assert "Input: demo in\nOutput: 契約照会" in seen["instructions"]
+
+
+def test_optimize_demo_leak_check_uses_build_yaml_holdout(isolated_root, monkeypatch):
+    """Bugbot #114: leak check must cover tests_test.yaml, not only golden test rows."""
+    import types
+
+    from evalloop import optimize as optimize_mod
+    from evalloop.optimizers.base import OptimizeError
+
+    rows = default_golden_rows(labels=DEFAULT_LABELS, n_train=12, n_test=4)
+    cfg, paths = scaffold_task(
+        isolated_root,
+        answer_type="label",
+        labels=DEFAULT_LABELS,
+        golden_rows=rows,
+        prompt="{{demos}}\n{{input}}\n",
+    )
+    paths.demos.write_text(
+        json.dumps(
+            {"id": "stale-holdout", "input": "yaml-only holdout input", "output": "契約照会"},
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    build_mod.build(cfg, paths, yes=True)
+
+    # Simulate golden drift without rebuild: no test rows left in golden, but
+    # promptfoo still evaluates the previous tests_test.yaml holdout.
+    train_only = [r for r in rows if r["split"] == "train"]
+    paths.golden.write_text(
+        "\n".join(json.dumps(r, ensure_ascii=False) for r in train_only) + "\n",
+        encoding="utf-8",
+    )
+    # Keep a stale holdout entry that is no longer in golden.
+    paths.tests_test.write_text(
+        yaml.safe_dump(
+            [
+                {
+                    "description": "stale-holdout",
+                    "vars": {
+                        "case_id": "stale-holdout",
+                        "input": "yaml-only holdout input",
+                        "expected": "契約照会",
+                        "category": "基本",
+                    },
+                }
+            ],
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        optimize_mod,
+        "run_gepa",
+        lambda *a, **k: types.SimpleNamespace(signature=types.SimpleNamespace(instructions="x")),
+    )
+
+    with pytest.raises(OptimizeError, match="leaks test-split"):
+        optimize_mod.optimize(cfg, paths, yes=True, force=True)

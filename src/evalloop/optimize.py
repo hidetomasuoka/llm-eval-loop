@@ -405,11 +405,31 @@ class OptimizeOutcome:
     compare_path: Path | None
 
 
-def _load_test_ids(paths: TaskPaths) -> set[str]:
+def _load_holdout_from_build(paths: TaskPaths) -> tuple[set[str], set[str]]:
+    """Return (case_ids, inputs) from the last build's tests_test.yaml.
+
+    promptfoo eval uses this YAML, so demo leak checks must cover it even when
+    golden.jsonl was edited without a rebuild.
+    """
     if not paths.tests_test.exists():
         raise OptimizeError(f"{paths.tests_test} not found; run `evalloop build --task {paths.task}` first")
     entries = yaml.safe_load(paths.tests_test.read_text(encoding="utf-8")) or []
-    return {e["vars"]["case_id"] for e in entries}
+    ids: set[str] = set()
+    inputs: set[str] = set()
+    for entry in entries:
+        vars_ = entry.get("vars") or {}
+        case_id = vars_.get("case_id")
+        if case_id is not None:
+            ids.add(str(case_id))
+        inp = vars_.get("input")
+        if inp is not None:
+            inputs.add(str(inp))
+    return ids, inputs
+
+
+def _load_test_ids(paths: TaskPaths) -> set[str]:
+    ids, _inputs = _load_holdout_from_build(paths)
+    return ids
 
 
 def _find_latest_base_run(task_name: str, paths: TaskPaths) -> str | None:
@@ -440,7 +460,7 @@ def optimize(
     cfg = config
     score_fn = _score_fn_for(cfg)  # resolve the training metric first: fail fast on unsupported types
 
-    test_ids = _load_test_ids(paths)
+    test_ids, yaml_test_inputs = _load_holdout_from_build(paths)
     cases = load_golden_jsonl(paths.golden)
     train_cases = [c for c in cases if c.split == "train"]
     if not train_cases:
@@ -466,7 +486,11 @@ def optimize(
     original_template = (REPO_ROOT / cfg.task.prompt_file).read_text(encoding="utf-8")
     # Expand {{demos}} the same way build does, so dspy trains on the prompt
     # promptfoo will evaluate (APO-16 / issue #75 Bugbot finding).
-    test_cases = [c for c in cases if c.split == "test"]
+    # Leak check unions golden test split with build YAML holdout: promptfoo
+    # still evaluates the last build's tests_test.yaml even if golden drifted.
+    golden_test_cases = [c for c in cases if c.split == "test"]
+    demos_test_ids = test_ids | {c.id for c in golden_test_cases}
+    demos_test_inputs = yaml_test_inputs | {c.input for c in golden_test_cases}
     if paths.demos.exists() and DEMOS_PLACEHOLDER not in original_template:
         print(
             f"[optimize] WARN: {paths.demos} exists but prompt has no {DEMOS_PLACEHOLDER}; "
@@ -477,8 +501,8 @@ def optimize(
             original_template, n_demos = expand_demos_in_template(
                 original_template,
                 paths.demos,
-                test_ids={c.id for c in test_cases},
-                test_inputs={c.input for c in test_cases},
+                test_ids=demos_test_ids,
+                test_inputs=demos_test_inputs,
             )
         except DemoError as e:
             raise OptimizeError(str(e)) from e
