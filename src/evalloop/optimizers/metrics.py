@@ -312,3 +312,24 @@ def _score_fn_for(cfg):
     # unreachable while TaskConfig validates answer_type, but fail loudly if
     # a new type is added there without a metric here
     raise OptimizeError(f"no GEPA training metric for answer_type {cfg.task.answer_type!r}")
+
+
+def compute_train_score(trainset, metric, optimized_program) -> float | None:
+    """Average proxy metric on the optimizer train split after compile.
+
+    Unit-test stubs may set ``train_score`` on the compiled program object
+    instead of making it callable; production dspy programs are evaluated
+    in-process here.
+    """
+    override = getattr(optimized_program, "train_score", None)
+    if override is not None:
+        return float(override)
+    if not trainset or not callable(optimized_program):
+        return None
+    total = 0.0
+    for gold in trainset:
+        pred = optimized_program(input=gold.input)
+        result = metric(gold, pred)
+        score = getattr(result, "score", result)
+        total += float(score)
+    return total / len(trainset)

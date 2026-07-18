@@ -404,6 +404,90 @@ class OptimizeOutcome:
     compare_path: Path | None
 
 
+@dataclass
+class GeneralizationRecord:
+    train_score: float | None
+    holdout_score: float | None
+    base_holdout_score: float | None
+    holdout_delta: float | None
+    generalization: str | None  # "pass" | "fail" when baseline exists; else None
+
+
+def _alias_pass_rate(run_id: str, alias: str, paths: TaskPaths) -> float | None:
+    output_path = paths.runs_dir / run_id / "output.json"
+    if not output_path.exists():
+        return None
+    stats = {
+        s.alias: s
+        for s in report_mod.compute_alias_stats(parse_promptfoo_output(output_path).results)
+    }
+    stat = stats.get(alias)
+    return stat.pass_rate if stat else None
+
+
+def evaluate_generalization_gate(
+    *,
+    train_score: float | None,
+    optimized_run_id: str,
+    base_run_id: str | None,
+    target_alias: str,
+    paths: TaskPaths,
+) -> GeneralizationRecord:
+    """Compare train proxy score vs holdout pass rate; gate on baseline holdout delta."""
+    holdout_score = _alias_pass_rate(optimized_run_id, target_alias, paths)
+    base_holdout_score = None
+    holdout_delta = None
+    generalization = None
+    if base_run_id:
+        base_holdout_score = _alias_pass_rate(base_run_id, target_alias, paths)
+        if holdout_score is not None and base_holdout_score is not None:
+            holdout_delta = holdout_score - base_holdout_score
+            generalization = "pass" if holdout_delta > 0 else "fail"
+    return GeneralizationRecord(
+        train_score=train_score,
+        holdout_score=holdout_score,
+        base_holdout_score=base_holdout_score,
+        holdout_delta=holdout_delta,
+        generalization=generalization,
+    )
+
+
+def _generalization_record_to_log(record: GeneralizationRecord) -> dict:
+    payload = {
+        "train_score": record.train_score,
+        "holdout_score": record.holdout_score,
+        "base_holdout_score": record.base_holdout_score,
+        "holdout_delta": record.holdout_delta,
+        "generalization": record.generalization,
+    }
+    return {k: v for k, v in payload.items() if v is not None}
+
+
+def _patch_optimize_log(log_path: Path, record: GeneralizationRecord) -> None:
+    data = json.loads(log_path.read_text(encoding="utf-8"))
+    data.update(_generalization_record_to_log(record))
+    log_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _print_generalization_gate(console, record: GeneralizationRecord) -> None:
+    console.print("[optimize] generalization gate (train proxy vs holdout pass rate):")
+    console.print(
+        f"[optimize]   train_score={_fmt_pct(record.train_score)} "
+        f"holdout_score={_fmt_pct(record.holdout_score)}"
+    )
+    if record.base_holdout_score is not None:
+        console.print(
+            f"[optimize]   baseline holdout={_fmt_pct(record.base_holdout_score)} "
+            f"delta={_fmt_pct_signed(record.holdout_delta)}"
+        )
+    if record.generalization == "pass":
+        console.print("[optimize]   generalization: pass (holdout improved vs baseline)")
+    elif record.generalization == "fail":
+        console.print("[optimize]   [red]不合格: 過学習の疑い[/red] (holdout did not improve vs baseline)")
+    elif record.base_holdout_score is None and record.holdout_score is not None:
+        console.print("[optimize]   generalization: n/a (no baseline run to compare against)")
+
+
 def _load_test_ids(paths: TaskPaths) -> set[str]:
     if not paths.tests_test.exists():
         raise OptimizeError(f"{paths.tests_test} not found; run `evalloop build --task {paths.task}` first")
@@ -630,6 +714,16 @@ def optimize(
     report_mod.report(outcome.run_id, paths)
 
     base_run_id = _find_latest_base_run(cfg.task.name, paths)
+    generalization = evaluate_generalization_gate(
+        train_score=result.extra_log.get("train_score"),
+        optimized_run_id=outcome.run_id,
+        base_run_id=base_run_id,
+        target_alias=cfg.optimize.target_alias,
+        paths=paths,
+    )
+    _print_generalization_gate(console, generalization)
+    _patch_optimize_log(log_path, generalization)
+
     compare_path = None
     if base_run_id:
         compare_path = compare(base_run_id, outcome.run_id, paths)

@@ -28,6 +28,7 @@ from collections.abc import Callable
 import dspy
 
 from evalloop.optimizers.base import OptimizeError, OptimizeResult
+from evalloop.optimizers.metrics import compute_train_score
 from evalloop.schemas import Config
 
 
@@ -145,16 +146,20 @@ class MiproV2Optimizer:
             max_bootstrapped_demos,
             max_labeled_demos,
         )
+        extra_log = {
+            # effective values actually used, for optimize_log.json
+            "val_ratio": val_ratio,
+            "seed": seed,
+            "train_size": len(train_part),
+            "val_size": len(val_part),
+            "max_bootstrapped_demos": max_bootstrapped_demos,
+            "max_labeled_demos": max_labeled_demos,
+        }
+        train_score = compute_train_score(trainset, metric, optimized_program)
+        if train_score is not None:
+            extra_log["train_score"] = train_score
         return OptimizeResult(
             optimized_instructions=optimized_program.signature.instructions,
             method=self.name,
-            extra_log={
-                # effective values actually used, for optimize_log.json
-                "val_ratio": val_ratio,
-                "seed": seed,
-                "train_size": len(train_part),
-                "val_size": len(val_part),
-                "max_bootstrapped_demos": max_bootstrapped_demos,
-                "max_labeled_demos": max_labeled_demos,
-            },
+            extra_log=extra_log,
         )

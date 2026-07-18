@@ -14,6 +14,7 @@ from collections.abc import Callable
 import dspy
 
 from evalloop.optimizers.base import OptimizeResult
+from evalloop.optimizers.metrics import compute_train_score
 from evalloop.schemas import Config
 
 
@@ -54,8 +55,12 @@ class GepaOptimizer:
         from evalloop import optimize as optimize_mod
 
         optimized_program = optimize_mod.run_gepa(student, trainset, metric, reflection_lm, cfg.optimize.auto)
+        extra_log: dict = {}
+        train_score = compute_train_score(trainset, metric, optimized_program)
+        if train_score is not None:
+            extra_log["train_score"] = train_score
         return OptimizeResult(
             optimized_instructions=optimized_program.signature.instructions,
             method=self.name,
-            extra_log={},
+            extra_log=extra_log,
         )
