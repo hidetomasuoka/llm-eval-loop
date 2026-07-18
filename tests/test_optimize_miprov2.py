@@ -12,8 +12,8 @@ import yaml
 from evalloop import build as build_mod
 from evalloop import optimize as optimize_mod
 from evalloop import run as run_mod
-from evalloop.optimizers.base import OptimizeError
 from evalloop.optimizers import miprov2 as miprov2_mod
+from evalloop.optimizers.base import OptimizeError
 from evalloop.optimizers.miprov2 import MiproV2Optimizer, _scalar_metric, split_train_val
 from evalloop.schemas import load_task
 from tests.conftest import scaffold_task
