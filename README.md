@@ -120,6 +120,7 @@ Then run everything with `--task <name>`. Model definitions (provider IDs, price
 | `evalloop failures RUN_ID` | Extract failing cases, append note rows to notes.csv (idempotent) |
 | `evalloop cluster [--notes PATH]` | An LLM drafts a failure taxonomy from notes.csv |
 | `evalloop pivot RUN_ID` | Failure-category × model cross-tab |
+| `evalloop diagnose [--answers 1,2,3]` | Interactive symptom → granularity → method checklist (APO readiness and recommended `optimize.method`; no LLM) |
 | `evalloop optimize` | Prompt optimization with dspy (GEPA / MIPROv2 / COPRO, chosen via `optimize.method` in task.yaml), then automatic run/report/compare (method selection guide: [docs/APO_GUIDE.md](docs/APO_GUIDE.md)) |
 | `evalloop compare --runs A,B` | Before/after comparison of two runs |
 | `evalloop blog --runs A[,B] [--slug NAME]` | Publish-guarded export of the blog bundle |

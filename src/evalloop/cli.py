@@ -147,6 +147,31 @@ def task_list() -> None:
 
 
 @app.command()
+def diagnose(
+    answers: str = typer.Option(
+        None,
+        "--answers",
+        help="Non-interactive mode for tests: comma-separated Q1,Q2,Q3 (1=yes/2=no for Q1/Q3; Q2=1-5)",
+    ),
+) -> None:
+    """Interactive checklist: symptom → APO granularity → recommended optimize.method (docs/APO_GUIDE.md)."""
+    from evalloop import diagnose as diagnose_mod
+
+    parsed: list[int] | None = None
+    if answers is not None:
+        try:
+            parsed = diagnose_mod.parse_answers(answers)
+        except ValueError as e:
+            console.print(f"[bold red]diagnose failed:[/bold red] {e}")
+            raise typer.Exit(1) from e
+    try:
+        diagnose_mod.run_diagnose(answers=parsed)
+    except ValueError as e:
+        console.print(f"[bold red]diagnose failed:[/bold red] {e}")
+        raise typer.Exit(1) from e
+
+
+@app.command()
 def doctor(task: str = _TASK_OPTION) -> None:
     """Check Node/promptfoo/Ollama/API-key connectivity; run one tiny eval per provider."""
     console.print(
