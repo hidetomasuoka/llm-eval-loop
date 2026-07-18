@@ -53,6 +53,12 @@ def isolated_root():
     shutil.rmtree(root, ignore_errors=True)
 
 
+@pytest.fixture(autouse=True)
+def disable_external_token_counting(monkeypatch):
+    """Unit tests never call provider APIs even when the developer has a key."""
+    monkeypatch.setenv("EVALLOOP_TOKEN_COUNT_API", "off")
+
+
 def default_golden_rows(labels=None, n_train=4, n_test=4):
     labels = labels or DEFAULT_LABELS
     rows = []

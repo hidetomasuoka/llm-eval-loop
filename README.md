@@ -28,6 +28,13 @@ For the design rationale, data specifications, and the project's non-negotiable 
 - **Ollama** (only if you use local models, e.g. `ollama pull qwen2.5:7b`)
 - `ANTHROPIC_API_KEY` (required for real runs: evaluation, the LLM judge, and GEPA reflection). `OPENAI_API_KEY` / `GEMINI_API_KEY` are optional depending on which models you configure
 
+Pre-run cost estimates use Anthropic's free official token-counting API when
+`ANTHROPIC_API_KEY` is available and local tiktoken for recognized OpenAI models.
+Missing credentials, unavailable networks, and unsupported providers fall back
+without failing to an explicit mixed Japanese/English heuristic. Set
+`EVALLOOP_TOKEN_COUNT_API=off` for fully offline operation. The method used is
+shown in the `build` and `optimize` estimate output.
+
 ## Setup
 
 ```bash

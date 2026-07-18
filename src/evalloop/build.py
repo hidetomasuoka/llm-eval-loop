@@ -24,17 +24,12 @@ import yaml
 
 from evalloop.paths import REPO_ROOT, TaskPaths
 from evalloop.schemas import Config, GoldenCase, assert_split_disjoint, load_golden_jsonl
+from evalloop.token_counting import average_input_tokens, render_case_prompts
 
 ASSERTS_DIR = Path(__file__).resolve().parent / "asserts"
 LABEL_MATCH_JS = ASSERTS_DIR / "label_match.js"
 JSON_FIELD_MATCH_JS = ASSERTS_DIR / "json_field_match.js"
 
-# Rough chars-per-token heuristic for cost pre-estimation only (mixed
-# Japanese/English business text). TODO: swap for a real tokenizer
-# (e.g. anthropic's token counting API) if estimates prove too far off from
-# the actual costs recorded in meta.json after real runs.
-# Public: optimize.py reuses the same heuristic for its pre-run estimate (APO-10).
-CHARS_PER_TOKEN_ESTIMATE = 2.0
 ESTIMATED_OUTPUT_TOKENS = {"label": 12, "json": 120, "text": 200}
 
 
@@ -51,25 +46,35 @@ def to_promptfoo_relpath(target: Path, start: Path) -> str:
 @dataclass
 class CostEstimate:
     per_model_usd: dict[str, float]
+    per_model_input_tokens: dict[str, int]
+    token_count_methods: dict[str, str]
     total_usd: float
 
 
 def estimate_cost(config: Config, test_cases: list[GoldenCase], prompt_template: str) -> CostEstimate:
-    avg_input_chars = len(prompt_template) + (
-        sum(len(c.input) for c in test_cases) / len(test_cases) if test_cases else 0
-    )
-    est_input_tokens = max(1, int(avg_input_chars / CHARS_PER_TOKEN_ESTIMATE))
+    rendered_prompts = render_case_prompts(prompt_template, [c.input for c in test_cases])
     est_output_tokens = ESTIMATED_OUTPUT_TOKENS.get(config.task.answer_type, 100)
 
     per_model: dict[str, float] = {}
+    per_model_input_tokens: dict[str, int] = {}
+    token_count_methods: dict[str, str] = {}
     for model in config.models:
+        token_count = average_input_tokens(model.provider, rendered_prompts)
+        est_input_tokens = token_count.average_input_tokens
         cost_per_call = (
             est_input_tokens / 1_000_000 * model.price_in_per_mtok
             + est_output_tokens / 1_000_000 * model.price_out_per_mtok
         )
         per_model[model.alias] = cost_per_call * len(test_cases) * config.run.repeat
+        per_model_input_tokens[model.alias] = est_input_tokens
+        token_count_methods[model.alias] = token_count.method
 
-    return CostEstimate(per_model_usd=per_model, total_usd=sum(per_model.values()))
+    return CostEstimate(
+        per_model_usd=per_model,
+        per_model_input_tokens=per_model_input_tokens,
+        token_count_methods=token_count_methods,
+        total_usd=sum(per_model.values()),
+    )
 
 
 def _case_to_test_entry(case: GoldenCase) -> dict:
@@ -234,8 +239,12 @@ def build(
     print(f"[build] wrote {paths.promptfoo_config}")
     print("[build] estimated pre-run cost (repeat=%d):" % config.run.repeat)
     for alias, usd in estimate.per_model_usd.items():
-        print(f"[build]   {alias}: ${usd:.4f}")
-    print(f"[build]   TOTAL: ${estimate.total_usd:.4f}  (rough estimate, not a real tokenizer - see build.py)")
+        print(
+            f"[build]   {alias}: ${usd:.4f} "
+            f"(~{estimate.per_model_input_tokens[alias]} input tokens/call; "
+            f"method={estimate.token_count_methods[alias]})"
+        )
+    print(f"[build]   TOTAL: ${estimate.total_usd:.4f}  (pre-run estimate)")
 
     if estimate.total_usd > config.run.cost_warn_usd and not yes:
         confirm = confirm_fn or (lambda msg: input(f"{msg} [y/N] ").strip().lower() == "y")

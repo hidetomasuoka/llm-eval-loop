@@ -1099,6 +1099,7 @@ dependencies = [
     { name = "matplotlib" },
     { name = "pyyaml" },
     { name = "rich" },
+    { name = "tiktoken" },
     { name = "typer" },
 ]
 
@@ -1116,6 +1117,7 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "rich", specifier = ">=13.7" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8" },
+    { name = "tiktoken", specifier = ">=0.8" },
     { name = "typer", specifier = ">=0.12" },
 ]
 provides-extras = ["dev"]

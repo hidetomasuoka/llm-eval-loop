@@ -31,7 +31,7 @@ import yaml
 
 from evalloop import report as report_mod
 from evalloop import run as run_mod
-from evalloop.build import CHARS_PER_TOKEN_ESTIMATE, ESTIMATED_OUTPUT_TOKENS
+from evalloop.build import ESTIMATED_OUTPUT_TOKENS
 from evalloop.optimizers.base import OptimizeError, PromptOptimizer
 from evalloop.optimizers.copro import (
     CoproOptimizer,
@@ -68,6 +68,7 @@ from evalloop.schemas import (
     load_golden_jsonl,
     parse_promptfoo_output,
 )
+from evalloop.token_counting import average_input_tokens, render_case_prompts
 
 # ---------------------------------------------------------------------------
 # promptfoo provider id -> dspy/litellm model string
@@ -151,6 +152,8 @@ class OptimizeCostEstimate:
     rollout_factor: int  # optimizer rounds (candidates evaluated)
     rollout_count: int  # target-model calls: rollout_factor x train cases
     reflection_call_count: int  # instruction proposals by the reflection model
+    target_input_tokens: int
+    target_token_count_method: str
     target_usd: float
     reflection_usd: float | None  # None -- reflection provider absent from the price registry
     total_usd: float
@@ -168,20 +171,19 @@ def estimate_optimize_cost(
     cfg: Config, train_cases: list[GoldenCase], prompt_template: str
 ) -> OptimizeCostEstimate:
     """Rough optimize cost from the config.yaml price table: target-model
-    rollouts (train size x method factor) plus reflection calls, using
-    build.py's chars-per-token heuristic for the per-call token counts.
+    rollouts (train size x method factor) plus reflection calls. Target-model
+    input counting shares the provider-aware implementation used by build.py;
+    reflection prompts remain a documented order-of-magnitude assumption.
     """
     factor = _rollout_factor(cfg)
     rollout_count = factor * len(train_cases)
     reflection_call_count = factor  # ~one instruction proposal per optimizer round
 
-    avg_input_chars = len(prompt_template) + (
-        sum(len(c.input) for c in train_cases) / len(train_cases) if train_cases else 0
-    )
-    in_tokens = max(1, int(avg_input_chars / CHARS_PER_TOKEN_ESTIMATE))
-    out_tokens = ESTIMATED_OUTPUT_TOKENS.get(cfg.task.answer_type, 100)
-
     target = cfg.model_by_alias(cfg.optimize.target_alias)
+    rendered_prompts = render_case_prompts(prompt_template, [c.input for c in train_cases])
+    token_count = average_input_tokens(target.provider, rendered_prompts)
+    in_tokens = token_count.average_input_tokens
+    out_tokens = ESTIMATED_OUTPUT_TOKENS.get(cfg.task.answer_type, 100)
     target_usd = rollout_count * (
         in_tokens / 1_000_000 * target.price_in_per_mtok + out_tokens / 1_000_000 * target.price_out_per_mtok
     )
@@ -200,6 +202,8 @@ def estimate_optimize_cost(
         rollout_factor=factor,
         rollout_count=rollout_count,
         reflection_call_count=reflection_call_count,
+        target_input_tokens=in_tokens,
+        target_token_count_method=token_count.method,
         target_usd=target_usd,
         reflection_usd=reflection_usd,
         total_usd=target_usd + (reflection_usd or 0.0),
@@ -486,6 +490,10 @@ def optimize(
     print(
         f"[optimize]   target {cfg.optimize.target_alias}: ~{estimate.rollout_count} rollouts "
         f"({estimate.train_case_count} train cases x factor {estimate.rollout_factor}) = ${estimate.target_usd:.4f}"
+    )
+    print(
+        f"[optimize]     ~{estimate.target_input_tokens} input tokens/rollout; "
+        f"method={estimate.target_token_count_method}"
     )
     reflection_cost = (
         f"${estimate.reflection_usd:.4f}"
