@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import random
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -26,6 +27,13 @@ def format_demos(demos: list[DemoCase]) -> str:
         return ""
     blocks = [f"Input: {d.input}\nOutput: {d.output}" for d in demos]
     return "\n\n".join(blocks) + "\n\n"
+
+
+def shuffle_demos(demos: list[DemoCase], seed: int) -> list[DemoCase]:
+    """Return a new list with demos shuffled reproducibly by ``seed`` (APO-19)."""
+    items = list(demos)
+    random.Random(seed).shuffle(items)
+    return items
 
 
 def load_demos_jsonl(path: Path) -> list[DemoCase]:

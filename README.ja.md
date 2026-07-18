@@ -151,7 +151,7 @@ uv run evalloop blog --runs <run_id>                        # ブログ用の図
 | コマンド | 説明 |
 |---|---|
 | `evalloop doctor` | Node/promptfoo/Ollama/APIキーの疎通確認 |
-| `evalloop build [--allow-same-judge] [--yes]` | golden.jsonl→promptfoo設定を生成、実行前コスト概算を表示 |
+| `evalloop build [--allow-same-judge] [--yes] [--shuffle-demos N]` | golden.jsonl→promptfoo設定を生成、実行前コスト概算を表示。`--shuffle-demos N` は few-shot 順序感度用に `<task>_demoshuffle_{0..N-1}` variant を追加生成（`{{demos}}` 必須） |
 | `evalloop run [--variant NAME] [--repeat N] [--limit N] [--no-cache]` | promptfoo evalを実行してresults/runs/{run_id}/に記録 |
 | `evalloop view` | promptfooのローカルビューア（`promptfoo view`のパススルー） |
 | `evalloop report RUN_ID` | モデル×精度×コスト×レイテンシのMarkdownレポート |
@@ -273,6 +273,9 @@ run成果物の生出力（output.json / meta.json）にはローカル絶対パ
   demo 探索が有効になる（既定0=従来どおり instruction のみ）。プロンプトに `{{demos}}` が
   必要で、選ばれた demos は `optimized/<alias>/<variant>/demos.jsonl` に保存され variant へ
   再展開される（train split のみ・test リーク検査あり。詳細は [docs/DESIGN.md](docs/DESIGN.md) §5.6）
+- few-shot の**順序感度**を見るときは `evalloop build --shuffle-demos N` で
+  `<task>_demoshuffle_{seed}` variant を作り、各々を `evalloop run --variant ...` →
+  `report` したあと `evalloop compare --runs A,B,C...` で分散を見る（run の自動ループはしない）
 - 上記「学習メトリクスが代理指標である制約」はGEPA・MIPROv2・COPROすべて、および
   将来追加される他のオプティマイザ（OPRO・APE・EASE等）にも共通する。プロセス内で
   高速に評価を回すには構造化判定（ラベル一致・トークンF1・deep-equal等）が必要で、
