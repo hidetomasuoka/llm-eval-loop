@@ -375,6 +375,9 @@ def test_blog_two_runs_produces_comparison_arrows_without_crashing(blog_env):
     assert (out_dir / "fig02_cost_vs_accuracy.png").exists()
     tables = (out_dir / "tables.md").read_text(encoding="utf-8")
     assert "before" in tables and "after" in tables
+    assert blog_mod.COMPARE_MULTI_DISCLAIMER in tables
+    article = (out_dir / "article_draft.md").read_text(encoding="utf-8")
+    assert blog_mod.COMPARE_MULTI_DISCLAIMER in article
 
 
 def test_blog_includes_fig03_when_taxonomy_defined(blog_env):
@@ -396,11 +399,37 @@ def test_blog_includes_fig03_when_taxonomy_defined(blog_env):
     assert (out_dir / "fig03_failure_heatmap.png").exists()
 
 
-def test_blog_rejects_more_than_two_runs(blog_env):
+def test_blog_three_runs_method_compare_includes_disclaimer_and_matrix(blog_env):
     paths, cfg = blog_env["paths"], blog_env["cfg"]
     _write_golden(paths.golden, ["self-made"])
-    with pytest.raises(blog_mod.BlogGuardError):
-        blog_mod.blog(cfg, paths, run_ids=["a", "b", "c"])
+    _write_run(paths.runs_dir, "run-gepa", ["qwen7b"], variant="qwen7b_gepa_20260101_abcd")
+    _write_run(paths.runs_dir, "run-mipro", ["qwen7b"], variant="qwen7b_miprov2_20260101_efgh")
+    _write_run(paths.runs_dir, "run-base", ["qwen7b"])
+
+    out_dir = blog_mod.blog(
+        cfg, paths, run_ids=["run-gepa", "run-mipro", "run-base"], slug="methods"
+    )
+    assert (out_dir / "fig01_accuracy_by_model.png").exists()
+    assert (out_dir / "fig02_cost_vs_accuracy.png").exists()
+
+    tables = (out_dir / "tables.md").read_text(encoding="utf-8")
+    assert blog_mod.COMPARE_MULTI_DISCLAIMER in tables
+    assert "gepa (run-gepa)" in tables
+    assert "miprov2 (run-mipro)" in tables
+    assert "pass_rate R1" in tables  # compare matrix columns
+
+    article = (out_dir / "article_draft.md").read_text(encoding="utf-8")
+    assert blog_mod.COMPARE_MULTI_DISCLAIMER in article
+    assert "手法比較" in article
+    assert "gepa (run-gepa)" in article
+
+
+def test_blog_rejects_duplicate_runs(blog_env):
+    paths, cfg = blog_env["paths"], blog_env["cfg"]
+    _write_golden(paths.golden, ["self-made"])
+    _write_run(paths.runs_dir, "run-1", ["qwen7b"])
+    with pytest.raises(blog_mod.BlogGuardError, match="unique"):
+        blog_mod.blog(cfg, paths, run_ids=["run-1", "run-1"])
 
 
 def test_blog_rerun_same_slug_regenerates_not_accumulates(blog_env):

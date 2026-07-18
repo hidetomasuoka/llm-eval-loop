@@ -455,7 +455,7 @@ def compare(
 
 @app.command()
 def blog(
-    runs: str = typer.Option(..., help="One or two run_ids, comma-separated: A or A,B"),
+    runs: str = typer.Option(..., help="One or more run_ids, comma-separated: A or A,B or A,B,C"),
     slug: str = typer.Option(None, help="Override blog.slug_prefix from the task config"),
     task: str = _TASK_OPTION,
 ) -> None:
