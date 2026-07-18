@@ -81,6 +81,74 @@ def assert_demos_do_not_leak_test(
             )
 
 
+def _example_field(ex, name: str):
+    if hasattr(ex, "keys"):
+        try:
+            if name in ex.keys():
+                return getattr(ex, name)
+        except Exception:
+            pass
+    return getattr(ex, name, None)
+
+
+def demos_from_dspy_program(
+    program, *, train_input_to_id: dict[str, str]
+) -> list[tuple[DemoCase, str]]:
+    """Extract few-shot demos from a compiled dspy program (APO-17).
+
+    Returns ``(DemoCase, origin)`` where origin is ``labeled`` or ``bootstrapped``.
+    Raises ``DemoError`` if a demo input is not in the train-split map.
+    """
+    predictors = getattr(program, "predictors", None)
+    if not callable(predictors):
+        return []
+    preds = predictors()
+    if not preds:
+        return []
+    raw_demos = getattr(preds[0], "demos", None) or []
+    extracted: list[tuple[DemoCase, str]] = []
+    for ex in raw_demos:
+        inp = _example_field(ex, "input")
+        if inp is None:
+            continue
+        inp_s = str(inp)
+        out = _example_field(ex, "output")
+        origin = "bootstrapped"
+        if out is None:
+            out = _example_field(ex, "expected")
+            origin = "labeled"
+        if out is None:
+            raise DemoError(f"optimized demo for input {inp_s!r} has neither output nor expected")
+        case_id = train_input_to_id.get(inp_s)
+        if case_id is None:
+            raise DemoError(
+                f"optimized demo input is not from the train split (leak or drift): {inp_s!r}"
+            )
+        extracted.append((DemoCase(input=inp_s, output=str(out), id=case_id), origin))
+    return extracted
+
+
+def save_demos_jsonl(
+    path: Path,
+    demos_with_origin: list[tuple[DemoCase, str]],
+    *,
+    provenance: dict,
+) -> None:
+    """Write demos.jsonl with per-row provenance meta (APO-17)."""
+    if not demos_with_origin:
+        raise DemoError("refusing to write empty demos.jsonl")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as f:
+        for demo, origin in demos_with_origin:
+            row = {
+                "id": demo.id,
+                "input": demo.input,
+                "output": demo.output,
+                "meta": {**provenance, "origin": origin},
+            }
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
 def expand_demos_in_template(
     template: str,
     demos_path: Path,

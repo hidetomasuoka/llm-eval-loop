@@ -319,6 +319,47 @@ def test_json_task_gets_priority_guard_warning(isolated_root):
     assert _json_priority_warning(result.warnings)
 
 
+def test_miprov2_demo_search_requires_demos_placeholder(isolated_root):
+    rows = default_golden_rows(labels=DEFAULT_LABELS, n_train=12, n_test=4)
+    cfg, paths = scaffold_task(
+        isolated_root,
+        answer_type="label",
+        labels=DEFAULT_LABELS,
+        golden_rows=rows,
+        prompt="{{input}}\n",  # no {{demos}}
+    )
+    import yaml
+
+    raw = yaml.safe_load(paths.task_config.read_text(encoding="utf-8"))
+    raw["optimize"]["method"] = "miprov2"
+    raw["optimize"]["params"] = {"max_bootstrapped_demos": 2, "max_labeled_demos": 0}
+    paths.task_config.write_text(yaml.safe_dump(raw, allow_unicode=True), encoding="utf-8")
+    cfg, _p = load_task(paths.task, root=isolated_root)
+    result = run_preflight(cfg, _cases(rows, "train"), 4)
+    assert not result.ok
+    assert any("{{demos}}" in e and "max_bootstrapped_demos" in e for e in result.errors)
+
+
+def test_miprov2_zero_demos_skips_placeholder_check(isolated_root):
+    rows = default_golden_rows(labels=DEFAULT_LABELS, n_train=12, n_test=4)
+    cfg, paths = scaffold_task(
+        isolated_root,
+        answer_type="label",
+        labels=DEFAULT_LABELS,
+        golden_rows=rows,
+        prompt="{{input}}\n",
+    )
+    import yaml
+
+    raw = yaml.safe_load(paths.task_config.read_text(encoding="utf-8"))
+    raw["optimize"]["method"] = "miprov2"
+    raw["optimize"]["params"] = {"max_bootstrapped_demos": 0, "max_labeled_demos": 0}
+    paths.task_config.write_text(yaml.safe_dump(raw, allow_unicode=True), encoding="utf-8")
+    cfg, _p = load_task(paths.task, root=isolated_root)
+    result = run_preflight(cfg, _cases(rows, "train"), 4)
+    assert result.ok or not any("{{demos}}" in e for e in result.errors)
+
+
 def test_label_and_text_tasks_skip_json_priority_guard(isolated_root):
     label_rows = default_golden_rows(labels=DEFAULT_LABELS, n_train=12, n_test=4)
     label_cfg, _p = scaffold_task(

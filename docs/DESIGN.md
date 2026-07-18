@@ -187,6 +187,11 @@ taxonomy.yaml は `categories`（id/name/definition のリスト）と `assignme
   promptfoo から参照する
 - `evalloop optimize` も同じ `{{demos}}` を展開してから dspy に渡す（build 後の promptfoo 評価と訓練テンプレを一致させる）
 - `{{demos}}` あり・ファイルなし → build/optimize エラー / ファイルあり・プレースホルダなし → 警告
+- **MIPROv2 few-shot 探索**（`optimize.method: miprov2` かつ `params.max_bootstrapped_demos` /
+  `max_labeled_demos` が正）: 探索中は `{{demos}}` を空にして instruction に焼き込まない。
+  完了後に train split 由来の demos を `optimized/<alias>/<variant>/demos.jsonl` へ保存し
+  （行ごと `origin: labeled|bootstrapped` と出所メタ）、variant の `task.txt` に再展開する。
+  プロンプトに `{{demos}}` が無いと preflight エラー
 - **鉄の掟**: demo の `id` または `input` が、現在の golden test split と直近 build の
   `tests_test.yaml` holdout の**和集合**と重複したらエラー（リーク防止。golden を更新しても rebuild 前の YAML を見落さない）
 

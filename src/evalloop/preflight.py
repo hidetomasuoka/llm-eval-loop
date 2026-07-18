@@ -21,8 +21,10 @@ before `assert_split_disjoint`.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING
 
+from evalloop.demos import DEMOS_PLACEHOLDER
 from evalloop.optimizers.base import OptimizeError
 from evalloop.optimizers.metrics import normalize_label
 from evalloop.schemas import GoldenCase
@@ -131,6 +133,24 @@ def run_preflight(
                 f"need at least {MIN_LABEL_OCCURRENCES} for the optimizer to learn a boundary "
                 "(--force to override)"
             )
+
+    # --- error: miprov2 demo search requires {{demos}} placeholder (APO-17) -----
+    if cfg.optimize.method == "miprov2":
+        boot = int(cfg.optimize.params.get("max_bootstrapped_demos", 0) or 0)
+        labeled = int(cfg.optimize.params.get("max_labeled_demos", 0) or 0)
+        if boot > 0 or labeled > 0:
+            # prompt_file is absolute after schemas.load_task()
+            prompt_path = Path(cfg.task.prompt_file)
+            try:
+                template = prompt_path.read_text(encoding="utf-8") if prompt_path.is_file() else ""
+            except OSError:
+                template = ""
+            if DEMOS_PLACEHOLDER not in template:
+                result.errors.append(
+                    f"miprov2 demo search is enabled (max_bootstrapped_demos={boot}, "
+                    f"max_labeled_demos={labeled}) but {cfg.task.prompt_file} has no "
+                    f"{DEMOS_PLACEHOLDER} placeholder; add it or set both demo counts to 0"
+                )
 
     # --- warning: no holdout ----------------------------------------------------
     if test_count == 0:
