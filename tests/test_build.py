@@ -206,6 +206,8 @@ def test_estimate_cost_scales_with_case_count_and_repeat():
     ]
     estimate = build_mod.estimate_cost(cfg, cases, prompt_template="{{input}}")
     assert estimate.per_model_usd["haiku45"] > 0
+    assert estimate.per_model_input_tokens["haiku45"] > 0
+    assert estimate.token_count_methods["haiku45"] == "heuristic:mixed-text-v1"
     # doubling repeat should double the estimate
     cfg.run.repeat = 4
     estimate2 = build_mod.estimate_cost(cfg, cases, prompt_template="{{input}}")

@@ -722,17 +722,19 @@ def test_estimate_optimize_cost_gepa_price_table_math(isolated_root):
         optimize_target="haiku45",
         reflection_provider="anthropic/claude-opus-4-8",
     )
-    # controlled sizes: 20-char template + 30-char inputs = 50 chars -> 25
-    # input tokens at 2.0 chars/token; label output = 12 tokens
+    # controlled sizes: a 20-char ASCII prefix + 30-char ASCII input is one
+    # 50-character run -> ceil(50 / 4) = 13 fallback tokens.
     train = [_train_case(i, "x" * 30) for i in range(4)]
-    est = optimize_mod.estimate_optimize_cost(cfg, train, "p" * 20)
+    est = optimize_mod.estimate_optimize_cost(cfg, train, "p" * 20 + "{{input}}")
 
     assert est.method == "gepa"
     assert est.rollout_factor == 10  # auto=light
     assert est.rollout_count == 40  # 4 train cases x 10
     assert est.reflection_call_count == 10
-    # target: 40 calls x (25 in-tokens x $1/M + 12 out-tokens x $5/M)
-    assert est.target_usd == pytest.approx(40 * (25 * 1.0 + 12 * 5.0) / 1_000_000)
+    assert est.target_input_tokens == 13
+    assert est.target_token_count_method == "heuristic:mixed-text-v1"
+    # target: 40 calls x (13 in-tokens x $1/M + 12 out-tokens x $5/M)
+    assert est.target_usd == pytest.approx(40 * (13 * 1.0 + 12 * 5.0) / 1_000_000)
     # reflection: 10 calls x (3000 in-tokens x $15/M + 500 out-tokens x $75/M)
     assert est.reflection_usd == pytest.approx(10 * (3000 * 15.0 + 500 * 75.0) / 1_000_000)
     assert est.total_usd == pytest.approx(est.target_usd + est.reflection_usd)
