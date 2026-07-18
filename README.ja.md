@@ -159,7 +159,7 @@ uv run evalloop blog --runs <run_id>                        # ブログ用の図
 | `evalloop cluster [--notes PATH]` | notes.csvからLLMが失敗タクソノミー案を生成 |
 | `evalloop pivot RUN_ID` | 失敗カテゴリ×モデルのクロス集計 |
 | `evalloop optimize` | dspy（GEPA / MIPROv2 / COPRO、task.yaml の `optimize.method` で選択）でプロンプト最適化、自動でrun/report/compare（手法選定は [docs/APO_GUIDE.md](docs/APO_GUIDE.md) 参照） |
-| `evalloop compare --runs A,B` | 2つのrunのbefore/after比較 |
+| `evalloop compare --runs A,B[,C...]` | 2runはbefore/after差分、3run以上はモデル×runマトリクス比較 |
 | `evalloop blog --runs A[,B] [--slug NAME]` | 公開ガード通過後にブログ用一式を生成 |
 
 ## テスト / CI
