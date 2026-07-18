@@ -46,7 +46,7 @@ train/holdout が取れない（評価セットが小さすぎる・ラベルが
 
 | 症状 | 粒度 | 代表手法 | evalloop対応 |
 |---|---|---|---|
-| 指示が曖昧で分類・抽出がぶれる | **7a. Instruction** | GEPA, COPRO, OPRO, APE, ProTeGi, PromptAgent | **GEPA / COPRO 対応済**（`optimize.method: gepa\|copro`） |
+| 指示が曖昧で分類・抽出がぶれる | **7a. Instruction** | GEPA, COPRO, TAPO, OPRO, APE, ProTeGi, PromptAgent | **GEPA / COPRO / TAPO 対応済**（`optimize.method: gepa\|copro\|tapo`） |
 | 例の入れ替え・順序で性能がぶれる | **7b. Exemplar** | MIPROv2, EASE, PromptWizard | **MIPROv2 対応済**（既定はinstructionのみ。`params.max_bootstrapped_demos` / `params.max_labeled_demos` を指定するとfew-shot demo探索も有効） |
 | 長いsystem promptの局所修正で別セクションが壊れる | **7c. 長文構造** | SCULPT | 対象外 |
 | コスト・長さ制約が厳しい | **7d. 多目的** | InstOptima, EMO-Prompts | レポート可視化のみ計画 |
@@ -57,6 +57,7 @@ train/holdout が取れない（評価セットが小さすぎる・ラベルが
 - **7a. Instruction 粒度**: 指示文そのものを書き換える。evalloop は2手法を対応済:
   - **GEPA**（`optimize.method: gepa`、デフォルト）: reflection LM に「この失敗を直すには指示をどう変えればよいか」を提案させ、train set で候補を評価し、パレートフロントに蓄積する進化的最適化
   - **COPRO**（`optimize.method: copro`）: coordinate ascent 的な反復で指示を改善。`params.breadth` / `depth` / `init_temperature` で探索幅・深さ・初期温度を調整
+  - **TAPO**（`optimize.method: tapo`）: タスク種別（`answer_type`）に応じたメトリクス選択＋多メトリクス適合度＋進化的 mutation（`params.population_size` / `generations` / `seed`）。公式実装は重い依存のためスクラッチ適応（issue #99）
 - **7b. Exemplar 粒度**: few-shot 例の選択・順序を最適化する。Instruction が完成していても例でぶれる場合はこちら。
   - **MIPROv2**（`optimize.method: miprov2`）: ベイズ最適化でinstruction空間を探索。既定は後方互換のため instruction のみだが、`params.max_bootstrapped_demos` / `params.max_labeled_demos` を正の整数にすると few-shot demo 探索も有効化できる（プロンプトに `{{demos}}` 必須。結果は `optimized/.../demos.jsonl` に保存され variant へ再展開）。`params.val_ratio` / `seed` で検証比・乱数シードを調整
 - **7c. 長文構造粒度**: system prompt が複数セクションから成り、一部を直すと別セクションが壊れる症状。SCULPT はセクション単位の局所編集を保持する。本プロジェクトのプロンプトは短いため対象外。
@@ -113,7 +114,7 @@ Soft Prompt（Prefix-Tuning 等）や PEFT（LoRA 等）は本プロジェクト
 ## 参考
 
 - [docs/DESIGN.md](DESIGN.md) — 設計ドキュメント・鉄の掟（第11章）
-- `src/evalloop/optimizers/` — 最適化手法パッケージ（`gepa.py` / `miprov2.py` / `copro.py`、共通契約は `base.py`、代理指標は `metrics.py`）
+- `src/evalloop/optimizers/` — 最適化手法パッケージ（`gepa.py` / `miprov2.py` / `copro.py` / `tapo.py`、共通契約は `base.py`、代理指標は `metrics.py`）
 - `src/evalloop/optimize.py` — オーケストレーション（手法選択 → variant生成 → run/report/compare）
 - Issue #60 — 本ガイドの作成指示
 - Issue #67 — 3手法対応ドキュメント更新（本改訂）

@@ -69,6 +69,10 @@ from evalloop.optimizers.miprov2 import (
     run_miprov2,  # noqa: F401 -- monkeypatch target by convention; MiproV2Optimizer calls it through this module
 )
 from evalloop.optimizers.schedulers import select_eval_subset
+from evalloop.optimizers.tapo import (
+    TapoOptimizer,
+    run_tapo,  # noqa: F401 -- monkeypatch target by convention; TapoOptimizer calls it through this module
+)
 from evalloop.paths import REPO_ROOT, TaskPaths
 from evalloop.schemas import (
     Config,
@@ -174,6 +178,10 @@ def _rollout_factor(cfg: Config) -> int:
         breadth = int(cfg.optimize.params.get("breadth", 10))
         depth = int(cfg.optimize.params.get("depth", 3))
         return breadth * depth
+    if cfg.optimize.method == "tapo":
+        population_size = int(cfg.optimize.params.get("population_size", 4))
+        generations = int(cfg.optimize.params.get("generations", 3))
+        return max(1, population_size * generations)
     return _AUTO_ROLLOUT_FACTORS.get(cfg.optimize.auto, _AUTO_ROLLOUT_FACTORS["medium"])
 
 
@@ -338,6 +346,8 @@ _PARAM_KEY_SHORT = {
     "breadth": "br",
     "depth": "d",
     "init_temperature": "temp",
+    "population_size": "pop",
+    "generations": "gen",
 }
 # {method}-{YYYYMMDD-HHMMSS} or {method}-{YYYYMMDD-HHMMSS}-{slug}
 _OPTIMIZED_DIR_RE = re.compile(r"^[^-]+-\d{8}-\d{6}(?:-(.+))?$")
@@ -768,6 +778,7 @@ def optimize(
         GepaOptimizer.name: GepaOptimizer,
         MiproV2Optimizer.name: MiproV2Optimizer,
         CoproOptimizer.name: CoproOptimizer,
+        TapoOptimizer.name: TapoOptimizer,
     }
     optimizer: PromptOptimizer = optimizer_classes[cfg.optimize.method]()
     started = time.monotonic()
@@ -1043,7 +1054,7 @@ def _method_for_variant(variant: str | None, paths: TaskPaths) -> str | None:
             return str(entry["method"])
     # variant naming: {alias}_{method}_{timestamp}_{slug}
     parts = variant.split("_")
-    if len(parts) >= 2 and parts[1] in {"gepa", "miprov2", "copro"}:
+    if len(parts) >= 2 and parts[1] in {"gepa", "miprov2", "copro", "tapo"}:
         return parts[1]
     return None
 
