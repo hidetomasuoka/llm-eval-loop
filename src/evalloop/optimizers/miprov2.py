@@ -155,7 +155,8 @@ class MiproV2Optimizer:
             "max_bootstrapped_demos": max_bootstrapped_demos,
             "max_labeled_demos": max_labeled_demos,
         }
-        train_score = compute_train_score(trainset, metric, optimized_program)
+        # train_score must match train_size (train_part only; exclude val_part).
+        train_score = compute_train_score(train_part, metric, optimized_program)
         if train_score is not None:
             extra_log["train_score"] = train_score
         return OptimizeResult(
