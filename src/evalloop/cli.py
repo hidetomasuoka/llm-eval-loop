@@ -238,7 +238,15 @@ def _smoke_test_providers(cfg: Config) -> None:
             "description": "evalloop doctor smoke test",
             "providers": providers,
             "prompts": ["Reply with a single word: OK. Input: {{input}}"],
-            "tests": [{"description": "smoke", "vars": {"input": "connectivity check"}}],
+            "tests": [
+                {
+                    "description": "smoke",
+                    "vars": {
+                        "case_id": "doctor-smoke-0001",
+                        "input": "connectivity check",
+                    },
+                }
+            ],
         }
         config_path = tmp_path / "smoke.yaml"
         output_path = tmp_path / "smoke_output.json"
