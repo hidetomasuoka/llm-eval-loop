@@ -157,17 +157,22 @@ def fmt(value, spec) -> str:
     return format(value, spec) if value is not None else "n/a"
 
 
-def prompt_template_char_len(meta: dict) -> int | None:
-    """Return prompt template length for variant runs (APO-20 / issue #79)."""
-    if not meta.get("variant"):
-        return None
+def prompt_file_char_len(meta: dict, *, root: Path | None = None) -> int | None:
+    """Character length of ``meta['prompt_file']`` (any run; APO-21)."""
     prompt_file = meta.get("prompt_file")
     if not prompt_file:
         return None
-    path = REPO_ROOT / prompt_file
+    path = (root or REPO_ROOT) / prompt_file
     if not path.is_file():
         return None
     return len(path.read_text(encoding="utf-8"))
+
+
+def prompt_template_char_len(meta: dict, *, root: Path | None = None) -> int | None:
+    """Return prompt template length for variant runs (APO-20 / issue #79)."""
+    if not meta.get("variant"):
+        return None
+    return prompt_file_char_len(meta, root=root)
 
 
 def render_markdown(run_id: str, meta: dict, stats: list[AliasStats], warnings_lines: list[str]) -> str:
