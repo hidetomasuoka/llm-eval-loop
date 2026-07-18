@@ -1,6 +1,6 @@
 """Publish-guarded blog export.
 
-    evalloop blog --runs A[,B] [--slug NAME] -> blog/{YYYYMMDD}_{slug}/
+    evalloop blog --runs A[,B[,C...]] [--slug NAME] -> blog/{YYYYMMDD}_{slug}/
         fig01_accuracy_by_model.{png,svg}
         fig02_cost_vs_accuracy.{png,svg}
         fig03_failure_heatmap.{png,svg}   (skipped if data/taxonomy.yaml is missing/empty)
@@ -12,6 +12,9 @@ Iron rule #7 / spec section 9.3: nothing is written into blog/ unless every
 guard below passes. Generation happens in a staging directory first; it is
 only moved into blog/ after the secret/path scan succeeds, so a failed guard
 never leaves partial output behind for someone to accidentally publish.
+
+Multi-run (2+) exports include the APO-13 conditionality disclaimer and
+method-aware labels when variants resolve to an optimizer method (APO-15).
 """
 
 from __future__ import annotations
@@ -33,10 +36,19 @@ import matplotlib.pyplot as plt
 
 from evalloop import analyze as analyze_mod
 from evalloop import report as report_mod
+from evalloop.optimize import (
+    _COMPARE_MULTI_DISCLAIMER as COMPARE_MULTI_DISCLAIMER,
+)
+from evalloop.optimize import (
+    _compare_matrix,
+    _method_for_variant,
+)
 from evalloop.paths import REPO_ROOT, TaskPaths
 from evalloop.schemas import Config, load_golden_jsonl, parse_promptfoo_output
 
 REVIEW_COMMENT = "<!-- 公開前に固有情報がないか目視確認 -->"
+
+_FIG02_MARKERS = ("o", "x", "^", "s", "D", "P", "v")
 
 ALLOWED_SOURCES_DEFAULT = {"self-made"}
 
@@ -148,6 +160,14 @@ class RunData:
     run_id: str
     meta: dict
     stats: list  # list[report_mod.AliasStats]
+    method: str | None = None
+
+    @property
+    def label(self) -> str:
+        """Legend / section label: prefer optimizer method when known."""
+        if self.method:
+            return f"{self.method} ({self.run_id})"
+        return self.run_id
 
 
 def _load_run_data(run_id: str, paths: TaskPaths) -> RunData:
@@ -161,7 +181,10 @@ def _load_run_data(run_id: str, paths: TaskPaths) -> RunData:
     stats = report_mod.compute_alias_stats(parsed.results)
     tier_order = {m["alias"]: i for i, m in enumerate(meta.get("models", []))}
     stats.sort(key=lambda s: tier_order.get(s.alias, 999))
-    return RunData(run_id=run_id, meta=meta, stats=stats)
+    variant_raw = meta.get("variant")
+    variant = variant_raw if isinstance(variant_raw, str) else None
+    method = _method_for_variant(variant, paths)
+    return RunData(run_id=run_id, meta=meta, stats=stats, method=method)
 
 
 # ---------------------------------------------------------------------------
@@ -206,7 +229,7 @@ def make_fig01_accuracy_by_model(runs: list[RunData], out_dir: Path, labels: Lab
 
         yerr = [[_err(a, "low") for a in aliases], [_err(a, "high") for a in aliases]]
         ax.bar(
-            xs, values, width=width, color=colors, alpha=alpha, label=run.run_id,
+            xs, values, width=width, color=colors, alpha=alpha, label=run.label,
             yerr=yerr, capsize=3, error_kw={"ecolor": "#333333", "alpha": 0.7},
         )
     ax.set_xticks([x + width * (len(runs) - 1) / 2 for x in range(len(aliases))])
@@ -222,26 +245,42 @@ def make_fig01_accuracy_by_model(runs: list[RunData], out_dir: Path, labels: Lab
 def make_fig02_cost_vs_accuracy(runs: list[RunData], out_dir: Path, labels: Labels) -> None:
     fig, ax = plt.subplots(figsize=(7, 5))
     positions: dict[str, tuple[float, float]] = {}
+    draw_arrows = len(runs) == 2
     for run_idx, run in enumerate(runs):
-        for s in run.stats:
+        marker = _FIG02_MARKERS[run_idx % len(_FIG02_MARKERS)]
+        for s_idx, s in enumerate(run.stats):
             cost_per_case = s.avg_cost_usd if s.avg_cost_usd > 0 else 1e-6
             acc = s.pass_rate or 0.0
             color = _TIER_COLORS.get(_tier_for_alias(run.meta, s.alias), "#333333")
-            marker = "o" if run_idx == len(runs) - 1 else "x"
-            ax.scatter(cost_per_case, acc, color=color, marker=marker, s=60, zorder=3)
+            # One legend entry per run (method-aware label); later points omit label.
+            scatter_label = run.label if s_idx == 0 and len(runs) > 1 else None
+            ax.scatter(
+                cost_per_case,
+                acc,
+                color=color,
+                marker=marker,
+                s=60,
+                zorder=3,
+                label=scatter_label,
+            )
             ax.annotate(s.alias, (cost_per_case, acc), fontsize=8, xytext=(4, 4), textcoords="offset points")
-            if run_idx == 0:
-                positions[s.alias] = (cost_per_case, acc)
-            elif s.alias in positions:
-                x0, y0 = positions[s.alias]
-                ax.annotate(
-                    "", xy=(cost_per_case, acc), xytext=(x0, y0),
-                    arrowprops={"arrowstyle": "->", "color": "gray", "alpha": 0.6},
-                )
+            if draw_arrows:
+                if run_idx == 0:
+                    positions[s.alias] = (cost_per_case, acc)
+                elif s.alias in positions:
+                    x0, y0 = positions[s.alias]
+                    ax.annotate(
+                        "",
+                        xy=(cost_per_case, acc),
+                        xytext=(x0, y0),
+                        arrowprops={"arrowstyle": "->", "color": "gray", "alpha": 0.6},
+                    )
     ax.set_xscale("log")
     ax.set_xlabel(labels.cost)
     ax.set_ylabel(labels.accuracy)
     ax.set_ylim(0, 1.05)
+    if len(runs) > 1:
+        ax.legend(fontsize=8)
     fig.tight_layout()
     _save_fig(fig, out_dir, "fig02_cost_vs_accuracy")
 
@@ -291,10 +330,12 @@ def make_fig03_failure_heatmap(run: RunData, out_dir: Path, labels: Labels, path
 # ---------------------------------------------------------------------------
 
 
-def render_tables_md(runs: list[RunData]) -> str:
+def render_tables_md(runs: list[RunData], *, paths: TaskPaths | None = None) -> str:
     lines = ["# Tables", ""]
+    if len(runs) >= 2:
+        lines += [f"> {COMPARE_MULTI_DISCLAIMER}", ""]
     for run in runs:
-        lines.append(f"## {run.run_id}")
+        lines.append(f"## {run.label}")
         lines.append("")
         lines.append("| model | tier | accuracy | total_cost_usd | p50_latency_ms | cache_rate |")
         lines.append("|---|---|---:|---:|---:|---:|")
@@ -306,6 +347,11 @@ def render_tables_md(runs: list[RunData]) -> str:
                 f"{report_mod.fmt(s.cache_rate, '.1%')} |"
             )
         lines.append("")
+    # 3+ runs: reuse the compare model×run matrix (method headers + disclaimer).
+    if paths is not None and len(runs) >= 3:
+        lines.append("---")
+        lines.append("")
+        lines.extend(_compare_matrix([r.run_id for r in runs], paths))
     return "\n".join(lines)
 
 
@@ -400,11 +446,20 @@ def render_article_draft(runs: list[RunData], config, fig03_written: bool) -> st
         default=None,
     )
 
+    title = f"# {config.task.name}: どのモデルが必要精度を満たすか、それはいくらか"
+    if len(runs) >= 3 and any(r.method for r in runs):
+        methods = " / ".join(dict.fromkeys(r.method or r.run_id for r in runs))
+        title = f"# {config.task.name}: 手法比較（{methods}）— 精度とコスト"
+
     lines = [
-        f"# {config.task.name}: どのモデルが必要精度を満たすか、それはいくらか",
+        title,
         "",
         REVIEW_COMMENT,
         "",
+    ]
+    if len(runs) >= 2:
+        lines += [f"> {COMPARE_MULTI_DISCLAIMER}", ""]
+    lines += [
         "## 背景",
         "",
         "TODO: このタスクを評価することにした背景・動機を記述する。",
@@ -413,6 +468,11 @@ def render_article_draft(runs: list[RunData], config, fig03_written: bool) -> st
         "",
         "TODO: 構成図（前処理→promptfoo実行→分析→GEPA→再評価→ブログ化）をここに挿入する。",
         f"評価はpromptfooで実行し、判定は{'LLMジャッジ' if grader['type'] == 'llm-rubric' else '決定的アサート'}を使用した。",
+    ]
+    if len(runs) >= 2:
+        run_bits = ", ".join(f"`{r.label}`" for r in runs)
+        lines.append(f"比較対象の run: {run_bits}。")
+    lines += [
         "",
         "## 結果",
         "",
@@ -473,13 +533,16 @@ def blog(
     run_ids: list[str],
     slug: str | None = None,
 ) -> Path:
-    if not run_ids or len(run_ids) > 2:
-        raise BlogGuardError("--runs must name exactly 1 or 2 run_ids")
+    cleaned = [r.strip() for r in run_ids if r and str(r).strip()]
+    if not cleaned:
+        raise BlogGuardError("--runs must name at least 1 run_id")
+    if len(cleaned) != len(set(cleaned)):
+        raise BlogGuardError("--runs must be unique")
 
     golden_cases = load_golden_jsonl(paths.golden)
     check_source_guard(golden_cases, allowed_sources=frozenset(config.blog.allowed_sources))  # guard 1
 
-    runs = [_load_run_data(rid, paths) for rid in run_ids]
+    runs = [_load_run_data(rid, paths) for rid in cleaned]
     found_font = find_cjk_font()
     has_cjk_font = found_font is not None
     if has_cjk_font:
@@ -501,7 +564,9 @@ def blog(
         if not fig03_written:
             print(f"[blog] fig03 skipped: {paths.taxonomy} not defined yet (run `evalloop cluster` then merge it)")
 
-        (staging_dir / "tables.md").write_text(render_tables_md(runs), encoding="utf-8")
+        (staging_dir / "tables.md").write_text(
+            render_tables_md(runs, paths=paths), encoding="utf-8"
+        )
         (staging_dir / "conditions.md").write_text(render_conditions_md(runs, config, fig03_written), encoding="utf-8")
         (staging_dir / "article_draft.md").write_text(render_article_draft(runs, config, fig03_written), encoding="utf-8")
 
