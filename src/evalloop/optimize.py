@@ -909,6 +909,11 @@ _COMPARE_MULTI_DISCLAIMER = (
     "この結果は本タスク・本設定に限る"
 )
 
+# APO-21 / issue #80: flag accuracy gains that come with large cost/length spikes.
+COMPARE_TRADEOFF_COST_INCREASE_RATIO = 0.50
+COMPARE_TRADEOFF_OUTPUT_TOKENS_INCREASE_RATIO = 0.50
+COMPARE_TRADEOFF_PROMPT_LENGTH_INCREASE_RATIO = 0.50
+
 
 def _load_run_meta(run_id: str, paths: TaskPaths) -> dict:
     meta_path = paths.runs_dir / run_id / "meta.json"
@@ -1019,8 +1024,55 @@ def _compare_report_filename(run_ids: list[str]) -> str:
     return f"compare_{len(run_ids)}runs_{digest}.md"
 
 
+def _relative_increase(before: float | None, after: float | None) -> float | None:
+    """(after - before) / before when before > 0; else None."""
+    if before is None or after is None or before <= 0:
+        return None
+    return (after - before) / before
+
+
+def _fmt_num(v: float | None, spec: str = ".1f") -> str:
+    return format(v, spec) if v is not None else "n/a"
+
+
+def _fmt_int(v: int | None) -> str:
+    return str(v) if v is not None else "n/a"
+
+
+def _compare_tradeoff_notes(
+    *,
+    alias: str,
+    accuracy_delta: float | None,
+    cost_ratio: float | None,
+    output_tok_ratio: float | None,
+    prompt_len_ratio: float | None,
+) -> list[str]:
+    """Warn when accuracy improves but cost/tokens/prompt length spike (APO-21)."""
+    if accuracy_delta is None or accuracy_delta <= 0:
+        return []
+    spikes: list[str] = []
+    if cost_ratio is not None and cost_ratio > COMPARE_TRADEOFF_COST_INCREASE_RATIO:
+        spikes.append(f"コスト +{cost_ratio:.0%}")
+    if (
+        output_tok_ratio is not None
+        and output_tok_ratio > COMPARE_TRADEOFF_OUTPUT_TOKENS_INCREASE_RATIO
+    ):
+        spikes.append(f"出力トークン +{output_tok_ratio:.0%}")
+    if (
+        prompt_len_ratio is not None
+        and prompt_len_ratio > COMPARE_TRADEOFF_PROMPT_LENGTH_INCREASE_RATIO
+    ):
+        spikes.append(f"プロンプト長 +{prompt_len_ratio:.0%}")
+    if not spikes:
+        return []
+    return [
+        f"> ⚠ トレードオフ注意 ({alias}): 精度 {_fmt_pct_signed(accuracy_delta)} 改善に対し、"
+        + "、".join(spikes)
+    ]
+
+
 def _compare_pair(run_a: str, run_b: str, paths: TaskPaths) -> list[str]:
-    """Legacy before/after delta table (byte-stable for the 2-run path)."""
+    """Before/after delta table with APO-21 tradeoff columns."""
     stats_a = {
         s.alias: s
         for s in report_mod.compute_alias_stats(
@@ -1033,14 +1085,27 @@ def _compare_pair(run_a: str, run_b: str, paths: TaskPaths) -> list[str]:
             parse_promptfoo_output(paths.runs_dir / run_b / "output.json").results
         )
     }
+    meta_a = _load_run_meta(run_a, paths)
+    meta_b = _load_run_meta(run_b, paths)
+    prompt_a = report_mod.prompt_file_char_len(meta_a, root=paths.root)
+    prompt_b = report_mod.prompt_file_char_len(meta_b, root=paths.root)
+    prompt_delta = (prompt_b - prompt_a) if (prompt_a is not None and prompt_b is not None) else None
+    prompt_ratio = _relative_increase(
+        float(prompt_a) if prompt_a is not None else None,
+        float(prompt_b) if prompt_b is not None else None,
+    )
     aliases = sorted(set(stats_a) | set(stats_b))
 
     lines = [
         f"# Compare: {run_a} (A, before) vs {run_b} (B, after)",
         "",
-        "| alias | pass_rate A | pass_rate B | delta | beyond_95ci | cost A | cost B | cost delta |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|",
+        "| alias | pass_rate A | pass_rate B | delta | beyond_95ci | "
+        "cost A | cost B | cost delta | cost delta % | "
+        "avg_out_tok A | avg_out_tok B | out_tok delta | "
+        "prompt_len A | prompt_len B | prompt_len delta |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
+    tradeoff_notes: list[str] = []
     for alias in aliases:
         a, b = stats_a.get(alias), stats_b.get(alias)
         pa = a.pass_rate if a else None
@@ -1056,16 +1121,40 @@ def _compare_pair(run_a: str, run_b: str, paths: TaskPaths) -> list[str]:
         ca = a.total_cost_usd if a else None
         cb = b.total_cost_usd if b else None
         cdelta = (cb - ca) if (ca is not None and cb is not None) else None
+        cost_ratio = _relative_increase(ca, cb)
+        ta = a.avg_model_completion_tokens if a else None
+        tb = b.avg_model_completion_tokens if b else None
+        tdelta = (tb - ta) if (ta is not None and tb is not None) else None
+        tok_ratio = _relative_increase(ta, tb)
         lines.append(
             f"| {alias} | {_fmt_pct(pa)} | {_fmt_pct(pb)} | {_fmt_pct_signed(delta)} | {beyond_ci} | "
-            f"{_fmt_usd(ca)} | {_fmt_usd(cb)} | {_fmt_usd_signed(cdelta)} |"
+            f"{_fmt_usd(ca)} | {_fmt_usd(cb)} | {_fmt_usd_signed(cdelta)} | {_fmt_pct_signed(cost_ratio)} | "
+            f"{_fmt_num(ta)} | {_fmt_num(tb)} | {_fmt_num(tdelta, '+.1f')} | "
+            f"{_fmt_int(prompt_a)} | {_fmt_int(prompt_b)} | {_fmt_num(prompt_delta, '+.0f')} |"
+        )
+        tradeoff_notes.extend(
+            _compare_tradeoff_notes(
+                alias=alias,
+                accuracy_delta=delta,
+                cost_ratio=cost_ratio,
+                output_tok_ratio=tok_ratio,
+                prompt_len_ratio=prompt_ratio,
+            )
         )
     lines.append("")
     lines.append(
         "> beyond_95ci: yes when the Wilson 95% intervals of A and B do not overlap "
         "(a conservative significance check; overlapping intervals mean the delta may be noise)."
     )
+    lines.append(
+        "> cost delta % / out_tok / prompt_len: tradeoff axes vs A (APO-21). "
+        f"A tradeoff warning is emitted when accuracy improves but cost/tokens/prompt grow "
+        f"> {COMPARE_TRADEOFF_COST_INCREASE_RATIO:.0%}."
+    )
     lines.append("")
+    lines.extend(tradeoff_notes)
+    if tradeoff_notes:
+        lines.append("")
     return lines
 
 
