@@ -231,10 +231,12 @@ def build(
     allow_same_judge: bool = False,
     yes: bool = False,
     confirm_fn=None,
+    shuffle_demos: int | None = None,
 ) -> CostEstimate:
     """Run the full build pipeline. Returns the cost estimate that was shown to the user.
 
     `confirm_fn` is injectable for tests; defaults to `typer.confirm` at the CLI layer.
+    When ``shuffle_demos`` is a positive int, also write N demoshuffle variants (APO-19).
     """
     if not paths.golden.exists():
         raise BuildError(
@@ -296,5 +298,13 @@ def build(
             f"(${config.run.cost_warn_usd:.2f}). Continue?"
         ):
             raise BuildError("aborted by user: cost estimate exceeded cost_warn_usd")
+
+    if shuffle_demos is not None:
+        from evalloop import sensitivity as sensitivity_mod
+
+        try:
+            sensitivity_mod.build_demoshuffle_variants(config, paths, shuffle_demos)
+        except sensitivity_mod.SensitivityError as e:
+            raise BuildError(str(e)) from e
 
     return estimate

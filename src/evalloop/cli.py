@@ -282,6 +282,14 @@ def build(
         False, help="Iron rule #2 override: allow llm-rubric judge == an evaluated model"
     ),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip the cost-estimate confirmation prompt"),
+    shuffle_demos: int = typer.Option(
+        None,
+        "--shuffle-demos",
+        help=(
+            "After a normal build, write N demoshuffle promptfoo variants "
+            "(seeds 0..N-1) for demo-order sensitivity checks (requires {{demos}})"
+        ),
+    ),
 ) -> None:
     """tasks/<name>/golden.jsonl + task.yaml -> data/build/<name>/ + promptfoo/<name>/promptfooconfig.yaml."""
     cfg, paths = _load_task_or_exit(task, models)
@@ -292,6 +300,7 @@ def build(
             allow_same_judge=allow_same_judge,
             yes=yes,
             confirm_fn=lambda msg: typer.confirm(msg),
+            shuffle_demos=shuffle_demos,
         )
     except (SchemaError, build_mod.BuildError) as e:
         console.print(f"[bold red]build failed:[/bold red] {e}")

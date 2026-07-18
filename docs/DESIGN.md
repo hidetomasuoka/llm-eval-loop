@@ -192,6 +192,10 @@ taxonomy.yaml は `categories`（id/name/definition のリスト）と `assignme
   完了後に train split 由来の demos を `optimized/<alias>/<variant>/demos.jsonl` へ保存し
   （行ごと `origin: labeled|bootstrapped` と出所メタ）、variant の `task.txt` に再展開する。
   プロンプトに `{{demos}}` が無いと preflight エラー
+- **順序感度（APO-19）**: `evalloop build --shuffle-demos N` は seed `0..N-1` で demos を
+  シャッフルした解決済みプロンプトを `data/build/<task>/demoshuffle_{seed}.txt` に書き、
+  variant 名 `<task>_demoshuffle_{seed}` を `promptfoo/<task>/variants/` へ生成する。
+  評価は手動で `run` → `report` → `compare`
 - **鉄の掟**: demo の `id` または `input` が、現在の golden test split と直近 build の
   `tests_test.yaml` holdout の**和集合**と重複したらエラー（リーク防止。golden を更新しても rebuild 前の YAML を見落さない）
 
