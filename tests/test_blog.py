@@ -91,6 +91,21 @@ def test_labels_english_fallback_when_no_cjk_font():
     assert all(ord(ch) < 128 for ch in labels.accuracy + labels.cost + labels.model + labels.category + labels.unassigned)
 
 
+def test_pareto_front_mask_keeps_non_dominated_points():
+    # A cheap+accurate, B expensive+same, C mid cost mid acc, D dominated
+    costs = [0.01, 0.10, 0.05, 0.20]
+    accs = [0.90, 0.90, 0.80, 0.70]
+    mask = blog_mod.pareto_front_mask(costs, accs)
+    assert mask == [True, False, False, False]
+
+
+def test_pareto_front_mask_keeps_tradeoff_pair():
+    # Cheap/low-acc and expensive/high-acc are both on the front
+    costs = [0.01, 0.10]
+    accs = [0.50, 0.95]
+    assert blog_mod.pareto_front_mask(costs, accs) == [True, True]
+
+
 # ---------------------------------------------------------------------------
 # conditions.md reproduce block
 # ---------------------------------------------------------------------------
@@ -351,6 +366,8 @@ def test_blog_success_writes_expected_files(blog_env):
     assert (out_dir / "fig01_accuracy_by_model.png").exists()
     assert (out_dir / "fig01_accuracy_by_model.svg").exists()
     assert (out_dir / "fig02_cost_vs_accuracy.png").exists()
+    assert (out_dir / "fig04_pareto_cost_accuracy.png").exists()
+    assert (out_dir / "fig04_pareto_cost_accuracy.svg").exists()
     assert not (out_dir / "fig03_failure_heatmap.png").exists()  # no taxonomy.yaml -> skipped
 
     tables = (out_dir / "tables.md").read_text(encoding="utf-8")
@@ -363,6 +380,7 @@ def test_blog_success_writes_expected_files(blog_env):
     article = (out_dir / "article_draft.md").read_text(encoding="utf-8")
     assert blog_mod.REVIEW_COMMENT in article
     assert "fig01_accuracy_by_model.png" in article
+    assert "fig04_pareto_cost_accuracy.png" in article
 
 
 def test_blog_two_runs_produces_comparison_arrows_without_crashing(blog_env):
