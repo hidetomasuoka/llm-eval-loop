@@ -83,7 +83,7 @@ class JudgeConfig:
 
 
 # [APO-04] known prompt-optimization methods
-KNOWN_OPTIMIZE_METHODS = {"gepa", "miprov2", "copro"}
+KNOWN_OPTIMIZE_METHODS = {"gepa", "miprov2", "copro", "tapo"}
 
 
 @dataclass
@@ -91,7 +91,7 @@ class OptimizeConfig:
     target_alias: str
     reflection_provider: str
     auto: str = "light"
-    # [APO-04] method selection: gepa | miprov2 | copro (extended stepwise)
+    # [APO-04] method selection: gepa | miprov2 | copro | tapo (extended stepwise)
     method: str = "gepa"
     # method-specific parameter bag, passed through to the chosen optimizer
     params: dict = field(default_factory=dict)

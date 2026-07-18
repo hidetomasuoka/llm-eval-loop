@@ -85,7 +85,7 @@ uv run evalloop cluster                                    # an LLM drafts categ
 #   -> review, then save as data/taxonomy.yaml (the draft never overwrites it automatically)
 uv run evalloop pivot <run_id>                              # failure-category x model cross-tab
 uv run evalloop calibrate --run-id <run_id>                 # agreement rate between the LLM judge and human labels
-uv run evalloop optimize                                    # improve the prompt with dspy (GEPA / MIPROv2 / COPRO, uses the train split only)
+uv run evalloop optimize                                    # improve the prompt with dspy (GEPA / MIPROv2 / COPRO / TAPO, uses the train split only)
 #   -> select the method via optimize.method in task.yaml (unset = gepa). afterwards run/report/compare (against the latest base run, if any) execute automatically
 #   -> after the automatic holdout run, optimize prints a train-vs-holdout generalization gate (pass/fail vs baseline holdout; display-only, exit code unchanged) and records it in optimize_log.json
 #   -> a rough cost estimate (train size x per-method iteration factor x registry prices) is shown first; exceeding run.cost_warn_usd prompts for confirmation (--yes suppresses, for CI)
@@ -121,7 +121,7 @@ Then run everything with `--task <name>`. Model definitions (provider IDs, price
 | `evalloop cluster [--notes PATH]` | An LLM drafts a failure taxonomy from notes.csv |
 | `evalloop pivot RUN_ID` | Failure-category × model cross-tab |
 | `evalloop diagnose [--answers 1,2,3]` | Interactive symptom → granularity → method checklist (APO readiness and recommended `optimize.method`; no LLM) |
-| `evalloop optimize` | Prompt optimization with dspy (GEPA / MIPROv2 / COPRO, chosen via `optimize.method` in task.yaml), then automatic run/report/compare (method selection guide: [docs/APO_GUIDE.md](docs/APO_GUIDE.md)) |
+| `evalloop optimize` | Prompt optimization with dspy (GEPA / MIPROv2 / COPRO / TAPO, chosen via `optimize.method` in task.yaml), then automatic run/report/compare (method selection guide: [docs/APO_GUIDE.md](docs/APO_GUIDE.md)) |
 | `evalloop compare --runs A,B[,C...]` | Compare 2 runs (before/after deltas + cost%/tokens/prompt-length tradeoff note) or 3+ runs (model×run matrix; matrix also shows optimize `search_cost` / `duration_s` from optimize_log) |
 | `evalloop blog --runs A[,B[,C...]] [--slug NAME]` | Publish-guarded blog export (2+ runs insert the conditionality disclaimer; 3+ also embed the compare model×run matrix in tables.md; includes Pareto cost×accuracy fig04) |
 
@@ -187,7 +187,7 @@ Each task documents its data source and how to re-obtain it in `tasks/<name>/PRO
 
 ## Known constraints
 
-- `evalloop optimize` supports all three answer types and three optimization methods (select via `optimize.method`: `gepa` / `miprov2` / `copro`, unset = gepa). Every method's **training metric is a deterministic proxy, not the final evaluation**: `label` uses the label-match port, `text` (e.g. the active CUAD-100 task) uses SQuAD-style token F1 against the gold span(s), and `json` uses a deep-equality port. For text tasks the final promptfoo evaluation still uses the llm-rubric judge, so training metric and final grading can diverge — measuring that divergence is part of the optimization case study
+- `evalloop optimize` supports all three answer types and four optimization methods (select via `optimize.method`: `gepa` / `miprov2` / `copro` / `tapo`, unset = gepa). Every method's **training metric is a deterministic proxy, not the final evaluation**: `label` uses the label-match port, `text` (e.g. the active CUAD-100 task) uses SQuAD-style token F1 against the gold span(s), and `json` uses a deep-equality port. For text tasks the final promptfoo evaluation still uses the llm-rubric judge, so training metric and final grading can diverge — measuring that divergence is part of the optimization case study
 - With MIPROv2, setting `params.max_bootstrapped_demos` / `max_labeled_demos` > 0 enables few-shot demo search (default 0 keeps instruction-only). The prompt must contain `{{demos}}`; chosen demos are written to `optimized/<alias>/<variant>/demos.jsonl` and re-expanded into the variant (train split only, with test-leak checks; see [docs/DESIGN.md](docs/DESIGN.md) §5.6)
 - The "training metric is a proxy" constraint above is common to **GEPA, MIPROv2, and COPRO**, and to any future optimizer (OPRO, APE, EASE, etc.) this harness may add. Fast in-process candidate evaluation requires a structured verdict (label match, token F1, deep-equal, etc.); invoking an LLM judge per candidate rollout is forbidden by the iron rule (Python never calls a model provider directly). So "train on a proxy metric, verify on a separate final metric" is a harness-wide APO premise (see [docs/APO_GUIDE.md](docs/APO_GUIDE.md) for method selection)
 - With a small local model (qwen2.5:7b) as judge, instruction following is less stable than with frontier models (e.g. it occasionally returns grading rationales in languages other than English/Japanese). Prefer a judge substantially stronger than the models being evaluated (as `config.yaml` is designed to do)
