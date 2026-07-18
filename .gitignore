@@ -29,6 +29,7 @@ Thumbs.db
 # タスクの「コード」（task.yaml / prompts/ / PROVENANCE.md）のみ。
 # ---------------------------------------------------------------------------
 tasks/*/golden.jsonl
+tasks/*/demos.jsonl
 tasks/*/human_labels.jsonl
 tasks/*/notes.csv
 tasks/*/taxonomy.yaml
@@ -38,6 +39,7 @@ tasks/*/failures.jsonl
 # 例外: 合成デモデータの sample-inquiry のみオプトイン追跡
 # （PROVENANCE.md にライセンス明記済みの公開・合成データに限る）
 !tasks/sample-inquiry/golden.jsonl
+!tasks/sample-inquiry/demos.jsonl
 !tasks/sample-inquiry/human_labels.jsonl
 
 # ---------------------------------------------------------------------------

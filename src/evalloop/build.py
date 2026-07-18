@@ -22,6 +22,13 @@ from pathlib import Path
 
 import yaml
 
+from evalloop.demos import (
+    DEMOS_PLACEHOLDER,
+    DemoError,
+    assert_demos_do_not_leak_test,
+    format_demos,
+    load_demos_jsonl,
+)
 from evalloop.paths import REPO_ROOT, TaskPaths
 from evalloop.schemas import Config, GoldenCase, assert_split_disjoint, load_golden_jsonl
 from evalloop.token_counting import average_input_tokens, render_case_prompts
@@ -155,8 +162,14 @@ def _build_default_test(config: Config, allow_same_judge: bool, paths: TaskPaths
     return default_test
 
 
-def _build_promptfoo_config(config: Config, allow_same_judge: bool, paths: TaskPaths) -> dict:
-    prompt_path = REPO_ROOT / config.task.prompt_file
+def _build_promptfoo_config(
+    config: Config,
+    allow_same_judge: bool,
+    paths: TaskPaths,
+    *,
+    prompt_path: Path | None = None,
+) -> dict:
+    resolved_prompt = prompt_path if prompt_path is not None else (REPO_ROOT / config.task.prompt_file)
     providers = []
     for m in config.models:
         # claude-opus-4-8 / claude-fable-5 はsamplingパラメータ(temperature等)を
@@ -171,10 +184,49 @@ def _build_promptfoo_config(config: Config, allow_same_judge: bool, paths: TaskP
     return {
         "description": config.task.name,
         "providers": providers,
-        "prompts": [f"file://{to_promptfoo_relpath(prompt_path, paths.promptfoo_dir)}"],
+        "prompts": [f"file://{to_promptfoo_relpath(resolved_prompt, paths.promptfoo_dir)}"],
         "defaultTest": _build_default_test(config, allow_same_judge, paths),
         "tests": f"file://{to_promptfoo_relpath(paths.tests_test, paths.promptfoo_dir)}",
     }
+
+
+def _resolve_prompt_template(config: Config, paths: TaskPaths, test_cases: list[GoldenCase]) -> tuple[str, Path]:
+    """Return (template_text, path_for_promptfoo) with optional ``{{demos}}`` expansion."""
+    prompt_path = REPO_ROOT / config.task.prompt_file
+    template = prompt_path.read_text(encoding="utf-8")
+    has_placeholder = DEMOS_PLACEHOLDER in template
+    demos_exist = paths.demos.exists()
+
+    if has_placeholder and not demos_exist:
+        raise BuildError(
+            f"prompt contains {DEMOS_PLACEHOLDER} but {paths.demos} is missing. "
+            "Add demos.jsonl (see docs/DESIGN.md §5.6) or remove the placeholder."
+        )
+    if demos_exist and not has_placeholder:
+        print(
+            f"[build] WARN: {paths.demos} exists but prompt has no {DEMOS_PLACEHOLDER}; "
+            "demos are ignored"
+        )
+        return template, prompt_path
+
+    if not has_placeholder:
+        return template, prompt_path
+
+    try:
+        demos = load_demos_jsonl(paths.demos)
+        assert_demos_do_not_leak_test(
+            demos,
+            test_ids={c.id for c in test_cases},
+            test_inputs={c.input for c in test_cases},
+        )
+    except DemoError as e:
+        raise BuildError(str(e)) from e
+
+    resolved_text = template.replace(DEMOS_PLACEHOLDER, format_demos(demos))
+    paths.resolved_prompt.parent.mkdir(parents=True, exist_ok=True)
+    paths.resolved_prompt.write_text(resolved_text, encoding="utf-8")
+    print(f"[build] wrote {paths.resolved_prompt} ({len(demos)} demos embedded)")
+    return resolved_text, paths.resolved_prompt
 
 
 def _assert_config_never_references_train(promptfoo_config_text: str) -> None:
@@ -225,13 +277,15 @@ def build(
     _write_tests_yaml(paths.tests_test, test_cases)
     _write_tests_yaml(paths.tests_train, train_cases)
 
-    promptfoo_config = _build_promptfoo_config(config, allow_same_judge, paths)
+    prompt_template, prompt_path_for_eval = _resolve_prompt_template(config, paths, test_cases)
+    promptfoo_config = _build_promptfoo_config(
+        config, allow_same_judge, paths, prompt_path=prompt_path_for_eval
+    )
     paths.promptfoo_dir.mkdir(parents=True, exist_ok=True)
     config_text = yaml.safe_dump(promptfoo_config, allow_unicode=True, sort_keys=False)
     _assert_config_never_references_train(config_text)
     paths.promptfoo_config.write_text(config_text, encoding="utf-8")
 
-    prompt_template = (REPO_ROOT / config.task.prompt_file).read_text(encoding="utf-8")
     estimate = estimate_cost(config, test_cases, prompt_template)
 
     print(f"[build] {len(train_cases)} train / {len(test_cases)} test cases from {paths.golden}")
