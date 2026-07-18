@@ -35,6 +35,57 @@ def test_provider_mapping_unknown_raises():
 
 
 # ---------------------------------------------------------------------------
+# APO-14: post-hoc search cost from dspy lm.history
+# ---------------------------------------------------------------------------
+
+
+def test_summarize_lm_search_cost_from_litellm_cost_and_usage(isolated_root):
+    cfg, _paths = scaffold_task(isolated_root, models=["haiku45"])
+    # point optimize at a priced registry model
+    raw = yaml.safe_load(_paths.task_config.read_text(encoding="utf-8"))
+    raw["optimize"]["target_alias"] = "haiku45"
+    raw["optimize"]["reflection_provider"] = "anthropic/claude-haiku-4-5-20251001"
+    _paths.task_config.write_text(yaml.safe_dump(raw, allow_unicode=True), encoding="utf-8")
+    cfg, _paths = load_task("t1", root=isolated_root)
+
+    task_lm = types.SimpleNamespace(
+        history=[
+            {"cost": 0.01, "usage": {"prompt_tokens": 10, "completion_tokens": 5}},
+            {
+                "cost": None,
+                "usage": {"prompt_tokens": 1_000_000, "completion_tokens": 0},
+            },  # $1.0 in @ $1/MTok
+        ]
+    )
+    reflection_lm = types.SimpleNamespace(
+        history=[{"cost": 0.002, "usage": {"prompt_tokens": 1, "completion_tokens": 1}}]
+    )
+    summary = optimize_mod.summarize_lm_search_cost(task_lm, reflection_lm, cfg)
+    assert summary.search_lm_call_count == 3
+    assert summary.search_cost_usd == pytest.approx(1.012)
+
+
+def test_summarize_lm_search_cost_empty_history_is_none(isolated_root):
+    cfg, _paths = scaffold_task(isolated_root)
+    summary = optimize_mod.summarize_lm_search_cost(
+        types.SimpleNamespace(history=[]),
+        types.SimpleNamespace(history=None),
+        cfg,
+    )
+    assert summary.search_cost_usd is None
+    assert summary.search_lm_call_count == 0
+
+
+def test_summarize_lm_search_cost_unpriced_call_yields_none(isolated_root):
+    cfg, _paths = scaffold_task(isolated_root)
+    task_lm = types.SimpleNamespace(history=[{"cost": None, "usage": {}}])
+    reflection_lm = types.SimpleNamespace(history=[])
+    summary = optimize_mod.summarize_lm_search_cost(task_lm, reflection_lm, cfg)
+    assert summary.search_cost_usd is None
+    assert summary.search_lm_call_count == 1
+
+
+# ---------------------------------------------------------------------------
 # sampling params on the dspy path (opus48/fable5 reject temperature with 400)
 # ---------------------------------------------------------------------------
 
@@ -458,6 +509,9 @@ def test_optimize_end_to_end_with_stubbed_gepa_and_promptfoo(isolated_root, monk
     assert "gepa auto=light train=12" in log["summary"]
     assert "instructions" in log["summary"]
     assert isinstance(log["duration_seconds"], float)
+    assert "search_cost_usd" in log  # APO-14; stub LMs leave this null
+    assert log["search_cost_usd"] is None
+    assert log["search_lm_call_count"] == 0
     assert log["train_case_count"] == len(log["train_case_ids"])
 
     # optimized/index.jsonl records the variant with run linkage

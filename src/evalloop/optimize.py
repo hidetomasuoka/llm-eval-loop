@@ -168,6 +168,81 @@ def _rollout_factor(cfg: Config) -> int:
     return _AUTO_ROLLOUT_FACTORS.get(cfg.optimize.auto, _AUTO_ROLLOUT_FACTORS["medium"])
 
 
+@dataclass
+class SearchCostSummary:
+    """Post-hoc exploration cost from dspy LM histories (APO-14 / issue #73)."""
+
+    search_cost_usd: float | None
+    search_lm_call_count: int
+
+
+def _history_entries(lm) -> list:
+    history = getattr(lm, "history", None)
+    if not history:
+        return []
+    return list(history)
+
+
+def _tokens_from_usage(usage: object) -> tuple[int, int] | None:
+    if not isinstance(usage, dict):
+        return None
+    in_raw = usage.get("prompt_tokens", usage.get("input_tokens"))
+    out_raw = usage.get("completion_tokens", usage.get("output_tokens"))
+    if in_raw is None and out_raw is None:
+        return None
+    try:
+        in_tok = int(in_raw or 0)
+        out_tok = int(out_raw or 0)
+    except (TypeError, ValueError):
+        return None
+    return in_tok, out_tok
+
+
+def _cost_from_history_entry(entry: object, model: ModelConfig | None) -> float | None:
+    """Prefer LiteLLM ``cost``; else token usage × registry prices."""
+    if not isinstance(entry, dict):
+        return None
+    raw_cost = entry.get("cost")
+    if raw_cost is not None:
+        try:
+            return float(raw_cost)
+        except (TypeError, ValueError):
+            pass
+    tokens = _tokens_from_usage(entry.get("usage"))
+    if tokens is None or model is None:
+        return None
+    in_tok, out_tok = tokens
+    return (
+        in_tok / 1_000_000 * model.price_in_per_mtok
+        + out_tok / 1_000_000 * model.price_out_per_mtok
+    )
+
+
+def summarize_lm_search_cost(task_lm, reflection_lm, cfg: Config) -> SearchCostSummary:
+    """Sum dspy ``lm.history`` costs for target + reflection LMs after optimize.
+
+    Returns ``search_cost_usd=None`` when history is empty or any call cannot be
+    priced (compare / logs then show ``n/a``).
+    """
+    target = cfg.model_by_alias(cfg.optimize.target_alias)
+    reflection = _reflection_registry_model(cfg)
+    pairs = ((task_lm, target), (reflection_lm, reflection))
+    total = 0.0
+    call_count = 0
+    priced_any = False
+    for lm, model in pairs:
+        for entry in _history_entries(lm):
+            call_count += 1
+            cost = _cost_from_history_entry(entry, model)
+            if cost is None:
+                return SearchCostSummary(search_cost_usd=None, search_lm_call_count=call_count)
+            total += cost
+            priced_any = True
+    if call_count == 0 or not priced_any:
+        return SearchCostSummary(search_cost_usd=None, search_lm_call_count=call_count)
+    return SearchCostSummary(search_cost_usd=round(total, 6), search_lm_call_count=call_count)
+
+
 def estimate_optimize_cost(
     cfg: Config, train_cases: list[GoldenCase], prompt_template: str
 ) -> OptimizeCostEstimate:
@@ -684,6 +759,7 @@ def optimize(
         cfg=cfg,
     )
     duration_seconds = round(time.monotonic() - started, 3)
+    search_cost = summarize_lm_search_cost(task_lm, reflection_lm, cfg)
     optimized_template = render_optimized_template(result.optimized_instructions, original_template)
 
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -728,6 +804,8 @@ def optimize(
                 "slug": slug,
                 "summary": summary,
                 "duration_seconds": duration_seconds,
+                "search_cost_usd": search_cost.search_cost_usd,
+                "search_lm_call_count": search_cost.search_lm_call_count,
                 "train_case_count": len(optimize_cases),
                 "train_case_ids": sorted(optimize_ids),
                 "full_train_case_count": len(train_cases),
@@ -843,26 +921,76 @@ def _load_run_meta(run_id: str, paths: TaskPaths) -> dict:
     return raw if isinstance(raw, dict) else {}
 
 
+def _iter_optimized_index(paths: TaskPaths):
+    index_path = paths.optimized_index
+    if not index_path.exists():
+        return
+    try:
+        for line in index_path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            entry = json.loads(line)
+            if isinstance(entry, dict):
+                yield entry
+    except (OSError, json.JSONDecodeError, TypeError):
+        return
+
+
 def _method_for_variant(variant: str | None, paths: TaskPaths) -> str | None:
     """Resolve optimizer method from optimized/index.jsonl or the variant slug."""
     if not variant:
         return None
-    index_path = paths.optimized_index
-    if index_path.exists():
-        try:
-            for line in index_path.read_text(encoding="utf-8").splitlines():
-                if not line.strip():
-                    continue
-                entry = json.loads(line)
-                if entry.get("variant_name") == variant and entry.get("method"):
-                    return str(entry["method"])
-        except (OSError, json.JSONDecodeError, TypeError):
-            pass
+    for entry in _iter_optimized_index(paths):
+        if entry.get("variant_name") == variant and entry.get("method"):
+            return str(entry["method"])
     # variant naming: {alias}_{method}_{timestamp}_{slug}
     parts = variant.split("_")
     if len(parts) >= 2 and parts[1] in {"gepa", "miprov2", "copro"}:
         return parts[1]
     return None
+
+
+def _load_optimize_log_for_run(run_id: str, paths: TaskPaths) -> dict | None:
+    """Load optimize_log.json for a run via optimized/index.jsonl (APO-14)."""
+    for entry in _iter_optimized_index(paths):
+        if entry.get("run_id") != run_id:
+            continue
+        rel = entry.get("optimize_log")
+        if not isinstance(rel, str) or not rel:
+            return None
+        log_path = paths.optimized_dir / rel
+        if not log_path.exists():
+            return None
+        try:
+            data = json.loads(log_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, TypeError):
+            return None
+        return data if isinstance(data, dict) else None
+    return None
+
+
+def _fmt_explore_cost(variant: str | None, log: dict | None) -> str:
+    """Base runs → ``-``; missing log/field → ``n/a``; else USD."""
+    if not variant:
+        return "-"
+    if not log or log.get("search_cost_usd") is None:
+        return "n/a"
+    try:
+        return _fmt_usd(float(log["search_cost_usd"]))
+    except (TypeError, ValueError):
+        return "n/a"
+
+
+def _fmt_explore_duration(variant: str | None, log: dict | None) -> str:
+    """Base runs → ``-``; missing log/field → ``n/a``; else seconds."""
+    if not variant:
+        return "-"
+    if not log or log.get("duration_seconds") is None:
+        return "n/a"
+    try:
+        return f"{float(log['duration_seconds']):.1f}"
+    except (TypeError, ValueError):
+        return "n/a"
 
 
 def _compare_report_filename(run_ids: list[str]) -> str:
@@ -924,16 +1052,22 @@ def _compare_pair(run_a: str, run_b: str, paths: TaskPaths) -> list[str]:
 
 
 def _compare_matrix(run_ids: list[str], paths: TaskPaths) -> list[str]:
-    """Model × run matrix for 3+ runs (accuracy / cost / latency)."""
+    """Model × run matrix for 3+ runs (accuracy / cost / latency / explore)."""
     per_run_stats: list[dict[str, report_mod.AliasStats]] = []
     headers: list[str] = []
+    explore_costs: list[str] = []
+    explore_durations: list[str] = []
     for run_id in run_ids:
         meta = _load_run_meta(run_id, paths)
-        variant = meta.get("variant")
-        method = _method_for_variant(variant if isinstance(variant, str) else None, paths)
+        variant_raw = meta.get("variant")
+        variant = variant_raw if isinstance(variant_raw, str) else None
+        method = _method_for_variant(variant, paths)
         variant_label = variant or "(base)"
         method_label = method or "n/a"
         headers.append(f"`{run_id}` (variant=`{variant_label}`, method=`{method_label}`)")
+        opt_log = _load_optimize_log_for_run(run_id, paths) if variant else None
+        explore_costs.append(_fmt_explore_cost(variant, opt_log))
+        explore_durations.append(_fmt_explore_duration(variant, opt_log))
         per_run_stats.append(
             {
                 s.alias: s
@@ -960,19 +1094,36 @@ def _compare_matrix(run_ids: list[str], paths: TaskPaths) -> list[str]:
     header_cells = ["alias"]
     align_cells = ["---"]
     for label in col_labels:
-        header_cells.extend([f"pass_rate {label}", f"cost {label}", f"p50_ms {label}"])
-        align_cells.extend(["---:", "---:", "---:"])
+        header_cells.extend(
+            [
+                f"pass_rate {label}",
+                f"cost {label}",
+                f"p50_ms {label}",
+                f"search_cost {label}",
+                f"duration_s {label}",
+            ]
+        )
+        align_cells.extend(["---:", "---:", "---:", "---:", "---:"])
     lines.append("| " + " | ".join(header_cells) + " |")
     lines.append("|" + "|".join(align_cells) + "|")
 
     for alias in aliases:
         cells = [alias]
-        for stats in per_run_stats:
+        for stats, search_cost, duration_s in zip(
+            per_run_stats, explore_costs, explore_durations, strict=True
+        ):
             s = stats.get(alias)
             cells.append(_fmt_pct(s.pass_rate if s else None))
             cells.append(_fmt_usd(s.total_cost_usd if s else None))
             cells.append(report_mod.fmt(s.p50_latency_ms if s else None, ".0f"))
+            cells.append(search_cost)
+            cells.append(duration_s)
         lines.append("| " + " | ".join(cells) + " |")
+    lines.append("")
+    lines.append(
+        "> search_cost / duration_s: optimize exploration (from optimize_log.json); "
+        "base runs show `-`, missing logs show `n/a`. `cost` is the holdout eval cost."
+    )
     lines.append("")
     lines.append(f"> {_COMPARE_MULTI_DISCLAIMER}")
     lines.append("")
