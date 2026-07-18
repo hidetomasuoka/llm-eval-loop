@@ -53,8 +53,33 @@ def test_compute_alias_stats_separates_model_and_judge_tokens():
     s = report_mod.compute_alias_stats(results)[0]
     assert s.model_prompt_tokens == 50
     assert s.model_completion_tokens == 10
+    assert s.avg_model_prompt_tokens == pytest.approx(25.0)
+    assert s.avg_model_completion_tokens == pytest.approx(5.0)
     assert s.judge_prompt_tokens == 200
     assert s.judge_completion_tokens == 40
+
+
+def test_compute_alias_stats_avg_tokens_missing_when_no_model_usage():
+    """Providers without tokenUsage (Ollama etc.) should yield n/a averages."""
+    results = [
+        _cr("ollama", True, token_usage={}),
+        _cr("ollama", False, case_id="case-0002", token_usage=None),
+    ]
+    s = report_mod.compute_alias_stats(results)[0]
+    assert s.model_prompt_tokens == 0
+    assert s.model_completion_tokens == 0
+    assert s.avg_model_prompt_tokens is None
+    assert s.avg_model_completion_tokens is None
+
+
+def test_compute_alias_stats_avg_tokens_per_row():
+    results = [
+        _cr("haiku45", True, token_usage={"prompt": 100, "completion": 20}),
+        _cr("haiku45", False, case_id="case-0002", token_usage={"prompt": 200, "completion": 40}),
+    ]
+    s = report_mod.compute_alias_stats(results)[0]
+    assert s.avg_model_prompt_tokens == pytest.approx(150.0)
+    assert s.avg_model_completion_tokens == pytest.approx(30.0)
 
 
 def test_compute_alias_stats_pass_rate_and_cost():
@@ -152,7 +177,9 @@ def test_render_markdown_repeat_section_only_when_repeats_exist():
 
 
 def test_render_markdown_includes_warnings_and_table():
-    stats = report_mod.compute_alias_stats([_cr("haiku45", True)])
+    stats = report_mod.compute_alias_stats(
+        [_cr("haiku45", True, token_usage={"prompt": 100, "completion": 20})]
+    )
     md = report_mod.render_markdown(
         "20260101-000000-abcd",
         {"task_name": "t", "answer_type": "label", "created_at": "now", "repeat": 1, "limit": None,
@@ -163,6 +190,52 @@ def test_render_markdown_includes_warnings_and_table():
     assert "⚠ uncalibrated" in md
     assert "haiku45" in md
     assert "| alias |" in md
+    assert "avg_prompt_tokens" in md
+    assert "avg_output_tokens" in md
+    assert "100.0" in md
+    assert "20.0" in md
+
+
+def test_render_markdown_shows_na_for_missing_token_usage():
+    stats = report_mod.compute_alias_stats([_cr("ollama", True, token_usage={})])
+    md = report_mod.render_markdown(
+        "run-ollama",
+        {"task_name": "t", "answer_type": "label", "created_at": "now", "repeat": 1, "limit": None,
+         "promptfoo_config_path": "x", "promptfoo_version": "0.1.0"},
+        stats,
+        [],
+    )
+    row = [line for line in md.splitlines() if line.startswith("| ollama |")][0]
+    assert row.count("n/a") >= 2
+
+
+def test_render_markdown_variant_caption_includes_prompt_template_length(isolated_root, monkeypatch):
+    monkeypatch.setattr(report_mod, "REPO_ROOT", isolated_root)
+    prompt_path = isolated_root / "tasks" / "t1" / "optimized" / "qwen7b" / "task.txt"
+    prompt_path.parent.mkdir(parents=True)
+    prompt_text = "optimized prompt template {{input}}"
+    prompt_path.write_text(prompt_text, encoding="utf-8")
+
+    stats = report_mod.compute_alias_stats([_cr("qwen7b", True)])
+    rel_prompt = prompt_path.relative_to(isolated_root)
+    md = report_mod.render_markdown(
+        "run-variant",
+        {
+            "task_name": "t1",
+            "answer_type": "label",
+            "variant": "qwen7b_opt",
+            "prompt_file": str(rel_prompt),
+            "created_at": "now",
+            "repeat": 1,
+            "limit": None,
+            "promptfoo_config_path": "x",
+            "promptfoo_version": "0.1.0",
+        },
+        stats,
+        [],
+    )
+    assert f"variant prompt template: {len(prompt_text)} characters" in md
+    assert f"`{rel_prompt}`" in md
 
 
 def test_report_end_to_end(isolated_root):

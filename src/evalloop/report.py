@@ -13,7 +13,7 @@ import statistics
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from evalloop.paths import TaskPaths
+from evalloop.paths import REPO_ROOT, TaskPaths
 from evalloop.schemas import CaseResult, parse_promptfoo_output
 
 
@@ -37,6 +37,8 @@ class AliasStats:
     # (e.g. local/Ollama models) -- cost alone is uninformative there.
     model_prompt_tokens: int = 0
     model_completion_tokens: int = 0
+    avg_model_prompt_tokens: float | None = None
+    avg_model_completion_tokens: float | None = None
     judge_prompt_tokens: int = 0
     judge_completion_tokens: int = 0
     # uncertainty additions (issue #11): a single pass rate hides both the
@@ -117,6 +119,12 @@ def compute_alias_stats(results: list[CaseResult]) -> list[AliasStats]:
             jt = grading.get("tokensUsed") or {}
             judge_prompt += jt.get("prompt", 0) or 0
             judge_completion += jt.get("completion", 0) or 0
+        if rows and (model_prompt or model_completion):
+            avg_model_prompt = model_prompt / len(rows)
+            avg_model_completion = model_completion / len(rows)
+        else:
+            avg_model_prompt = None
+            avg_model_completion = None
         stats.append(
             AliasStats(
                 alias=alias,
@@ -129,6 +137,8 @@ def compute_alias_stats(results: list[CaseResult]) -> list[AliasStats]:
                 error_count=errors,
                 model_prompt_tokens=model_prompt,
                 model_completion_tokens=model_completion,
+                avg_model_prompt_tokens=avg_model_prompt,
+                avg_model_completion_tokens=avg_model_completion,
                 judge_prompt_tokens=judge_prompt,
                 judge_completion_tokens=judge_completion,
                 pass_ci_low=ci_low,
@@ -145,6 +155,19 @@ def compute_alias_stats(results: list[CaseResult]) -> list[AliasStats]:
 def fmt(value, spec) -> str:
     """Shared numeric-or-'n/a' formatter, also used by blog.py's tables/conditions rendering."""
     return format(value, spec) if value is not None else "n/a"
+
+
+def prompt_template_char_len(meta: dict) -> int | None:
+    """Return prompt template length for variant runs (APO-20 / issue #79)."""
+    if not meta.get("variant"):
+        return None
+    prompt_file = meta.get("prompt_file")
+    if not prompt_file:
+        return None
+    path = REPO_ROOT / prompt_file
+    if not path.is_file():
+        return None
+    return len(path.read_text(encoding="utf-8"))
 
 
 def render_markdown(run_id: str, meta: dict, stats: list[AliasStats], warnings_lines: list[str]) -> str:
@@ -165,9 +188,10 @@ def render_markdown(run_id: str, meta: dict, stats: list[AliasStats], warnings_l
 
     lines.append(
         "| alias | n | pass_rate | pass_95ci | repeat_stddev | total_cost_usd | avg_cost_usd "
-        "| model_tokens | judge_tokens | p50_latency_ms | cache_rate | errors |"
+        "| avg_prompt_tokens | avg_output_tokens | model_tokens | judge_tokens "
+        "| p50_latency_ms | cache_rate | errors |"
     )
-    lines.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
+    lines.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
     for s in stats:
         ci = (
             f"[{format(s.pass_ci_low, '.1%')}, {format(s.pass_ci_high, '.1%')}]"
@@ -177,7 +201,8 @@ def render_markdown(run_id: str, meta: dict, stats: list[AliasStats], warnings_l
         model_tok = s.model_prompt_tokens + s.model_completion_tokens
         judge_tok = s.judge_prompt_tokens + s.judge_completion_tokens
         lines.append(
-            "| {alias} | {n} | {pass_rate} | {ci} | {stddev} | {total_cost} | {avg_cost} | {model_tok} | {judge_tok} | {p50} | {cache} | {errors} |".format(
+            "| {alias} | {n} | {pass_rate} | {ci} | {stddev} | {total_cost} | {avg_cost} "
+            "| {avg_prompt} | {avg_output} | {model_tok} | {judge_tok} | {p50} | {cache} | {errors} |".format(
                 alias=s.alias,
                 n=s.n,
                 pass_rate=fmt(s.pass_rate, ".1%"),
@@ -185,6 +210,8 @@ def render_markdown(run_id: str, meta: dict, stats: list[AliasStats], warnings_l
                 stddev=fmt(s.repeat_stddev, ".1%"),
                 total_cost=fmt(s.total_cost_usd, ".4f"),
                 avg_cost=fmt(s.avg_cost_usd, ".6f"),
+                avg_prompt=fmt(s.avg_model_prompt_tokens, ".1f"),
+                avg_output=fmt(s.avg_model_completion_tokens, ".1f"),
                 model_tok=model_tok,
                 judge_tok=judge_tok,
                 p50=fmt(s.p50_latency_ms, ".0f"),
@@ -199,10 +226,20 @@ def render_markdown(run_id: str, meta: dict, stats: list[AliasStats], warnings_l
         "per-repeat pass rates; n/a when repeat=1."
     )
     lines.append(
+        "> avg_prompt_tokens / avg_output_tokens: per-row average model prompt/completion tokens "
+        "from promptfoo response.tokenUsage; n/a when the provider reports no token usage "
+        "(e.g. Ollama or missing tokenUsage)."
+    )
+    lines.append(
         "> model_tokens / judge_tokens: total (prompt+completion) tokens consumed by the "
         "evaluated model / llm-rubric grader respectively. judge_tokens is 0 for answer_types "
         "without an LLM judge. Useful when unit prices are $0 (e.g. local/Ollama models)."
     )
+    prompt_len = prompt_template_char_len(meta)
+    if prompt_len is not None:
+        lines.append(
+            f"> variant prompt template: {prompt_len} characters (`{meta.get('prompt_file')}`)"
+        )
     lines.append("")
 
     # repeat stability section, only when at least one alias actually has repeats
