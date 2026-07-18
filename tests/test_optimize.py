@@ -316,17 +316,22 @@ def test_find_latest_base_run_returns_none_when_missing(isolated_root):
 # ---------------------------------------------------------------------------
 
 
-def _write_output(runs_dir, run_id, rows):
+def _write_output(runs_dir, run_id, rows, *, meta=None):
     run_dir = runs_dir / run_id
     run_dir.mkdir(parents=True)
     (run_dir / "output.json").write_text(json.dumps({"results": {"results": rows}}), encoding="utf-8")
+    if meta is not None:
+        (run_dir / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
 
 
-def _row(case_id, alias, passed, cost=0.001):
+def _row(case_id, alias, passed, cost=0.001, *, completion_tokens=None):
+    response = {"output": "契約照会"}
+    if completion_tokens is not None:
+        response["tokenUsage"] = {"prompt": 10, "completion": completion_tokens}
     return {
         "vars": {"case_id": case_id, "expected": "契約照会"},
         "provider": {"id": "p", "label": alias},
-        "response": {"output": "契約照会"},
+        "response": response,
         "gradingResult": {"pass": passed, "score": 1 if passed else 0},
         "success": passed,
         "cost": cost,
@@ -346,8 +351,56 @@ def test_compare_computes_deltas(isolated_root):
     assert path.name == "compare_before_after.md"
     assert "qwen7b" in content
     assert "+100.0%" in content
+    assert "cost delta %" in content
+    assert "out_tok delta" in content
+    assert "prompt_len delta" in content
     # 2-run path must stay the legacy delta form (no multi-run disclaimer).
     assert "条件依存" not in content
+
+
+def test_compare_tradeoff_note_when_accuracy_up_cost_spikes(isolated_root):
+    paths = TaskPaths(root=isolated_root, task="t1")
+    prompt_a = paths.root / "prompts" / "a.txt"
+    prompt_b = paths.root / "prompts" / "b.txt"
+    prompt_a.parent.mkdir(parents=True)
+    prompt_a.write_text("short", encoding="utf-8")
+    prompt_b.write_text("x" * 20, encoding="utf-8")  # +300% length
+
+    _write_output(
+        paths.runs_dir,
+        "before",
+        [_row("case-0001", "qwen7b", False, cost=1.0, completion_tokens=10)],
+        meta={"prompt_file": "prompts/a.txt", "variant": None},
+    )
+    _write_output(
+        paths.runs_dir,
+        "after",
+        [_row("case-0001", "qwen7b", True, cost=2.0, completion_tokens=20)],
+        meta={"prompt_file": "prompts/b.txt", "variant": "opt"},
+    )
+
+    content = optimize_mod.compare(["before", "after"], paths).read_text(encoding="utf-8")
+    assert "+100.0%" in content  # pass_rate and/or cost %
+    assert "⚠ トレードオフ注意 (qwen7b)" in content
+    assert "コスト +100%" in content
+    assert "出力トークン +100%" in content
+    assert "プロンプト長 +" in content
+
+
+def test_compare_no_tradeoff_when_cost_below_threshold(isolated_root):
+    paths = TaskPaths(root=isolated_root, task="t1")
+    _write_output(
+        paths.runs_dir,
+        "before",
+        [_row("case-0001", "qwen7b", False, cost=1.0, completion_tokens=10)],
+    )
+    _write_output(
+        paths.runs_dir,
+        "after",
+        [_row("case-0001", "qwen7b", True, cost=1.4, completion_tokens=12)],
+    )
+    content = optimize_mod.compare(["before", "after"], paths).read_text(encoding="utf-8")
+    assert "⚠ トレードオフ注意" not in content
 
 
 def test_compare_missing_run_raises(isolated_root):
