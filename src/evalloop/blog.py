@@ -4,6 +4,7 @@
         fig01_accuracy_by_model.{png,svg}
         fig02_cost_vs_accuracy.{png,svg}
         fig03_failure_heatmap.{png,svg}   (skipped if data/taxonomy.yaml is missing/empty)
+        fig04_pareto_cost_accuracy.{png,svg}  (Pareto-front style cost×accuracy; APO-22)
         tables.md
         conditions.md
         article_draft.md
@@ -242,6 +243,24 @@ def make_fig01_accuracy_by_model(runs: list[RunData], out_dir: Path, labels: Lab
     _save_fig(fig, out_dir, "fig01_accuracy_by_model")
 
 
+def pareto_front_mask(costs: list[float], accuracies: list[float]) -> list[bool]:
+    """Mark non-dominated points for minimize-cost / maximize-accuracy (APO-22)."""
+    if len(costs) != len(accuracies):
+        raise ValueError("costs and accuracies must have the same length")
+    n = len(costs)
+    on_front = [True] * n
+    for i in range(n):
+        for j in range(n):
+            if i == j:
+                continue
+            if costs[j] <= costs[i] and accuracies[j] >= accuracies[i] and (
+                costs[j] < costs[i] or accuracies[j] > accuracies[i]
+            ):
+                on_front[i] = False
+                break
+    return on_front
+
+
 def make_fig02_cost_vs_accuracy(runs: list[RunData], out_dir: Path, labels: Labels) -> None:
     fig, ax = plt.subplots(figsize=(7, 5))
     positions: dict[str, tuple[float, float]] = {}
@@ -283,6 +302,79 @@ def make_fig02_cost_vs_accuracy(runs: list[RunData], out_dir: Path, labels: Labe
         ax.legend(fontsize=8)
     fig.tight_layout()
     _save_fig(fig, out_dir, "fig02_cost_vs_accuracy")
+
+
+def make_fig04_pareto_cost_accuracy(runs: list[RunData], out_dir: Path, labels: Labels) -> None:
+    """Pareto-front style cost×accuracy scatter (APO-22 / issue #81).
+
+    Points are labeled by model alias. Multi-run exports use distinct markers
+    per run (method-aware legend). The non-dominated front is connected left
+    to right (lower cost → higher cost).
+    """
+    costs: list[float] = []
+    accs: list[float] = []
+    aliases: list[str] = []
+    colors: list[str] = []
+    markers: list[str] = []
+    run_labels: list[str] = []
+    for run_idx, run in enumerate(runs):
+        marker = _FIG02_MARKERS[run_idx % len(_FIG02_MARKERS)]
+        for s in run.stats:
+            costs.append(s.avg_cost_usd if s.avg_cost_usd > 0 else 1e-6)
+            accs.append(s.pass_rate or 0.0)
+            aliases.append(s.alias)
+            colors.append(_TIER_COLORS.get(_tier_for_alias(run.meta, s.alias), "#333333"))
+            markers.append(marker)
+            run_labels.append(run.label)
+
+    fig, ax = plt.subplots(figsize=(7, 5))
+    legend_seen: set[str] = set()
+    for cost, acc, alias, color, marker, run_label in zip(
+        costs, accs, aliases, colors, markers, run_labels, strict=True
+    ):
+        legend_label = None
+        if len(runs) > 1 and run_label not in legend_seen:
+            legend_label = run_label
+            legend_seen.add(run_label)
+        ax.scatter(cost, acc, color=color, marker=marker, s=70, zorder=3, label=legend_label)
+        ax.annotate(alias, (cost, acc), fontsize=8, xytext=(4, 4), textcoords="offset points")
+
+    if costs:
+        on_front = pareto_front_mask(costs, accs)
+        front = sorted(
+            [(c, a) for c, a, keep in zip(costs, accs, on_front, strict=True) if keep],
+            key=lambda p: p[0],
+        )
+        if len(front) >= 2:
+            ax.plot(
+                [p[0] for p in front],
+                [p[1] for p in front],
+                color="#333333",
+                linestyle="--",
+                linewidth=1.2,
+                alpha=0.7,
+                zorder=2,
+                label="パレート前線" if labels.accuracy == "精度" else "Pareto front",
+            )
+        elif len(front) == 1:
+            ax.scatter(
+                [front[0][0]],
+                [front[0][1]],
+                facecolors="none",
+                edgecolors="#333333",
+                s=140,
+                linewidths=1.5,
+                zorder=4,
+            )
+
+    ax.set_xscale("log")
+    ax.set_xlabel(labels.cost)
+    ax.set_ylabel(labels.accuracy)
+    ax.set_ylim(0, 1.05)
+    if ax.get_legend_handles_labels()[0]:
+        ax.legend(fontsize=8)
+    fig.tight_layout()
+    _save_fig(fig, out_dir, "fig04_pareto_cost_accuracy")
 
 
 def make_fig03_failure_heatmap(run: RunData, out_dir: Path, labels: Labels, paths: TaskPaths) -> bool:
@@ -411,6 +503,7 @@ def render_conditions_md(runs: list[RunData], config, fig03_written: bool) -> st
         f"- promptfoo version: `{primary.meta.get('promptfoo_version')}`",
         f"- dspy version: `{__import__('dspy').__version__}`",
         f"- fig03 (failure heatmap): {'included' if fig03_written else 'skipped (data/taxonomy.yaml not defined yet)'}",
+        "- fig04 (pareto cost×accuracy): included",
         "",
         "## reproduce",
         "```bash",
@@ -479,6 +572,8 @@ def render_article_draft(runs: list[RunData], config, fig03_written: bool) -> st
         "![モデル別精度](./fig01_accuracy_by_model.png)",
         "",
         "![コスト対精度](./fig02_cost_vs_accuracy.png)",
+        "",
+        "![精度×コスト（パレート前線）](./fig04_pareto_cost_accuracy.png)",
         "",
     ]
     if fig03_written:
@@ -560,6 +655,7 @@ def blog(
 
         make_fig01_accuracy_by_model(runs, staging_dir, labels)
         make_fig02_cost_vs_accuracy(runs, staging_dir, labels)
+        make_fig04_pareto_cost_accuracy(runs, staging_dir, labels)
         fig03_written = make_fig03_failure_heatmap(runs[-1], staging_dir, labels, paths)
         if not fig03_written:
             print(f"[blog] fig03 skipped: {paths.taxonomy} not defined yet (run `evalloop cluster` then merge it)")

@@ -162,7 +162,7 @@ uv run evalloop blog --runs <run_id>                        # ブログ用の図
 | `evalloop diagnose [--answers 1,2,3]` | 症状→粒度→手法の対話チェックリスト（APO適用可否と `optimize.method` 推奨。LLM不要） |
 | `evalloop optimize` | dspy（GEPA / MIPROv2 / COPRO、task.yaml の `optimize.method` で選択）でプロンプト最適化、自動でrun/report/compare（手法選定は [docs/APO_GUIDE.md](docs/APO_GUIDE.md) 参照） |
 | `evalloop compare --runs A,B[,C...]` | 2runはbefore/after差分（コスト%・出力トークン・プロンプト長のトレードオフ注意付き）、3run以上はモデル×runマトリクス比較（マトリクスには optimize_log の探索コスト `search_cost` / 所要時間 `duration_s` 列も表示） |
-| `evalloop blog --runs A[,B[,C...]] [--slug NAME]` | 公開ガード通過後にブログ用一式を生成（2run以上は手法比較向けに条件依存性の免責を挿入。3run以上は compare と同じモデル×runマトリクスも tables.md に含める） |
+| `evalloop blog --runs A[,B[,C...]] [--slug NAME]` | 公開ガード通過後にブログ用一式を生成（2run以上は手法比較向けに条件依存性の免責を挿入。3run以上は compare と同じモデル×runマトリクスも tables.md に含める。精度×コストのパレート前線図 `fig04` も含む） |
 
 ## テスト / CI
 
