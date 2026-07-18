@@ -149,3 +149,80 @@ def test_build_demoshuffle_variants_rejects_non_positive(isolated_root):
     build_mod.build(cfg, paths, yes=True)
     with pytest.raises(SensitivityError, match="positive"):
         build_demoshuffle_variants(cfg, paths, 0)
+
+
+def test_build_demoshuffle_removes_stale_variants_when_n_shrinks(isolated_root):
+    rows = default_golden_rows(labels=DEFAULT_LABELS, n_train=12, n_test=8)
+    cfg, paths = scaffold_task(
+        isolated_root,
+        answer_type="label",
+        labels=DEFAULT_LABELS,
+        golden_rows=rows,
+        prompt="Examples:\n{{demos}}Q:\n{{input}}\n",
+    )
+    _write_train_demos(paths, n=3)
+    build_mod.build(cfg, paths, yes=True, shuffle_demos=3)
+    stale_prompt = paths.build_dir / "demoshuffle_2.txt"
+    stale_variant = paths.variants_dir / f"{demoshuffle_variant_name(paths.task, 2)}.yaml"
+    assert stale_prompt.exists() and stale_variant.exists()
+
+    build_demoshuffle_variants(cfg, paths, 2)
+    assert not stale_prompt.exists()
+    assert not stale_variant.exists()
+    assert (paths.build_dir / "demoshuffle_0.txt").exists()
+    assert (paths.variants_dir / f"{demoshuffle_variant_name(paths.task, 1)}.yaml").exists()
+
+
+def test_build_demoshuffle_leaks_against_build_yaml_holdout(isolated_root):
+    """Leak check must union golden test split with tests_test.yaml holdout."""
+    rows = default_golden_rows(labels=DEFAULT_LABELS, n_train=12, n_test=8)
+    cfg, paths = scaffold_task(
+        isolated_root,
+        answer_type="label",
+        labels=DEFAULT_LABELS,
+        golden_rows=rows,
+        prompt="Examples:\n{{demos}}Q:\n{{input}}\n",
+    )
+    _write_train_demos(paths, n=3)
+    build_mod.build(cfg, paths, yes=True)
+
+    # Stale holdout id that is no longer in golden test split, but still in YAML.
+    yaml_entries = yaml.safe_load(paths.tests_test.read_text(encoding="utf-8"))
+    yaml_entries.append(
+        {
+            "vars": {
+                "case_id": "case-stale-holdout",
+                "input": "stale holdout input",
+                "expected": "契約照会",
+                "category": "基本",
+            }
+        }
+    )
+    paths.tests_test.write_text(
+        yaml.safe_dump(yaml_entries, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
+    # Demo that only overlaps the YAML holdout (not current golden test ids).
+    paths.demos.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {"id": "case-0001", "input": "問い合わせ文サンプル1", "output": "契約照会"},
+                    ensure_ascii=False,
+                ),
+                json.dumps(
+                    {
+                        "id": "case-stale-holdout",
+                        "input": "stale holdout input",
+                        "output": "契約照会",
+                    },
+                    ensure_ascii=False,
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SensitivityError, match="case-stale-holdout|leaks test-split"):
+        build_demoshuffle_variants(cfg, paths, 2)

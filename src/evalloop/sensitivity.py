@@ -9,6 +9,7 @@ does not automate the eval loop.
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 
 import yaml
@@ -23,6 +24,9 @@ from evalloop.demos import (
 )
 from evalloop.paths import REPO_ROOT, TaskPaths
 from evalloop.schemas import Config, load_golden_jsonl
+
+_DEMOSHUFFLE_PROMPT_RE = re.compile(r"^demoshuffle_(\d+)\.txt$")
+_DEMOSHUFFLE_VARIANT_RE = re.compile(r"^(.+)_demoshuffle_(\d+)\.yaml$")
 
 
 class SensitivityError(RuntimeError):
@@ -41,6 +45,53 @@ def _reroot_file_refs(obj, prefix: str):
     if isinstance(obj, str) and obj.startswith("file://"):
         return "file://" + prefix + obj[len("file://") :]
     return obj
+
+
+def _load_holdout_from_build(paths: TaskPaths) -> tuple[set[str], set[str]]:
+    """Return (case_ids, inputs) from the last build's tests_test.yaml.
+
+    Mirrors optimize._load_holdout_from_build so demo leak checks cover the
+    YAML holdout promptfoo actually evaluates (DESIGN §5.6).
+    """
+    if not paths.tests_test.exists():
+        raise SensitivityError(
+            f"{paths.tests_test} not found; run `evalloop build` before --shuffle-demos"
+        )
+    entries = yaml.safe_load(paths.tests_test.read_text(encoding="utf-8")) or []
+    ids: set[str] = set()
+    inputs: set[str] = set()
+    for entry in entries:
+        vars_ = entry.get("vars") or {}
+        case_id = vars_.get("case_id")
+        if case_id is not None:
+            ids.add(str(case_id))
+        inp = vars_.get("input")
+        if inp is not None:
+            inputs.add(str(inp))
+    return ids, inputs
+
+
+def _clear_stale_demoshuffle_artifacts(paths: TaskPaths, n: int) -> None:
+    """Remove demoshuffle prompts/variants whose seed is outside 0..n-1."""
+    keep_seeds = set(range(n))
+    if paths.build_dir.is_dir():
+        for path in paths.build_dir.glob("demoshuffle_*.txt"):
+            m = _DEMOSHUFFLE_PROMPT_RE.match(path.name)
+            if m and int(m.group(1)) not in keep_seeds:
+                path.unlink(missing_ok=True)
+                print(f"[build] removed stale demoshuffle prompt {path.name}")
+    if paths.variants_dir.is_dir():
+        prefix = f"{paths.task}_demoshuffle_"
+        for path in paths.variants_dir.glob(f"{prefix}*.yaml"):
+            m = _DEMOSHUFFLE_VARIANT_RE.match(path.name)
+            if not m:
+                continue
+            task_name, seed_s = m.group(1), m.group(2)
+            if task_name != paths.task:
+                continue
+            if int(seed_s) not in keep_seeds:
+                path.unlink(missing_ok=True)
+                print(f"[build] removed stale demoshuffle variant {path.name}")
 
 
 def _variant_config_for_prompt(prompt_path: Path, paths: TaskPaths, *, seed: int) -> dict:
@@ -77,13 +128,16 @@ def build_demoshuffle_variants(config: Config, paths: TaskPaths, n: int) -> list
         )
 
     cases = load_golden_jsonl(paths.golden)
-    test_cases = [c for c in cases if c.split == "test"]
+    golden_test_cases = [c for c in cases if c.split == "test"]
+    yaml_test_ids, yaml_test_inputs = _load_holdout_from_build(paths)
+    demos_test_ids = yaml_test_ids | {c.id for c in golden_test_cases}
+    demos_test_inputs = yaml_test_inputs | {c.input for c in golden_test_cases}
     try:
         demos = load_demos_jsonl(paths.demos)
         assert_demos_do_not_leak_test(
             demos,
-            test_ids={c.id for c in test_cases},
-            test_inputs={c.input for c in test_cases},
+            test_ids=demos_test_ids,
+            test_inputs=demos_test_inputs,
         )
     except DemoError as e:
         raise SensitivityError(str(e)) from e
@@ -95,6 +149,7 @@ def build_demoshuffle_variants(config: Config, paths: TaskPaths, n: int) -> list
 
     paths.build_dir.mkdir(parents=True, exist_ok=True)
     paths.variants_dir.mkdir(parents=True, exist_ok=True)
+    _clear_stale_demoshuffle_artifacts(paths, n)
 
     names: list[str] = []
     for seed in range(n):
