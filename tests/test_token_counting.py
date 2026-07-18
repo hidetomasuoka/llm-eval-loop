@@ -35,14 +35,18 @@ def test_mixed_text_heuristic_distinguishes_japanese_and_ascii_density():
 
 
 def test_anthropic_official_counting_api_is_used_when_available(monkeypatch):
+    seen_bodies = []
     seen = {}
 
     def fake_urlopen(request, timeout):
+        body = json.loads(request.data.decode("utf-8"))
+        seen_bodies.append(body)
         seen["url"] = request.full_url
-        seen["body"] = json.loads(request.data.decode("utf-8"))
         seen["headers"] = {key.lower(): value for key, value in request.header_items()}
         seen["timeout"] = timeout
-        return _FakeResponse({"input_tokens": 21})
+        # Distinct per-case counts so averaging is exercised (ceil((10+20)/2)=15).
+        tokens = 10 if body["messages"][0]["content"] == "日本語の入力" else 20
+        return _FakeResponse({"input_tokens": tokens})
 
     monkeypatch.setenv("EVALLOOP_TOKEN_COUNT_API", "auto")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
@@ -52,14 +56,39 @@ def test_anthropic_official_counting_api_is_used_when_available(monkeypatch):
         "anthropic:messages:claude-sonnet-5", ["日本語の入力", "English input"]
     )
 
-    assert result.average_input_tokens == 11
+    assert result.average_input_tokens == 15
     assert result.method == "anthropic-count-tokens-api"
     assert result.sampled_case_count == 2
+    assert len(seen_bodies) == 2
+    assert {body["messages"][0]["content"] for body in seen_bodies} == {
+        "日本語の入力",
+        "English input",
+    }
+    assert all(body["model"] == "claude-sonnet-5" for body in seen_bodies)
     assert seen["url"] == token_counting.ANTHROPIC_COUNT_TOKENS_URL
-    assert seen["body"]["model"] == "claude-sonnet-5"
     assert seen["headers"]["x-api-key"] == "test-key"
     assert seen["headers"]["anthropic-version"] == token_counting.ANTHROPIC_API_VERSION
-    assert seen["timeout"] == 3
+    assert seen["timeout"] == token_counting._API_TIMEOUT_SECONDS
+
+
+def test_anthropic_partial_api_failure_falls_back(monkeypatch):
+    def fake_urlopen(request, timeout):
+        body = json.loads(request.data.decode("utf-8"))
+        content = body["messages"][0]["content"]
+        if content == "case-b":
+            raise urllib.error.URLError("second case failed")
+        return _FakeResponse({"input_tokens": 12})
+
+    monkeypatch.setenv("EVALLOOP_TOKEN_COUNT_API", "auto")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setattr(token_counting.urllib.request, "urlopen", fake_urlopen)
+
+    result = token_counting.average_input_tokens(
+        "anthropic:messages:claude-sonnet-5", ["case-a", "case-b"]
+    )
+
+    assert result.method == "heuristic:mixed-text-v1"
+    assert result.average_input_tokens > 0
 
 
 def test_anthropic_without_key_falls_back_without_network(monkeypatch):

@@ -20,6 +20,7 @@ import os
 import re
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 
 import tiktoken
@@ -27,7 +28,8 @@ import tiktoken
 ANTHROPIC_COUNT_TOKENS_URL = "https://api.anthropic.com/v1/messages/count_tokens"
 ANTHROPIC_API_VERSION = "2023-06-01"
 MAX_API_SAMPLE_CASES = 20
-_CASE_SEPARATOR = "\n\n--- EVAL CASE ---\n\n"
+_API_TIMEOUT_SECONDS = 3
+_API_MAX_WORKERS = 8
 _ASCII_WORD_RE = re.compile(r"[A-Za-z0-9_]+")
 _CJK_RE = re.compile(r"[\u3000-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
 
@@ -70,14 +72,10 @@ def _anthropic_api_enabled() -> bool:
     return value not in {"0", "false", "no", "off"}
 
 
-def _count_with_anthropic_api(model: str, texts: list[str]) -> TokenCount | None:
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key or not _anthropic_api_enabled():
-        return None
-
-    sampled = _sample_evenly(texts)
+def _count_one_anthropic_prompt(model: str, api_key: str, text: str) -> int | None:
+    """Count tokens for a single rendered prompt (one eval case = one request)."""
     payload = json.dumps(
-        {"model": model, "messages": [{"role": "user", "content": _CASE_SEPARATOR.join(sampled)}]}
+        {"model": model, "messages": [{"role": "user", "content": text}]}
     ).encode("utf-8")
     request = urllib.request.Request(
         ANTHROPIC_COUNT_TOKENS_URL,
@@ -90,15 +88,43 @@ def _count_with_anthropic_api(model: str, texts: list[str]) -> TokenCount | None
         },
     )
     try:
-        with urllib.request.urlopen(request, timeout=3) as response:
+        with urllib.request.urlopen(request, timeout=_API_TIMEOUT_SECONDS) as response:
             raw = json.loads(response.read().decode("utf-8"))
         total = int(raw["input_tokens"])
-        if total <= 0:
-            return None
     except (OSError, ValueError, KeyError, TypeError, urllib.error.URLError):
         return None
+    return total if total > 0 else None
+
+
+def _count_with_anthropic_api(model: str, texts: list[str]) -> TokenCount | None:
+    """Average per-case counts so the estimate matches build/optimize call shape.
+
+    Each sampled case is counted as its own ``user`` message — the same unit
+    promptfoo sends — rather than concatenating cases into one blob.
+    """
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key or not _anthropic_api_enabled():
+        return None
+
+    sampled = _sample_evenly(texts)
+    counts: list[int] = []
+    workers = min(_API_MAX_WORKERS, len(sampled))
+    try:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = [
+                pool.submit(_count_one_anthropic_prompt, model, api_key, text) for text in sampled
+            ]
+            for future in as_completed(futures):
+                counted = future.result()
+                if counted is None:
+                    return None
+                counts.append(counted)
+    except (OSError, ValueError, TypeError):
+        return None
+    if not counts:
+        return None
     return TokenCount(
-        average_input_tokens=max(1, math.ceil(total / len(sampled))),
+        average_input_tokens=max(1, math.ceil(sum(counts) / len(counts))),
         method="anthropic-count-tokens-api",
         sampled_case_count=len(sampled),
     )
