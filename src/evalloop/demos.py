@@ -74,3 +74,30 @@ def assert_demos_do_not_leak_test(
                 "demos.jsonl leaks a test-split input (exact string match); "
                 "few-shot demos must not include holdout cases"
             )
+
+
+def expand_demos_in_template(
+    template: str,
+    demos_path: Path,
+    *,
+    test_ids: set[str],
+    test_inputs: set[str],
+) -> tuple[str, int | None]:
+    """Expand ``{{demos}}`` using demos.jsonl when the placeholder is present.
+
+    Shared by ``evalloop build`` (promptfoo path) and ``evalloop optimize``
+    (dspy training template) so both see the same rendered prompt.
+
+    Returns ``(text, n_demos)`` when expanded, or ``(template, None)`` when
+    the placeholder is absent (caller may still warn about an unused demos file).
+    """
+    if DEMOS_PLACEHOLDER not in template:
+        return template, None
+    if not demos_path.exists():
+        raise DemoError(
+            f"prompt contains {DEMOS_PLACEHOLDER} but {demos_path} is missing. "
+            "Add demos.jsonl (see docs/DESIGN.md §5.6) or remove the placeholder."
+        )
+    demos = load_demos_jsonl(demos_path)
+    assert_demos_do_not_leak_test(demos, test_ids=test_ids, test_inputs=test_inputs)
+    return template.replace(DEMOS_PLACEHOLDER, format_demos(demos)), len(demos)

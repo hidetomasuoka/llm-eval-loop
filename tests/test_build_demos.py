@@ -9,9 +9,11 @@ import yaml
 
 from evalloop import build as build_mod
 from evalloop.demos import (
+    DEMOS_PLACEHOLDER,
     DemoCase,
     DemoError,
     assert_demos_do_not_leak_test,
+    expand_demos_in_template,
     format_demos,
     load_demos_jsonl,
 )
@@ -27,6 +29,27 @@ def test_format_demos_is_pure_and_stable():
     )
     assert text == "Input: hello\nOutput: 契約照会\n\nInput: bye\nOutput: その他\n\n"
     assert format_demos([]) == ""
+
+
+def test_expand_demos_in_template_shared_by_build_and_optimize(tmp_path):
+    demos_path = tmp_path / "demos.jsonl"
+    demos_path.write_text(
+        json.dumps({"id": "case-0001", "input": "demo in", "output": "契約照会"}, ensure_ascii=False)
+        + "\n",
+        encoding="utf-8",
+    )
+    template = f"Examples:\n{DEMOS_PLACEHOLDER}Q:\n{{{{input}}}}\n"
+    resolved, n = expand_demos_in_template(
+        template, demos_path, test_ids={"case-0099"}, test_inputs={"holdout"}
+    )
+    assert n == 1
+    assert DEMOS_PLACEHOLDER not in resolved
+    assert "Input: demo in\nOutput: 契約照会" in resolved
+    unchanged, n_none = expand_demos_in_template(
+        "no placeholder {{input}}", demos_path, test_ids=set(), test_inputs=set()
+    )
+    assert n_none is None
+    assert unchanged == "no placeholder {{input}}"
 
 
 def test_assert_demos_do_not_leak_test_by_id_and_input():
@@ -147,3 +170,54 @@ def test_real_sample_inquiry_build_embeds_tracked_demos(isolated_root):
     assert paths.demos.exists()
     assert paths.resolved_prompt.exists()
     assert "Input:" in paths.resolved_prompt.read_text(encoding="utf-8")
+
+
+def test_optimize_embeds_demos_into_training_template(isolated_root, monkeypatch, capsys):
+    """Bugbot #114: optimize must expand {{demos}} like build, not leave the placeholder."""
+    import types
+
+    from evalloop import optimize as optimize_mod
+    from evalloop import run as run_mod
+
+    rows = default_golden_rows(labels=DEFAULT_LABELS, n_train=12, n_test=8)
+    cfg, paths = scaffold_task(
+        isolated_root,
+        answer_type="label",
+        labels=DEFAULT_LABELS,
+        golden_rows=rows,
+        prompt="Examples:\n{{demos}}Classify:\n{{input}}\n",
+    )
+    paths.demos.write_text(
+        json.dumps({"id": "case-0001", "input": "demo in", "output": "契約照会"}, ensure_ascii=False)
+        + "\n",
+        encoding="utf-8",
+    )
+    build_mod.build(cfg, paths, yes=True)
+
+    seen = {}
+
+    def fake_gepa(student, trainset, metric, reflection_lm, auto, seed=0):
+        seen["instructions"] = student.signature.instructions
+        return types.SimpleNamespace(signature=types.SimpleNamespace(instructions="optimized"))
+
+    monkeypatch.setattr(optimize_mod, "run_gepa", fake_gepa)
+
+    def fake_eval(config_path, output_path, **kwargs):
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json.dumps({"results": {"results": []}}), encoding="utf-8")
+
+        class _P:
+            returncode = 0
+            stderr = ""
+
+        return _P()
+
+    monkeypatch.setattr(run_mod, "run_promptfoo_eval", fake_eval)
+    monkeypatch.setattr(run_mod, "get_promptfoo_version", lambda: "0.0.0-test")
+    monkeypatch.setattr(run_mod, "get_node_version", lambda: "v22.22.0")
+
+    optimize_mod.optimize(cfg, paths, yes=True)
+    out = capsys.readouterr().out
+    assert "embedded 1 demos" in out
+    assert DEMOS_PLACEHOLDER not in seen["instructions"]
+    assert "Input: demo in\nOutput: 契約照会" in seen["instructions"]

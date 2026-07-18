@@ -32,6 +32,7 @@ import yaml
 from evalloop import report as report_mod
 from evalloop import run as run_mod
 from evalloop.build import ESTIMATED_OUTPUT_TOKENS
+from evalloop.demos import DEMOS_PLACEHOLDER, DemoError, expand_demos_in_template
 from evalloop.optimizers.base import OptimizeError, PromptOptimizer
 from evalloop.optimizers.copro import (
     CoproOptimizer,
@@ -463,6 +464,25 @@ def optimize(
     preflight_mod.check_or_raise(preflight_result, force=force)
 
     original_template = (REPO_ROOT / cfg.task.prompt_file).read_text(encoding="utf-8")
+    # Expand {{demos}} the same way build does, so dspy trains on the prompt
+    # promptfoo will evaluate (APO-16 / issue #75 Bugbot finding).
+    test_cases = [c for c in cases if c.split == "test"]
+    if paths.demos.exists() and DEMOS_PLACEHOLDER not in original_template:
+        print(
+            f"[optimize] WARN: {paths.demos} exists but prompt has no {DEMOS_PLACEHOLDER}; "
+            "demos are ignored"
+        )
+    elif DEMOS_PLACEHOLDER in original_template:
+        try:
+            original_template, n_demos = expand_demos_in_template(
+                original_template,
+                paths.demos,
+                test_ids={c.id for c in test_cases},
+                test_inputs={c.input for c in test_cases},
+            )
+        except DemoError as e:
+            raise OptimizeError(str(e)) from e
+        print(f"[optimize] embedded {n_demos} demos into the training template")
 
     # APO-10: order-of-magnitude cost warning + confirmation BEFORE the first
     # rollout is spent (mirrors build.py's --yes pattern)

@@ -22,13 +22,7 @@ from pathlib import Path
 
 import yaml
 
-from evalloop.demos import (
-    DEMOS_PLACEHOLDER,
-    DemoError,
-    assert_demos_do_not_leak_test,
-    format_demos,
-    load_demos_jsonl,
-)
+from evalloop.demos import DEMOS_PLACEHOLDER, DemoError, expand_demos_in_template
 from evalloop.paths import REPO_ROOT, TaskPaths
 from evalloop.schemas import Config, GoldenCase, assert_split_disjoint, load_golden_jsonl
 from evalloop.token_counting import average_input_tokens, render_case_prompts
@@ -194,38 +188,31 @@ def _resolve_prompt_template(config: Config, paths: TaskPaths, test_cases: list[
     """Return (template_text, path_for_promptfoo) with optional ``{{demos}}`` expansion."""
     prompt_path = REPO_ROOT / config.task.prompt_file
     template = prompt_path.read_text(encoding="utf-8")
-    has_placeholder = DEMOS_PLACEHOLDER in template
     demos_exist = paths.demos.exists()
 
-    if has_placeholder and not demos_exist:
-        raise BuildError(
-            f"prompt contains {DEMOS_PLACEHOLDER} but {paths.demos} is missing. "
-            "Add demos.jsonl (see docs/DESIGN.md §5.6) or remove the placeholder."
-        )
-    if demos_exist and not has_placeholder:
+    if demos_exist and DEMOS_PLACEHOLDER not in template:
         print(
             f"[build] WARN: {paths.demos} exists but prompt has no {DEMOS_PLACEHOLDER}; "
             "demos are ignored"
         )
         return template, prompt_path
 
-    if not has_placeholder:
-        return template, prompt_path
-
     try:
-        demos = load_demos_jsonl(paths.demos)
-        assert_demos_do_not_leak_test(
-            demos,
+        resolved_text, n_demos = expand_demos_in_template(
+            template,
+            paths.demos,
             test_ids={c.id for c in test_cases},
             test_inputs={c.input for c in test_cases},
         )
     except DemoError as e:
         raise BuildError(str(e)) from e
 
-    resolved_text = template.replace(DEMOS_PLACEHOLDER, format_demos(demos))
+    if n_demos is None:
+        return template, prompt_path
+
     paths.resolved_prompt.parent.mkdir(parents=True, exist_ok=True)
     paths.resolved_prompt.write_text(resolved_text, encoding="utf-8")
-    print(f"[build] wrote {paths.resolved_prompt} ({len(demos)} demos embedded)")
+    print(f"[build] wrote {paths.resolved_prompt} ({n_demos} demos embedded)")
     return resolved_text, paths.resolved_prompt
 
 
