@@ -168,6 +168,43 @@ def test_compare_matrix_shows_search_cost_and_duration_from_optimize_log(isolate
     assert "optimize_log.json" in content
 
 
+def test_compare_matrix_resolves_optimize_log_via_variant_on_reeval(isolated_root):
+    """Bugbot: re-eval keeps variant name but gets a new run_id."""
+    paths = TaskPaths(root=isolated_root, task="t1")
+    variant = "m_gepa_20260719-010000_abcd"
+    _write_output(paths.runs_dir, "base", [_row("case-0001", "m", True)], variant=None)
+    _write_output(paths.runs_dir, "orig-opt", [_row("case-0001", "m", True)], variant=variant)
+    # Later re-eval of the same variant with a different run_id
+    _write_output(paths.runs_dir, "reeval-opt", [_row("case-0001", "m", False)], variant=variant)
+
+    log_rel = "m/gepa-20260719-010000-abcd/optimize_log.json"
+    log_path = paths.optimized_dir / log_rel
+    log_path.parent.mkdir(parents=True)
+    log_path.write_text(
+        json.dumps({"search_cost_usd": 0.05, "duration_seconds": 12.0}),
+        encoding="utf-8",
+    )
+    # Index still points at the original optimize run_id
+    paths.optimized_index.write_text(
+        json.dumps(
+            {
+                "variant_name": variant,
+                "method": "gepa",
+                "run_id": "orig-opt",
+                "optimize_log": log_rel,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    content = optimize_mod.compare(["base", "reeval-opt", "orig-opt"], paths).read_text(
+        encoding="utf-8"
+    )
+    assert content.count("$0.0500") >= 2  # both variant runs resolve the log
+    assert "12.0" in content
+
+
 def test_compare_matrix_missing_optimize_log_file_is_na(isolated_root):
     paths = TaskPaths(root=isolated_root, task="t1")
     _write_output(paths.runs_dir, "a", [_row("case-0001", "m", True)], variant=None)

@@ -950,22 +950,40 @@ def _method_for_variant(variant: str | None, paths: TaskPaths) -> str | None:
     return None
 
 
-def _load_optimize_log_for_run(run_id: str, paths: TaskPaths) -> dict | None:
-    """Load optimize_log.json for a run via optimized/index.jsonl (APO-14)."""
-    for entry in _iter_optimized_index(paths):
-        if entry.get("run_id") != run_id:
-            continue
-        rel = entry.get("optimize_log")
-        if not isinstance(rel, str) or not rel:
-            return None
-        log_path = paths.optimized_dir / rel
-        if not log_path.exists():
-            return None
-        try:
-            data = json.loads(log_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError, TypeError):
-            return None
-        return data if isinstance(data, dict) else None
+def _read_optimize_log_from_index_entry(entry: dict, paths: TaskPaths) -> dict | None:
+    rel = entry.get("optimize_log")
+    if not isinstance(rel, str) or not rel:
+        return None
+    log_path = paths.optimized_dir / rel
+    if not log_path.exists():
+        return None
+    try:
+        data = json.loads(log_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _load_optimize_log_for_run(
+    run_id: str, paths: TaskPaths, *, variant: str | None = None
+) -> dict | None:
+    """Load optimize_log.json via optimized/index.jsonl (APO-14).
+
+    Prefer an exact ``run_id`` match; fall back to ``variant_name`` so a
+    re-eval of the same variant (new run_id) still resolves explore cost/time.
+    """
+    entries = list(_iter_optimized_index(paths))
+    for entry in entries:
+        if entry.get("run_id") == run_id:
+            return _read_optimize_log_from_index_entry(entry, paths)
+    if variant:
+        # Last matching index row wins (newest append) if names collide.
+        match: dict | None = None
+        for entry in entries:
+            if entry.get("variant_name") == variant:
+                match = entry
+        if match is not None:
+            return _read_optimize_log_from_index_entry(match, paths)
     return None
 
 
@@ -1065,7 +1083,9 @@ def _compare_matrix(run_ids: list[str], paths: TaskPaths) -> list[str]:
         variant_label = variant or "(base)"
         method_label = method or "n/a"
         headers.append(f"`{run_id}` (variant=`{variant_label}`, method=`{method_label}`)")
-        opt_log = _load_optimize_log_for_run(run_id, paths) if variant else None
+        opt_log = (
+            _load_optimize_log_for_run(run_id, paths, variant=variant) if variant else None
+        )
         explore_costs.append(_fmt_explore_cost(variant, opt_log))
         explore_durations.append(_fmt_explore_duration(variant, opt_log))
         per_run_stats.append(
