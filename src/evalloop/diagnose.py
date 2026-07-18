@@ -207,7 +207,8 @@ def run_diagnose(
     if len(symptom.methods) > 1:
         alternatives = ", ".join(symptom.methods[1:])
         console.print(f"\n代替候補: {alternatives}（task.yaml の optimize.method を変更）")
-    console.print("\n次のステップ: 評価セット整備 → evalloop optimize")
+    # Q3 already confirmed train/holdout exists — do not re-ask for eval-set setup.
+    console.print("\n次のステップ: task.yaml に上記 optimize 設定を反映 → evalloop optimize")
     return DiagnoseOutcome.RECOMMEND_METHOD
 
 

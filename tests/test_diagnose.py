@@ -44,6 +44,9 @@ def test_supported_symptoms_recommend_method(answers, expected_method):
     assert outcome == diagnose_mod.DiagnoseOutcome.RECOMMEND_METHOD
     assert diagnose_mod.METHOD_SNIPPETS[expected_method] in text
     assert "次のステップ" in text
+    # Q3=yes means the eval set already exists; do not re-prompt for setup.
+    assert "評価セット整備 →" not in text
+    assert "evalloop optimize" in text
 
 
 @pytest.mark.parametrize(
