@@ -72,7 +72,7 @@ def test_compare_three_runs_writes_matrix_with_headers_and_disclaimer(isolated_r
     assert "本タスク・本設定に限る" in content
     # base run has no optimize_log → `-`; variant without log → `n/a`
     assert "| qwen7b |" in content
-    assert " | - | - |" in content or content.count("| - |") >= 1
+    assert "| - | - |" in content
 
 
 def test_compare_four_runs_uses_hashed_filename(isolated_root):
