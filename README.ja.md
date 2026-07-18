@@ -269,6 +269,10 @@ run成果物の生出力（output.json / meta.json）にはローカル絶対パ
   正解スパンとのSQuAD方式トークンF1、`json` はdeep-equalityの移植を使う。
   textタスクの最終評価（promptfoo側）は従来どおりllm-rubricジャッジのままなので、
   学習メトリクスと最終採点は乖離しうる — その乖離の計測自体が最適化ケーススタディの対象である
+- MIPROv2 で `params.max_bootstrapped_demos` / `max_labeled_demos` を正にすると few-shot
+  demo 探索が有効になる（既定0=従来どおり instruction のみ）。プロンプトに `{{demos}}` が
+  必要で、選ばれた demos は `optimized/<alias>/<variant>/demos.jsonl` に保存され variant へ
+  再展開される（train split のみ・test リーク検査あり。詳細は [docs/DESIGN.md](docs/DESIGN.md) §5.6）
 - 上記「学習メトリクスが代理指標である制約」はGEPA・MIPROv2・COPROすべて、および
   将来追加される他のオプティマイザ（OPRO・APE・EASE等）にも共通する。プロセス内で
   高速に評価を回すには構造化判定（ラベル一致・トークンF1・deep-equal等）が必要で、

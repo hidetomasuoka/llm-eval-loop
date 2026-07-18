@@ -58,7 +58,7 @@ train/holdout が取れない（評価セットが小さすぎる・ラベルが
   - **GEPA**（`optimize.method: gepa`、デフォルト）: reflection LM に「この失敗を直すには指示をどう変えればよいか」を提案させ、train set で候補を評価し、パレートフロントに蓄積する進化的最適化
   - **COPRO**（`optimize.method: copro`）: coordinate ascent 的な反復で指示を改善。`params.breadth` / `depth` / `init_temperature` で探索幅・深さ・初期温度を調整
 - **7b. Exemplar 粒度**: few-shot 例の選択・順序を最適化する。Instruction が完成していても例でぶれる場合はこちら。
-  - **MIPROv2**（`optimize.method: miprov2`）: ベイズ最適化でinstruction空間を探索。既定は後方互換のため instruction のみだが、`params.max_bootstrapped_demos` / `params.max_labeled_demos` を正の整数にすると few-shot demo 探索も有効化できる。`params.val_ratio` / `seed` で検証比・乱数シードを調整
+  - **MIPROv2**（`optimize.method: miprov2`）: ベイズ最適化でinstruction空間を探索。既定は後方互換のため instruction のみだが、`params.max_bootstrapped_demos` / `params.max_labeled_demos` を正の整数にすると few-shot demo 探索も有効化できる（プロンプトに `{{demos}}` 必須。結果は `optimized/.../demos.jsonl` に保存され variant へ再展開）。`params.val_ratio` / `seed` で検証比・乱数シードを調整
 - **7c. 長文構造粒度**: system prompt が複数セクションから成り、一部を直すと別セクションが壊れる症状。SCULPT はセクション単位の局所編集を保持する。本プロジェクトのプロンプトは短いため対象外。
 - **7d. 多目的粒度**: 精度以外にコスト・出力長・レイテンシを同時に最適化。InstOptima/EMO-Prompts はパレートフロントを複数目的で追跡する。evalloop は現状レポート可視化のみ計画（最適化自体は未対応）。
 - **7e. Agent/Multi-step粒度**: Agent の多段推論軌跡全体を最適化。PROMST は軌跡の失敗点から改善する。本プロジェクトは単発QA前提のため対象外。

@@ -27,9 +27,13 @@ from collections.abc import Callable
 
 import dspy
 
+from evalloop.demos import demos_from_dspy_program
 from evalloop.optimizers.base import OptimizeError, OptimizeResult
 from evalloop.optimizers.metrics import compute_train_score
 from evalloop.schemas import Config
+
+# Popped by optimize() before writing optimize_log.json (not a log field).
+OPTIMIZED_DEMOS_LOG_KEY = "_optimized_demos"
 
 
 def _scalar_metric(metric: Callable) -> Callable:
@@ -159,6 +163,30 @@ class MiproV2Optimizer:
         train_score = compute_train_score(train_part, metric, optimized_program)
         if train_score is not None:
             extra_log["train_score"] = train_score
+
+        # APO-17: when demo search is enabled, hand extracted demos to optimize()
+        # for demos.jsonl + {{demos}} re-injection into the variant prompt.
+        if max_bootstrapped_demos > 0 or max_labeled_demos > 0:
+            train_input_to_id = {
+                str(ex.input): str(getattr(ex, "case_id", None) or ex.input) for ex in trainset
+            }
+            try:
+                extracted = demos_from_dspy_program(
+                    optimized_program, train_input_to_id=train_input_to_id
+                )
+            except Exception as e:
+                raise OptimizeError(str(e)) from e
+            extra_log[OPTIMIZED_DEMOS_LOG_KEY] = [
+                {
+                    "input": demo.input,
+                    "output": demo.output,
+                    "id": demo.id,
+                    "origin": origin,
+                }
+                for demo, origin in extracted
+            ]
+            extra_log["demo_count"] = len(extracted)
+
         return OptimizeResult(
             optimized_instructions=optimized_program.signature.instructions,
             method=self.name,

@@ -32,7 +32,14 @@ import yaml
 from evalloop import report as report_mod
 from evalloop import run as run_mod
 from evalloop.build import ESTIMATED_OUTPUT_TOKENS
-from evalloop.demos import DEMOS_PLACEHOLDER, DemoError, expand_demos_in_template
+from evalloop.demos import (
+    DEMOS_PLACEHOLDER,
+    DemoCase,
+    DemoError,
+    assert_demos_do_not_leak_test,
+    expand_demos_in_template,
+    save_demos_jsonl,
+)
 from evalloop.optimizers.base import OptimizeError, PromptOptimizer
 from evalloop.optimizers.copro import (
     CoproOptimizer,
@@ -56,6 +63,7 @@ from evalloop.optimizers.metrics import (  # noqa: F401
     text_score_and_feedback,
 )
 from evalloop.optimizers.miprov2 import (
+    OPTIMIZED_DEMOS_LOG_KEY,
     MiproV2Optimizer,
     run_miprov2,  # noqa: F401 -- monkeypatch target by convention; MiproV2Optimizer calls it through this module
 )
@@ -642,7 +650,7 @@ def optimize(
         console.print(line)
     preflight_mod.check_or_raise(preflight_result, force=force)
 
-    original_template = (REPO_ROOT / cfg.task.prompt_file).read_text(encoding="utf-8")
+    raw_template = (REPO_ROOT / cfg.task.prompt_file).read_text(encoding="utf-8")
     # Expand {{demos}} the same way build does, so dspy trains on the prompt
     # promptfoo will evaluate (APO-16 / issue #75 Bugbot finding).
     # Leak check unions golden test split with build YAML holdout: promptfoo
@@ -650,7 +658,16 @@ def optimize(
     golden_test_cases = [c for c in cases if c.split == "test"]
     demos_test_ids = test_ids | {c.id for c in golden_test_cases}
     demos_test_inputs = yaml_test_inputs | {c.input for c in golden_test_cases}
-    if paths.demos.exists() and DEMOS_PLACEHOLDER not in original_template:
+    miprov2_demo_search = cfg.optimize.method == MiproV2Optimizer.name and (
+        int(cfg.optimize.params.get("max_bootstrapped_demos", 0) or 0) > 0
+        or int(cfg.optimize.params.get("max_labeled_demos", 0) or 0) > 0
+    )
+    # Keep raw_template (with {{demos}}) for APO-17 variant re-injection.
+    original_template = raw_template
+    if miprov2_demo_search:
+        # MIPROv2 will choose demos; strip placeholder so it is not baked into instructions.
+        original_template = raw_template.replace(DEMOS_PLACEHOLDER, "")
+    elif paths.demos.exists() and DEMOS_PLACEHOLDER not in original_template:
         print(
             f"[optimize] WARN: {paths.demos} exists but prompt has no {DEMOS_PLACEHOLDER}; "
             "demos are ignored"
@@ -739,7 +756,10 @@ def optimize(
         score, feedback = score_fn(getattr(pred, "output", ""), gold.expected)
         return dspy.Prediction(score=score, feedback=feedback)
 
-    trainset = [dspy.Example(input=c.input, expected=c.expected).with_inputs("input") for c in optimize_cases]
+    trainset = [
+        dspy.Example(input=c.input, expected=c.expected, case_id=c.id).with_inputs("input")
+        for c in optimize_cases
+    ]
 
     # optimizer selection by cfg.optimize.method (validated against
     # KNOWN_OPTIMIZE_METHODS at config load, so this lookup cannot miss)
@@ -760,7 +780,6 @@ def optimize(
     )
     duration_seconds = round(time.monotonic() - started, 3)
     search_cost = summarize_lm_search_cost(task_lm, reflection_lm, cfg)
-    optimized_template = render_optimized_template(result.optimized_instructions, original_template)
 
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
     # effective params: the raw method params with the resolved auto
@@ -789,9 +808,65 @@ def optimize(
     dir_name = f"{result.method}-{ts}-{slug}"
     out_dir = paths.optimized_dir / cfg.optimize.target_alias / dir_name
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    # APO-17: persist MIPROv2 few-shot demos and re-expand {{demos}} into variant prompt.
+    extra_log = dict(result.extra_log)
+    optimized_demo_rows = extra_log.pop(OPTIMIZED_DEMOS_LOG_KEY, None)
+    created_at = datetime.now(timezone.utc).isoformat()
+    if optimized_demo_rows:
+        demos_with_origin = [
+            (
+                DemoCase(input=row["input"], output=row["output"], id=row.get("id")),
+                str(row.get("origin") or "labeled"),
+            )
+            for row in optimized_demo_rows
+        ]
+        demos_only = [d for d, _o in demos_with_origin]
+        try:
+            assert_demos_do_not_leak_test(
+                demos_only, test_ids=demos_test_ids, test_inputs=demos_test_inputs
+            )
+        except DemoError as e:
+            raise OptimizeError(str(e)) from e
+        demos_path = out_dir / "demos.jsonl"
+        save_demos_jsonl(
+            demos_path,
+            demos_with_origin,
+            provenance={
+                "source": "miprov2-optimize",
+                "method": result.method,
+                "max_bootstrapped_demos": int(
+                    cfg.optimize.params.get("max_bootstrapped_demos", 0) or 0
+                ),
+                "max_labeled_demos": int(cfg.optimize.params.get("max_labeled_demos", 0) or 0),
+                "seed": int(cfg.optimize.params.get("seed", 0) or 0),
+                "created_at": created_at,
+            },
+        )
+        shell = render_optimized_template(result.optimized_instructions, raw_template)
+        try:
+            optimized_template, n_demos = expand_demos_in_template(
+                shell,
+                demos_path,
+                test_ids=demos_test_ids,
+                test_inputs=demos_test_inputs,
+            )
+        except DemoError as e:
+            raise OptimizeError(str(e)) from e
+        if n_demos is None:
+            raise OptimizeError(
+                f"miprov2 produced demos but {cfg.task.prompt_file} has no {DEMOS_PLACEHOLDER}"
+            )
+        extra_log["demos_path"] = f"{cfg.optimize.target_alias}/{dir_name}/demos.jsonl"
+        extra_log["demo_ids"] = [d.id for d in demos_only if d.id]
+        print(f"[optimize] wrote {demos_path} ({len(demos_only)} demos)")
+    else:
+        optimized_template = render_optimized_template(
+            result.optimized_instructions, original_template
+        )
+
     task_path = out_dir / "task.txt"
     task_path.write_text(optimized_template, encoding="utf-8")
-    created_at = datetime.now(timezone.utc).isoformat()
     log_path = out_dir / "optimize_log.json"
     log_path.write_text(
         json.dumps(
@@ -815,7 +890,7 @@ def optimize(
                 "optimized_instructions": result.optimized_instructions,
                 "created_at": created_at,
                 # method-specific extras (currently empty for GEPA)
-                **result.extra_log,
+                **extra_log,
             },
             ensure_ascii=False,
             indent=2,
