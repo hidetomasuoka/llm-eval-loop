@@ -8,6 +8,8 @@ isolation without any monkeypatching of dspy/promptfoo.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from evalloop.optimizers.base import OptimizeError
@@ -300,6 +302,35 @@ def test_text_task_no_label_coverage_check(isolated_root):
     assert result.ok
     assert not any("never appears" in e for e in result.errors)
     assert not any("only" in e and "time" in e for e in result.errors)
+
+
+def _json_priority_warning(warnings: list[str]) -> bool:
+    return any("answer_type=json" in w and "docs/APO_GUIDE.md" in w for w in warnings)
+
+
+def test_json_task_gets_priority_guard_warning(isolated_root):
+    rows = default_golden_rows(labels=None, n_train=12, n_test=4)
+    for row in rows:
+        row["expected"] = json.dumps({"ok": True})
+    cfg, _p = scaffold_task(isolated_root, answer_type="json", labels=[], golden_rows=rows)
+    train = _cases(rows, "train")
+    result = run_preflight(cfg, train, 4)
+    assert result.ok
+    assert _json_priority_warning(result.warnings)
+
+
+def test_label_and_text_tasks_skip_json_priority_guard(isolated_root):
+    label_rows = default_golden_rows(labels=DEFAULT_LABELS, n_train=12, n_test=4)
+    label_cfg, _p = scaffold_task(
+        isolated_root, answer_type="label", labels=DEFAULT_LABELS, golden_rows=label_rows
+    )
+    label_result = run_preflight(label_cfg, _cases(label_rows, "train"), 4)
+    assert not _json_priority_warning(label_result.warnings)
+
+    text_rows = default_golden_rows(labels=None, n_train=12, n_test=4)
+    text_cfg, _p = scaffold_task(isolated_root, answer_type="text", labels=[], golden_rows=text_rows)
+    text_result = run_preflight(text_cfg, _cases(text_rows, "train"), 4)
+    assert not _json_priority_warning(text_result.warnings)
 
 
 # ---------------------------------------------------------------------------

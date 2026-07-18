@@ -129,6 +129,10 @@ def scaffold_task(
         "judge": {"provider": judge_provider, "threshold": 0.8, "agreement_threshold": 0.85},
         "optimize": {"target_alias": optimize_target, "reflection_provider": reflection_provider, "auto": "light"},
     }
+    if answer_type == "json":
+        schema_rel = "schema.json"
+        (task_dir / schema_rel).write_text('{"type": "object"}', encoding="utf-8")
+        task_raw["task"]["json_schema_file"] = schema_rel
     if models is not None:
         task_raw["models"] = models
     if run_overrides:

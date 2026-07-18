@@ -114,6 +114,7 @@ uv run evalloop pivot <run_id>                              # 失敗カテゴリ
 uv run evalloop calibrate --run-id <run_id>                 # LLMジャッジと人手ラベルの一致率を確認
 uv run evalloop optimize                                    # dspy（GEPA / MIPROv2 / COPRO）でプロンプトを改善（train splitのみ使用）
 #   -> task.yaml の optimize.method で手法を選択（未設定=gepa）。最適化後、自動でrun/report/compare(直近のベースrunがあれば)まで実行される
+#   -> 自動holdout runの後、train vs holdout の汎化ゲート（ベースライン holdout との比較 pass/fail、表示のみ・exit codeは不変）をコンソールと optimize_log.json に記録
 #   -> 実行前に概算コスト（train件数×手法別の反復目安×価格表の単価）を表示し、run.cost_warn_usd 超過なら確認プロンプト（--yes で抑止、CI向け）
 #   ※ いずれの手法も学習は answer_type ごとの決定的な代理メトリクス（label match / トークンF1 / JSON deep-equal）で行い、最終評価はタスク設定の採点器のまま（sample-inquiry は label_match、text タスクは llm-rubric。既知の制約参照）
 #   ※ どの失敗症状にどの最適化手法を当てるかは docs/APO_GUIDE.md（症状→粒度→手法の診断ガイド）を参照
@@ -158,8 +159,9 @@ uv run evalloop blog --runs <run_id>                        # ブログ用の図
 | `evalloop failures RUN_ID` | 失敗ケース抽出、notes.csvにメモ欄を追記（冪等） |
 | `evalloop cluster [--notes PATH]` | notes.csvからLLMが失敗タクソノミー案を生成 |
 | `evalloop pivot RUN_ID` | 失敗カテゴリ×モデルのクロス集計 |
+| `evalloop diagnose [--answers 1,2,3]` | 症状→粒度→手法の対話チェックリスト（APO適用可否と `optimize.method` 推奨。LLM不要） |
 | `evalloop optimize` | dspy（GEPA / MIPROv2 / COPRO、task.yaml の `optimize.method` で選択）でプロンプト最適化、自動でrun/report/compare（手法選定は [docs/APO_GUIDE.md](docs/APO_GUIDE.md) 参照） |
-| `evalloop compare --runs A,B` | 2つのrunのbefore/after比較 |
+| `evalloop compare --runs A,B[,C...]` | 2runはbefore/after差分、3run以上はモデル×runマトリクス比較 |
 | `evalloop blog --runs A[,B] [--slug NAME]` | 公開ガード通過後にブログ用一式を生成 |
 
 ## テスト / CI

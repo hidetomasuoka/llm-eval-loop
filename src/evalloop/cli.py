@@ -147,6 +147,31 @@ def task_list() -> None:
 
 
 @app.command()
+def diagnose(
+    answers: str = typer.Option(
+        None,
+        "--answers",
+        help="Non-interactive mode for tests: comma-separated Q1,Q2,Q3 (1=yes/2=no for Q1/Q3; Q2=1-5)",
+    ),
+) -> None:
+    """Interactive checklist: symptom → APO granularity → recommended optimize.method (docs/APO_GUIDE.md)."""
+    from evalloop import diagnose as diagnose_mod
+
+    parsed: list[int] | None = None
+    if answers is not None:
+        try:
+            parsed = diagnose_mod.parse_answers(answers)
+        except ValueError as e:
+            console.print(f"[bold red]diagnose failed:[/bold red] {e}")
+            raise typer.Exit(1) from e
+    try:
+        diagnose_mod.run_diagnose(answers=parsed)
+    except ValueError as e:
+        console.print(f"[bold red]diagnose failed:[/bold red] {e}")
+        raise typer.Exit(1) from e
+
+
+@app.command()
 def doctor(task: str = _TASK_OPTION) -> None:
     """Check Node/promptfoo/Ollama/API-key connectivity; run one tiny eval per provider."""
     console.print(
@@ -410,19 +435,19 @@ def optimize(
 
 @app.command()
 def compare(
-    runs: str = typer.Option(..., help="Two run_ids, comma-separated: A,B"),
+    runs: str = typer.Option(..., help="Two or more run_ids, comma-separated: A,B or A,B,C,..."),
     task: str = _TASK_OPTION,
 ) -> None:
-    """before/after comparison of two runs -> results/<task>/reports/compare_A_B.md."""
+    """Compare 2+ runs -> results/<task>/reports/compare_*.md (2-run delta or multi-run matrix)."""
     from evalloop import optimize as optimize_mod
 
     _cfg, paths = _load_task_or_exit(task)
-    run_ids = [r.strip() for r in runs.split(",")]
-    if len(run_ids) != 2:
-        console.print("[bold red]compare failed:[/bold red] --runs must be exactly 'A,B'")
+    run_ids = [r.strip() for r in runs.split(",") if r.strip()]
+    if len(run_ids) < 2:
+        console.print("[bold red]compare failed:[/bold red] --runs must be at least 'A,B'")
         raise typer.Exit(1)
     try:
-        optimize_mod.compare(run_ids[0], run_ids[1], paths)
+        optimize_mod.compare(run_ids, paths)
     except optimize_mod.OptimizeError as e:
         console.print(f"[bold red]compare failed:[/bold red] {e}")
         raise typer.Exit(1) from e

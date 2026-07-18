@@ -5,7 +5,8 @@ Runs before any LM call to catch evaluation-design problems early:
 - **error** (raises OptimizeError, aborts unless --force): train < 10 cases;
   label tasks with a task.yaml label never seen in train, or seen only once
 - **warn** (prints, continues): test/holdout split empty (can't verify
-  generalization); train < 30 (overfitting risk)
+  generalization); train < 30 (overfitting risk); answer_type=json priority
+  reminder (Structured Outputs / schema before prompt optimization; APO-18)
 
 The thresholds are constants with docstrings explaining their root cause
 (eval-set dependence, not theory). They are deliberately conservative: a
@@ -142,6 +143,19 @@ def run_preflight(
         result.warnings.append(
             f"train split has only {len(train_cases)} case(s); overfitting risk is high "
             f"(below the {SMALL_TRAIN_WARN}-case warning threshold)"
+        )
+
+    # --- warning (json tasks): prompt optimization is not the first lever ------
+    # APO-18 / docs/APO_GUIDE.md: structural JSON failures should be fixed with
+    # Structured Outputs / schema redesign before spending optimize budget on
+    # the prompt. Content-accuracy issues remain a valid optimize use case, so
+    # this is warn-only and never aborts.
+    if cfg.task.answer_type == "json":
+        result.warnings.append(
+            "answer_type=json: if the main failure mode is JSON syntax/schema errors, "
+            "prefer (1) the provider's Structured Outputs / tool calling and "
+            "(2) schema redesign before prompt optimization "
+            "(see docs/APO_GUIDE.md). Prompt optimization is for content-accuracy gains."
         )
 
     # --- force: demote errors to warnings --------------------------------------

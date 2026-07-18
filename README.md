@@ -87,6 +87,7 @@ uv run evalloop pivot <run_id>                              # failure-category x
 uv run evalloop calibrate --run-id <run_id>                 # agreement rate between the LLM judge and human labels
 uv run evalloop optimize                                    # improve the prompt with dspy (GEPA / MIPROv2 / COPRO, uses the train split only)
 #   -> select the method via optimize.method in task.yaml (unset = gepa). afterwards run/report/compare (against the latest base run, if any) execute automatically
+#   -> after the automatic holdout run, optimize prints a train-vs-holdout generalization gate (pass/fail vs baseline holdout; display-only, exit code unchanged) and records it in optimize_log.json
 #   -> a rough cost estimate (train size x per-method iteration factor x registry prices) is shown first; exceeding run.cost_warn_usd prompts for confirmation (--yes suppresses, for CI)
 #   NOTE: every method trains on a deterministic proxy metric by answer_type (label match / token F1 / JSON deep-equal); the final promptfoo eval still uses the task's configured grader (label_match for sample-inquiry, llm-rubric for text tasks — see Known constraints)
 #   NOTE: for which failure symptoms warrant which optimization technique, see docs/APO_GUIDE.md (a symptom → granularity → method diagnostic guide)
@@ -119,8 +120,9 @@ Then run everything with `--task <name>`. Model definitions (provider IDs, price
 | `evalloop failures RUN_ID` | Extract failing cases, append note rows to notes.csv (idempotent) |
 | `evalloop cluster [--notes PATH]` | An LLM drafts a failure taxonomy from notes.csv |
 | `evalloop pivot RUN_ID` | Failure-category × model cross-tab |
+| `evalloop diagnose [--answers 1,2,3]` | Interactive symptom → granularity → method checklist (APO readiness and recommended `optimize.method`; no LLM) |
 | `evalloop optimize` | Prompt optimization with dspy (GEPA / MIPROv2 / COPRO, chosen via `optimize.method` in task.yaml), then automatic run/report/compare (method selection guide: [docs/APO_GUIDE.md](docs/APO_GUIDE.md)) |
-| `evalloop compare --runs A,B` | Before/after comparison of two runs |
+| `evalloop compare --runs A,B[,C...]` | Compare 2 runs (before/after deltas) or 3+ runs (model×run matrix) |
 | `evalloop blog --runs A[,B] [--slug NAME]` | Publish-guarded export of the blog bundle |
 
 ## Tests / CI
