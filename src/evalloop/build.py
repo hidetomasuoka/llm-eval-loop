@@ -261,16 +261,18 @@ def build(
     test_ids = {c.id for c in test_cases}
     assert_split_disjoint(train_ids, test_ids)
 
-    _write_tests_yaml(paths.tests_test, test_cases)
-    _write_tests_yaml(paths.tests_train, train_cases)
-
+    # Resolve demos / promptfoo config before writing build artifacts so a failed
+    # demo leak check cannot leave fresh tests_*.yaml next to a stale config.
     prompt_template, prompt_path_for_eval = _resolve_prompt_template(config, paths, test_cases)
     promptfoo_config = _build_promptfoo_config(
         config, allow_same_judge, paths, prompt_path=prompt_path_for_eval
     )
-    paths.promptfoo_dir.mkdir(parents=True, exist_ok=True)
     config_text = yaml.safe_dump(promptfoo_config, allow_unicode=True, sort_keys=False)
     _assert_config_never_references_train(config_text)
+
+    _write_tests_yaml(paths.tests_test, test_cases)
+    _write_tests_yaml(paths.tests_train, train_cases)
+    paths.promptfoo_dir.mkdir(parents=True, exist_ok=True)
     paths.promptfoo_config.write_text(config_text, encoding="utf-8")
 
     estimate = estimate_cost(config, test_cases, prompt_template)

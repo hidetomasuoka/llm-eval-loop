@@ -44,11 +44,16 @@ def load_demos_jsonl(path: Path) -> list[DemoCase]:
                 raise DemoError(f"{path}:{line_no}: each line must be a JSON object")
             if "input" not in row or "output" not in row:
                 raise DemoError(f"{path}:{line_no}: requires 'input' and 'output' fields")
+            if not isinstance(row["input"], str) or not isinstance(row["output"], str):
+                raise DemoError(f"{path}:{line_no}: 'input' and 'output' must be strings")
+            demo_id = row.get("id")
+            if demo_id is not None and not isinstance(demo_id, str):
+                raise DemoError(f"{path}:{line_no}: 'id' must be a string when provided")
             demos.append(
                 DemoCase(
-                    input=str(row["input"]),
-                    output=str(row["output"]),
-                    id=str(row["id"]) if row.get("id") is not None else None,
+                    input=row["input"],
+                    output=row["output"],
+                    id=demo_id,
                 )
             )
     if not demos:

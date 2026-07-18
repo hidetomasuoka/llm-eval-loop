@@ -157,6 +157,38 @@ def test_load_demos_jsonl_requires_rows(tmp_path):
         load_demos_jsonl(p)
 
 
+def test_load_demos_jsonl_rejects_non_string_fields(tmp_path):
+    p = tmp_path / "demos.jsonl"
+    p.write_text(
+        json.dumps({"input": ["not", "a", "string"], "output": "契約照会"}, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(DemoError, match="must be strings"):
+        load_demos_jsonl(p)
+
+
+def test_build_demo_leak_does_not_write_tests_yaml(isolated_root):
+    """Failed demo validation must not refresh holdout YAML ahead of a good config."""
+    rows = default_golden_rows(labels=DEFAULT_LABELS, n_train=12, n_test=4)
+    cfg, paths = scaffold_task(
+        isolated_root,
+        answer_type="label",
+        labels=DEFAULT_LABELS,
+        golden_rows=rows,
+        prompt="{{demos}}\n{{input}}\n",
+    )
+    test_id = next(r["id"] for r in rows if r["split"] == "test")
+    paths.demos.write_text(
+        json.dumps({"id": test_id, "input": "leak", "output": "契約照会"}, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    assert not paths.tests_test.exists()
+    with pytest.raises(build_mod.BuildError, match="leaks test-split"):
+        build_mod.build(cfg, paths, yes=True)
+    assert not paths.tests_test.exists()
+    assert not paths.promptfoo_config.exists()
+
+
 def test_real_sample_inquiry_build_embeds_tracked_demos(isolated_root):
     import shutil
 

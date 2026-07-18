@@ -185,8 +185,10 @@ taxonomy.yaml は `categories`（id/name/definition のリスト）と `assignme
 - `prompts/task.txt` に `{{demos}}` があるときだけ `evalloop build` が
   `Input: ...\nOutput: ...\n\n` 形式で展開し、`data/build/<task>/prompt.resolved.txt` を生成して
   promptfoo から参照する
-- `{{demos}}` あり・ファイルなし → build エラー / ファイルあり・プレースホルダなし → 警告
-- **鉄の掟**: demo の `id` または `input` が golden の test split と重複したらエラー（リーク防止）
+- `evalloop optimize` も同じ `{{demos}}` を展開してから dspy に渡す（build 後の promptfoo 評価と訓練テンプレを一致させる）
+- `{{demos}}` あり・ファイルなし → build/optimize エラー / ファイルあり・プレースホルダなし → 警告
+- **鉄の掟**: demo の `id` または `input` が、現在の golden test split と直近 build の
+  `tests_test.yaml` holdout の**和集合**と重複したらエラー（リーク防止。golden を更新しても rebuild 前の YAML を見落さない）
 
 ## 6. config.yaml 仕様（evalloopマスター設定）
 
