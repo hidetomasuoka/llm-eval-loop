@@ -56,6 +56,7 @@ from evalloop.optimizers.gepa import (
 from evalloop.optimizers.metrics import (  # noqa: F401
     _normalize_label,
     _score_fn_for,
+    _split_template,
     extract_instructions_from_template,
     json_score_and_feedback,
     label_score_and_feedback,
@@ -813,7 +814,12 @@ def optimize(
     extra_log = dict(result.extra_log)
     optimized_demo_rows = extra_log.pop(OPTIMIZED_DEMOS_LOG_KEY, None)
     created_at = datetime.now(timezone.utc).isoformat()
-    if optimized_demo_rows:
+    if miprov2_demo_search:
+        if not optimized_demo_rows:
+            raise OptimizeError(
+                "miprov2 demo search was enabled but the compiled program produced 0 demos; "
+                "refusing to write a demos-less variant (check trainset size and max_*_demos)"
+            )
         demos_with_origin = [
             (
                 DemoCase(input=row["input"], output=row["output"], id=row.get("id")),
@@ -843,7 +849,19 @@ def optimize(
                 "created_at": created_at,
             },
         )
+        # render_optimized_template rewrites the pre-{{input}} region, which can
+        # drop a {{demos}} paragraph that lived outside the input trailer. Restore it.
         shell = render_optimized_template(result.optimized_instructions, raw_template)
+        if DEMOS_PLACEHOLDER not in shell:
+            if DEMOS_PLACEHOLDER not in raw_template:
+                raise OptimizeError(
+                    f"miprov2 produced demos but {cfg.task.prompt_file} has no {DEMOS_PLACEHOLDER}"
+                )
+            _instr, trailer = _split_template(raw_template)
+            shell = (
+                f"{result.optimized_instructions.strip()}\n\n"
+                f"{DEMOS_PLACEHOLDER}\n\n{trailer}\n"
+            )
         try:
             optimized_template, n_demos = expand_demos_in_template(
                 shell,

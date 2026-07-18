@@ -368,3 +368,79 @@ def test_optimize_rejects_miprov2_eval_budget_one_before_model_calls(isolated_ro
 
     with pytest.raises(OptimizeError, match="at least 2 cases after eval scheduling"):
         optimize_mod.optimize(cfg, paths, force=True)
+
+
+def _prep_miprov2_demo_task(isolated_root, prompt: str):
+    cfg, paths = scaffold_task(isolated_root, prompt=prompt)
+    raw = yaml.safe_load(paths.task_config.read_text(encoding="utf-8"))
+    raw["optimize"]["method"] = "miprov2"
+    raw["optimize"]["params"] = {
+        "val_ratio": 0.25,
+        "seed": 1,
+        "max_bootstrapped_demos": 1,
+        "max_labeled_demos": 0,
+    }
+    paths.task_config.write_text(yaml.safe_dump(raw, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    cfg, paths = load_task(paths.task, root=isolated_root)
+    paths.demos.write_text(
+        json.dumps(
+            {"id": "case-0001", "input": "問い合わせ文サンプル1", "output": "契約照会"},
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    build_mod.build(cfg, paths, yes=True)
+    return cfg, paths
+
+
+def test_miprov2_empty_demos_aborts_when_search_enabled(isolated_root, monkeypatch):
+    cfg, paths = _prep_miprov2_demo_task(isolated_root, prompt="{{demos}}\n\n{{input}}\n")
+
+    def fake_miprov2(*a, **k):
+        return types.SimpleNamespace(
+            signature=types.SimpleNamespace(instructions="opt"),
+            predictors=lambda: [types.SimpleNamespace(demos=[])],
+        )
+
+    monkeypatch.setattr(optimize_mod, "run_miprov2", fake_miprov2)
+    with pytest.raises(OptimizeError, match="produced 0 demos"):
+        optimize_mod.optimize(cfg, paths, force=True)
+
+
+def test_miprov2_demos_placeholder_outside_input_paragraph_still_expands(isolated_root, monkeypatch):
+    """{{demos}} in its own paragraph (before {{input}}) must survive render."""
+    cfg, paths = _prep_miprov2_demo_task(
+        isolated_root,
+        prompt="Classify the inquiry.\n\n{{demos}}\n\nInput:\n{{input}}\n",
+    )
+
+    def fake_miprov2(*a, **k):
+        demo = types.SimpleNamespace(input=a[1][0].input, expected=a[1][0].expected)
+        return types.SimpleNamespace(
+            signature=types.SimpleNamespace(instructions="optimized instructions only"),
+            predictors=lambda: [types.SimpleNamespace(demos=[demo])],
+        )
+
+    monkeypatch.setattr(optimize_mod, "run_miprov2", fake_miprov2)
+
+    def fake_eval(config_path, output_path, **kwargs):
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json.dumps({"results": {"results": []}}), encoding="utf-8")
+
+        class _P:
+            returncode = 0
+            stderr = ""
+
+        return _P()
+
+    monkeypatch.setattr(run_mod, "run_promptfoo_eval", fake_eval)
+    monkeypatch.setattr(run_mod, "get_promptfoo_version", lambda: "0.0.0-test")
+    monkeypatch.setattr(run_mod, "get_node_version", lambda: "v22.22.0")
+
+    outcome = optimize_mod.optimize(cfg, paths, force=True)
+    text = outcome.task_path.read_text(encoding="utf-8")
+    assert "{{demos}}" not in text
+    assert "Input:" in text
+    assert "optimized instructions only" in text
+    assert (outcome.task_path.parent / "demos.jsonl").exists()
