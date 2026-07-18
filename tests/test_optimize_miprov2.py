@@ -13,7 +13,8 @@ from evalloop import build as build_mod
 from evalloop import optimize as optimize_mod
 from evalloop import run as run_mod
 from evalloop.optimizers.base import OptimizeError
-from evalloop.optimizers.miprov2 import _scalar_metric, split_train_val
+from evalloop.optimizers import miprov2 as miprov2_mod
+from evalloop.optimizers.miprov2 import MiproV2Optimizer, _scalar_metric, split_train_val
 from evalloop.schemas import load_task
 from tests.conftest import scaffold_task
 
@@ -41,6 +42,48 @@ def test_split_train_val_guards():
         split_train_val(["a", "b", "c"], val_ratio=1.5, seed=0)
     with pytest.raises(OptimizeError, match="at least 2"):
         split_train_val(["only-one"], val_ratio=0.2, seed=0)
+
+
+def test_miprov2_train_score_uses_train_part_only(monkeypatch):
+    """Bugbot: train_score must average train_part, not full trainset+val."""
+    trainset = [types.SimpleNamespace(input=f"x{i}") for i in range(10)]
+    train_part, _val_part = split_train_val(trainset, val_ratio=0.2, seed=0)
+    assert len(train_part) == 8
+
+    seen: dict = {}
+
+    def fake_score(examples, metric, optimized_program):
+        seen["n"] = len(examples)
+        seen["ids"] = [ex.input for ex in examples]
+        return 0.5
+
+    monkeypatch.setattr(miprov2_mod, "compute_train_score", fake_score)
+    monkeypatch.setattr(
+        optimize_mod,
+        "run_miprov2",
+        lambda *a, **k: types.SimpleNamespace(
+            signature=types.SimpleNamespace(instructions="opt")
+        ),
+    )
+
+    cfg = types.SimpleNamespace(
+        optimize=types.SimpleNamespace(
+            auto="light",
+            params={"val_ratio": 0.2, "seed": 0},
+        )
+    )
+    result = MiproV2Optimizer().optimize(
+        base_instructions="base",
+        trainset=trainset,
+        metric=lambda *a, **k: 1.0,
+        task_lm=object(),
+        reflection_lm=object(),
+        cfg=cfg,
+    )
+    assert seen["n"] == len(train_part)
+    assert seen["ids"] == [ex.input for ex in train_part]
+    assert result.extra_log["train_score"] == 0.5
+    assert result.extra_log["train_size"] == len(train_part)
 
 
 # ---------------------------------------------------------------------------
