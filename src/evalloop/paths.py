@@ -47,6 +47,11 @@ class TaskPaths:
         return self.task_dir / "golden.jsonl"
 
     @property
+    def demos(self) -> Path:
+        """Optional few-shot demos (APO-16). Usually gitignored; see PROVENANCE.md."""
+        return self.task_dir / "demos.jsonl"
+
+    @property
     def prompt_file(self) -> Path:
         return self.task_dir / "prompts" / "task.txt"
 
@@ -95,6 +100,11 @@ class TaskPaths:
     @property
     def tests_train(self) -> Path:
         return self.build_dir / "tests_train.yaml"
+
+    @property
+    def resolved_prompt(self) -> Path:
+        """Build-time prompt with ``{{demos}}`` expanded (gitignored under data/build/)."""
+        return self.build_dir / "prompt.resolved.txt"
 
     @property
     def promptfoo_dir(self) -> Path:
