@@ -223,7 +223,7 @@ def test_optimize_embeds_demos_into_training_template(isolated_root, monkeypatch
 
     seen = {}
 
-    def fake_gepa(student, trainset, metric, reflection_lm, auto, seed=0):
+    def fake_gepa(student, trainset, metric, reflection_lm, auto, seed=0, valset=None):
         seen["instructions"] = student.signature.instructions
         return types.SimpleNamespace(signature=types.SimpleNamespace(instructions="optimized"))
 

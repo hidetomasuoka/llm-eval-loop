@@ -839,9 +839,10 @@ def test_optimize_end_to_end_with_text_task(isolated_root, monkeypatch):
 
     captured = {}
 
-    def fake_gepa(student, trainset, metric, reflection_lm, auto, seed=0):
+    def fake_gepa(student, trainset, metric, reflection_lm, auto, seed=0, valset=None):
         # exercise the real metric wiring with one plausible rollout per case
         captured["scores"] = [metric(gold, types.SimpleNamespace(output=gold.expected)).score for gold in trainset]
+        captured["valset"] = valset
         return types.SimpleNamespace(signature=types.SimpleNamespace(instructions="optimized text instructions"))
 
     monkeypatch.setattr(optimize_mod, "run_gepa", fake_gepa)
@@ -876,8 +877,48 @@ def test_optimize_end_to_end_with_text_task(isolated_root, monkeypatch):
     assert outcome.task_path.exists()
     assert "optimized text instructions" in outcome.task_path.read_text(encoding="utf-8")
     # a rollout that echoes the gold answer must score 1.0 through the real
-    # metric wiring (incl. the 該当条項なし sentinel case)
-    assert captured["scores"] == [1.0] * 12
+    # metric wiring (incl. the 該当条項なし sentinel case). GEPA trains on
+    # train_part only: 12 cases minus the 20% valset carve-out (plan #6).
+    assert captured["scores"] == [1.0] * 10
+    assert len(captured["valset"]) == 2
+    # the split is train-internal: valset cases still come from split=='train'
+    train_ids = {f"case-{i + 1:04d}" for i in range(12)}
+    assert {ex.case_id for ex in captured["valset"]} <= train_ids
+    log = json.loads((outcome.task_path.parent / "optimize_log.json").read_text(encoding="utf-8"))
+    assert log["train_size"] == 10
+    assert log["val_size"] == 2
+    assert log["val_ratio"] == pytest.approx(0.2)
+
+
+def test_gepa_runs_without_valset_when_trainset_is_tiny(isolated_root, monkeypatch, capsys):
+    """<2 train cases cannot be split; GEPA falls back to valset=None with a warning."""
+    import dspy
+
+    from evalloop.optimizers.gepa import GepaOptimizer
+
+    cfg, _paths = scaffold_task(isolated_root)
+    seen = {}
+
+    def fake_gepa(student, trainset, metric, reflection_lm, auto, seed=0, valset=None):
+        seen["trainset"], seen["valset"] = trainset, valset
+        return types.SimpleNamespace(signature=types.SimpleNamespace(instructions="opt"))
+
+    monkeypatch.setattr(optimize_mod, "run_gepa", fake_gepa)
+    trainset = [dspy.Example(input="a", expected="契約照会", case_id="case-0001").with_inputs("input")]
+    result = GepaOptimizer().optimize(
+        base_instructions="instr",
+        trainset=trainset,
+        metric=lambda gold, pred, **kw: None,
+        task_lm=None,
+        reflection_lm=None,
+        cfg=cfg,
+    )
+    assert seen["valset"] is None
+    assert len(seen["trainset"]) == 1
+    assert result.extra_log["train_size"] == 1
+    assert result.extra_log["val_size"] == 0
+    assert "val_ratio" not in result.extra_log
+    assert "without a valset" in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------------------
