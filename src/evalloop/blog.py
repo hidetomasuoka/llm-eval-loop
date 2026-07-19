@@ -37,10 +37,10 @@ import matplotlib.pyplot as plt
 
 from evalloop import analyze as analyze_mod
 from evalloop import report as report_mod
-from evalloop.optimize import (
+from evalloop.compare import (
     _COMPARE_MULTI_DISCLAIMER as COMPARE_MULTI_DISCLAIMER,
 )
-from evalloop.optimize import (
+from evalloop.compare import (
     _compare_matrix,
     _method_for_variant,
 )

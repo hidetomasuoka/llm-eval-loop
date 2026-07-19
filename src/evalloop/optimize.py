@@ -5,8 +5,12 @@ Method-specific code lives in the evalloop.optimizers package: the shared
 contract in optimizers/base.py, the GEPA implementation in optimizers/gepa.py,
 and the deterministic proxy metrics + template round-trip helpers in
 optimizers/metrics.py (see its module docstring for why training uses a proxy
-metric instead of the final promptfoo judge). This module keeps optimizer
-selection (currently GEPA only), variant generation, and `compare`.
+metric instead of the final promptfoo judge). Supporting concerns extracted in
+the same spirit: evalloop.dspy_lm (provider mapping / LM history costs),
+evalloop.optimize_cost (pre-run estimate), evalloop.variants (variant config,
+slug/summary, optimized index), and evalloop.compare (run comparison reports).
+This module keeps optimizer selection and the optimize() orchestration, and
+re-exports the moved symbols for backward compatibility.
 
 Iron rules enforced here:
     1. split separation: this module reads ONLY split=='train' cases, and
@@ -17,10 +21,7 @@ Iron rules enforced here:
 
 from __future__ import annotations
 
-import hashlib
 import json
-import os
-import re
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -31,7 +32,35 @@ import yaml
 
 from evalloop import report as report_mod
 from evalloop import run as run_mod
-from evalloop.build import ESTIMATED_OUTPUT_TOKENS
+
+# Backward-compatible re-exports: cli.py, blog.py, and the test suite import
+# these names from evalloop.optimize; the implementations moved to
+# evalloop.compare in the same refactor that split this module.
+from evalloop.compare import (  # noqa: F401
+    _COMPARE_MULTI_DISCLAIMER,
+    COMPARE_TRADEOFF_COST_INCREASE_RATIO,
+    COMPARE_TRADEOFF_OUTPUT_TOKENS_INCREASE_RATIO,
+    COMPARE_TRADEOFF_PROMPT_LENGTH_INCREASE_RATIO,
+    _compare_matrix,
+    _compare_pair,
+    _compare_report_filename,
+    _compare_tradeoff_notes,
+    _fmt_explore_cost,
+    _fmt_explore_duration,
+    _fmt_int,
+    _fmt_num,
+    _fmt_pct,
+    _fmt_pct_signed,
+    _fmt_usd,
+    _fmt_usd_signed,
+    _iter_optimized_index,
+    _load_optimize_log_for_run,
+    _load_run_meta,
+    _method_for_variant,
+    _read_optimize_log_from_index_entry,
+    _relative_increase,
+    compare,
+)
 from evalloop.demos import (
     DEMOS_PLACEHOLDER,
     DemoCase,
@@ -39,6 +68,29 @@ from evalloop.demos import (
     assert_demos_do_not_leak_test,
     expand_demos_in_template,
     save_demos_jsonl,
+)
+
+# Backward-compatible re-exports: moved to evalloop.dspy_lm.
+from evalloop.dspy_lm import (  # noqa: F401
+    SearchCostSummary,
+    _cost_from_history_entry,
+    _dspy_temperature,
+    _history_entries,
+    _reflection_registry_model,
+    _reflection_supports_sampling,
+    _tokens_from_usage,
+    promptfoo_provider_to_dspy_lm,
+    summarize_lm_search_cost,
+)
+
+# Backward-compatible re-exports: moved to evalloop.optimize_cost.
+from evalloop.optimize_cost import (  # noqa: F401
+    _AUTO_ROLLOUT_FACTORS,
+    REFLECTION_INPUT_TOKENS_ESTIMATE,
+    REFLECTION_OUTPUT_TOKENS_ESTIMATE,
+    OptimizeCostEstimate,
+    _rollout_factor,
+    estimate_optimize_cost,
 )
 from evalloop.optimizers.base import OptimizeError, PromptOptimizer
 from evalloop.optimizers.copro import (
@@ -76,408 +128,29 @@ from evalloop.optimizers.tapo import (
 from evalloop.paths import REPO_ROOT, TaskPaths
 from evalloop.schemas import (
     Config,
-    GoldenCase,
-    ModelConfig,
     assert_split_disjoint,
     load_golden_jsonl,
     parse_promptfoo_output,
 )
-from evalloop.token_counting import average_input_tokens, render_case_prompts
 
-# ---------------------------------------------------------------------------
-# promptfoo provider id -> dspy/litellm model string
-# ---------------------------------------------------------------------------
-
-
-def promptfoo_provider_to_dspy_lm(provider: str) -> str:
-    if provider.startswith("anthropic:messages:"):
-        return "anthropic/" + provider.split(":", 2)[2]
-    if provider.startswith("ollama:chat:"):
-        return "ollama_chat/" + provider.split(":", 2)[2]
-    # TODO: add a case here (and verify against https://dspy.ai/ provider docs)
-    # before using any provider prefix other than the two above in config.yaml.
-    raise OptimizeError(
-        f"don't know how to translate promptfoo provider {provider!r} into a dspy LM string "
-        "(only anthropic:messages: and ollama:chat: are mapped so far) -- add a case to "
-        "promptfoo_provider_to_dspy_lm() in optimize.py"
-    )
-
-
-def _dspy_temperature(supports_sampling_params: bool, temperature: float) -> float | None:
-    """claude-opus-4-8 / claude-fable-5 reject sampling params with HTTP 400 on
-    the dspy/litellm path too, not just through promptfoo. litellm drops
-    None-valued params from the request (verified against the installed
-    litellm: get_optional_params(temperature=None) omits the key), so None is
-    how we avoid sending temperature to those models.
-    """
-    return temperature if supports_sampling_params else None
-
-
-def _reflection_registry_model(cfg: Config) -> ModelConfig | None:
-    """optimize.reflection_provider is a dspy/litellm string; map it back to
-    its config.yaml model registry entry when one exists (for sampling-param
-    and price lookups). Returns None when nothing in the registry matches.
-    """
-    for m in cfg.models:
-        try:
-            if promptfoo_provider_to_dspy_lm(m.provider) == cfg.optimize.reflection_provider:
-                return m
-        except OptimizeError:
-            continue  # registry entries with unmapped provider prefixes can't match
-    return None
-
-
-def _reflection_supports_sampling(cfg: Config) -> bool:
-    """A registry model marked supports_sampling_params=false must not receive
-    temperature on the dspy path either (the bundled configs point reflection
-    at anthropic/claude-opus-4-8, which 400s on it). Providers with no
-    registry match default to True (send temperature, the historical behavior).
-    """
-    model = _reflection_registry_model(cfg)
-    return model.supports_sampling_params if model is not None else True
-
-
-# ---------------------------------------------------------------------------
-# pre-run cost estimate (APO-10): build.py already warns before an eval run;
-# optimize multiplies that by the optimizer's iteration budget, which is where
-# surprise costs come from (OPRO's own docs warn about this). Everything here
-# is a deliberate order-of-magnitude guess -- the goal is a digit-count
-# warning before the first rollout is spent, not accounting.
-# ---------------------------------------------------------------------------
-
-# "How many optimizer rounds" per method. Actual counts depend on dspy
-# internals and early stopping; one round is modeled as evaluating one
-# candidate instruction over the full train split plus one reflection call.
-#   gepa / miprov2: the candidate budget scales with optimize.auto
-#   copro: breadth candidates per depth round (see _rollout_factor)
-_AUTO_ROLLOUT_FACTORS = {"light": 10, "medium": 25, "heavy": 60}
-
-# A reflection/proposal call carries the current instructions plus a batch of
-# failing examples with feedback (much larger than a single task rollout) and
-# returns a rewritten instruction.
-REFLECTION_INPUT_TOKENS_ESTIMATE = 3000
-REFLECTION_OUTPUT_TOKENS_ESTIMATE = 500
-
-
-@dataclass
-class OptimizeCostEstimate:
-    method: str
-    train_case_count: int
-    rollout_factor: int  # optimizer rounds (candidates evaluated)
-    rollout_count: int  # target-model calls: rollout_factor x train cases
-    reflection_call_count: int  # instruction proposals by the reflection model
-    target_input_tokens: int
-    target_token_count_method: str
-    target_usd: float
-    reflection_usd: float | None  # None -- reflection provider absent from the price registry
-    total_usd: float
-
-
-def _rollout_factor(cfg: Config) -> int:
-    if cfg.optimize.method == "copro":
-        breadth = int(cfg.optimize.params.get("breadth", 10))
-        depth = int(cfg.optimize.params.get("depth", 3))
-        return breadth * depth
-    if cfg.optimize.method == "tapo":
-        population_size = int(cfg.optimize.params.get("population_size", 4))
-        generations = int(cfg.optimize.params.get("generations", 3))
-        return max(1, population_size * generations)
-    return _AUTO_ROLLOUT_FACTORS.get(cfg.optimize.auto, _AUTO_ROLLOUT_FACTORS["medium"])
-
-
-@dataclass
-class SearchCostSummary:
-    """Post-hoc exploration cost from dspy LM histories (APO-14 / issue #73)."""
-
-    search_cost_usd: float | None
-    search_lm_call_count: int
-
-
-def _history_entries(lm) -> list:
-    history = getattr(lm, "history", None)
-    if not history:
-        return []
-    return list(history)
-
-
-def _tokens_from_usage(usage: object) -> tuple[int, int] | None:
-    if not isinstance(usage, dict):
-        return None
-    in_raw = usage.get("prompt_tokens", usage.get("input_tokens"))
-    out_raw = usage.get("completion_tokens", usage.get("output_tokens"))
-    if in_raw is None and out_raw is None:
-        return None
-    try:
-        in_tok = int(in_raw or 0)
-        out_tok = int(out_raw or 0)
-    except (TypeError, ValueError):
-        return None
-    return in_tok, out_tok
-
-
-def _cost_from_history_entry(entry: object, model: ModelConfig | None) -> float | None:
-    """Prefer LiteLLM ``cost``; else token usage × registry prices."""
-    if not isinstance(entry, dict):
-        return None
-    raw_cost = entry.get("cost")
-    if raw_cost is not None:
-        try:
-            return float(raw_cost)
-        except (TypeError, ValueError):
-            pass
-    tokens = _tokens_from_usage(entry.get("usage"))
-    if tokens is None or model is None:
-        return None
-    in_tok, out_tok = tokens
-    return in_tok / 1_000_000 * model.price_in_per_mtok + out_tok / 1_000_000 * model.price_out_per_mtok
-
-
-def summarize_lm_search_cost(task_lm, reflection_lm, cfg: Config) -> SearchCostSummary:
-    """Sum dspy ``lm.history`` costs for target + reflection LMs after optimize.
-
-    Returns ``search_cost_usd=None`` when history is empty or any call cannot be
-    priced (compare / logs then show ``n/a``).
-    """
-    target = cfg.model_by_alias(cfg.optimize.target_alias)
-    reflection = _reflection_registry_model(cfg)
-    pairs = ((task_lm, target), (reflection_lm, reflection))
-    total = 0.0
-    call_count = 0
-    priced_any = False
-    for lm, model in pairs:
-        for entry in _history_entries(lm):
-            call_count += 1
-            cost = _cost_from_history_entry(entry, model)
-            if cost is None:
-                return SearchCostSummary(search_cost_usd=None, search_lm_call_count=call_count)
-            total += cost
-            priced_any = True
-    if call_count == 0 or not priced_any:
-        return SearchCostSummary(search_cost_usd=None, search_lm_call_count=call_count)
-    return SearchCostSummary(search_cost_usd=round(total, 6), search_lm_call_count=call_count)
-
-
-def estimate_optimize_cost(cfg: Config, train_cases: list[GoldenCase], prompt_template: str) -> OptimizeCostEstimate:
-    """Rough optimize cost from the config.yaml price table: target-model
-    rollouts (train size x method factor) plus reflection calls. Target-model
-    input counting shares the provider-aware implementation used by build.py;
-    reflection prompts remain a documented order-of-magnitude assumption.
-    """
-    factor = _rollout_factor(cfg)
-    rollout_count = factor * len(train_cases)
-    reflection_call_count = factor  # ~one instruction proposal per optimizer round
-
-    target = cfg.model_by_alias(cfg.optimize.target_alias)
-    rendered_prompts = render_case_prompts(prompt_template, [c.input for c in train_cases])
-    token_count = average_input_tokens(target.provider, rendered_prompts)
-    in_tokens = token_count.average_input_tokens
-    out_tokens = ESTIMATED_OUTPUT_TOKENS.get(cfg.task.answer_type, 100)
-    target_usd = rollout_count * (
-        in_tokens / 1_000_000 * target.price_in_per_mtok + out_tokens / 1_000_000 * target.price_out_per_mtok
-    )
-
-    reflection_model = _reflection_registry_model(cfg)
-    reflection_usd = None
-    if reflection_model is not None:
-        reflection_usd = reflection_call_count * (
-            REFLECTION_INPUT_TOKENS_ESTIMATE / 1_000_000 * reflection_model.price_in_per_mtok
-            + REFLECTION_OUTPUT_TOKENS_ESTIMATE / 1_000_000 * reflection_model.price_out_per_mtok
-        )
-
-    return OptimizeCostEstimate(
-        method=cfg.optimize.method,
-        train_case_count=len(train_cases),
-        rollout_factor=factor,
-        rollout_count=rollout_count,
-        reflection_call_count=reflection_call_count,
-        target_input_tokens=in_tokens,
-        target_token_count_method=token_count.method,
-        target_usd=target_usd,
-        reflection_usd=reflection_usd,
-        total_usd=target_usd + (reflection_usd or 0.0),
-    )
-
-
-# ---------------------------------------------------------------------------
-# variant config generation (reroots every file:// reference one level
-# deeper, since promptfoo/variants/{name}.yaml lives one directory below
-# promptfoo/promptfooconfig.yaml)
-# ---------------------------------------------------------------------------
-
-
-def _reroot_file_refs(obj, prefix: str):
-    if isinstance(obj, dict):
-        return {k: _reroot_file_refs(v, prefix) for k, v in obj.items()}
-    if isinstance(obj, list):
-        return [_reroot_file_refs(v, prefix) for v in obj]
-    if isinstance(obj, str) and obj.startswith("file://"):
-        return "file://" + prefix + obj[len("file://") :]
-    return obj
-
-
-def to_variant_relpath(target: Path, variants_dir: Path) -> str:
-    rel = os.path.relpath(target, start=variants_dir)
-    return rel.replace(os.sep, "/")
-
-
-def build_variant_config(target_alias: str, task_path: Path, paths: TaskPaths) -> dict:
-    if not paths.promptfoo_config.exists():
-        raise OptimizeError(f"{paths.promptfoo_config} not found; run `evalloop build --task {paths.task}` first")
-    base_config = yaml.safe_load(paths.promptfoo_config.read_text(encoding="utf-8"))
-    variant_config = _reroot_file_refs(base_config, prefix="../")
-    variant_config["prompts"] = [f"file://{to_variant_relpath(task_path, paths.variants_dir)}"]
-    variant_config["description"] = f"{base_config.get('description', '')} (optimized: {target_alias})"
-    return variant_config
-
-
-# ---------------------------------------------------------------------------
-# variant slug / summary (auto-generated identity for optimized artifacts)
-# ---------------------------------------------------------------------------
-
-_SLUG_MAX_LEN = 40
-_PARAM_KEY_SHORT = {
-    "val_ratio": "val",
-    "seed": "seed",
-    "breadth": "br",
-    "depth": "d",
-    "init_temperature": "temp",
-    "population_size": "pop",
-    "generations": "gen",
-}
-# {method}-{YYYYMMDD-HHMMSS} or {method}-{YYYYMMDD-HHMMSS}-{slug}
-_OPTIMIZED_DIR_RE = re.compile(r"^[^-]+-\d{8}-\d{6}(?:-(.+))?$")
-
-
-def _slug_from_dir_name(name: str) -> str | None:
-    """Extract the auto slug from an optimized dir name, if present."""
-    m = _OPTIMIZED_DIR_RE.match(name)
-    if not m:
-        return None
-    return m.group(1)
-
-
-def _occupied_slugs(alias_dir: Path) -> set[str]:
-    if not alias_dir.is_dir():
-        return set()
-    found: set[str] = set()
-    for child in alias_dir.iterdir():
-        if not child.is_dir():
-            continue
-        slug = _slug_from_dir_name(child.name)
-        if slug:
-            found.add(slug)
-    return found
-
-
-def _sanitize_slug_part(value: str) -> str:
-    # allow '.' so float params stay readable (e.g. val0.2)
-    s = re.sub(r"[^a-z0-9.]+", "-", str(value).lower())
-    return s.strip("-.")
-
-
-def _short_param_key(key: str) -> str:
-    if key in _PARAM_KEY_SHORT:
-        return _PARAM_KEY_SHORT[key]
-    cleaned = re.sub(r"[^a-z0-9]+", "", str(key).lower())
-    return cleaned[:6] if cleaned else "p"
-
-
-def _format_param_token(key: str, value) -> str | None:
-    """Turn a scalar param into a compact slug token; skip nested/long values."""
-    short = _short_param_key(key)
-    if isinstance(value, bool):
-        return f"{short}{int(value)}"
-    if isinstance(value, int):
-        return f"{short}{value}"
-    if isinstance(value, float):
-        return f"{short}{value:g}"
-    if isinstance(value, str) and len(value) <= 16 and not re.search(r"[\s/]", value):
-        part = _sanitize_slug_part(value)
-        return f"{short}{part}" if part else None
-    return None
-
-
-def _instructions_hash(base_instructions: str, optimized_instructions: str) -> str:
-    payload = f"{base_instructions}\0{optimized_instructions}".encode()
-    return hashlib.sha256(payload).hexdigest()[:4]
-
-
-def _make_variant_slug(
-    *,
-    auto: str,
-    params: dict,
-    train_case_count: int,
-    base_instructions: str = "",
-    optimized_instructions: str = "",
-    occupied: set[str] | None = None,
-) -> str:
-    """Build a short deterministic slug: auto + scalar params + n{train}.
-
-    On collision with `occupied`, append a 4-hex hash of the instructions diff.
-    """
-    parts = [_sanitize_slug_part(auto) or "auto"]
-    for key in sorted(params):
-        if key == "auto":
-            continue
-        token = _format_param_token(key, params[key])
-        if token:
-            parts.append(token)
-    train_token = f"n{train_case_count}"
-    parts.append(train_token)
-    slug = "-".join(p for p in parts if p)
-    slug = re.sub(r"-{2,}", "-", slug).strip("-")
-    # truncate earlier segments first so the trailing n{train} identity stays
-    if len(slug) > _SLUG_MAX_LEN:
-        max_prefix_len = _SLUG_MAX_LEN - len(train_token) - 1
-        prefix = "-".join(parts[:-1])[:max_prefix_len].rstrip("-.")
-        slug = f"{prefix}-{train_token}" if prefix else train_token
-
-    occupied = occupied or set()
-    if slug not in occupied:
-        return slug
-    suffix = _instructions_hash(base_instructions, optimized_instructions)
-    # keep n{train} at the end after the collision hash when possible
-    max_prefix_len = _SLUG_MAX_LEN - len(train_token) - 5  # -{4hex}-nN
-    if max_prefix_len > 0:
-        prefix = "-".join(parts[:-1])[:max_prefix_len].rstrip("-.")
-        if prefix:
-            return f"{prefix}-{suffix}-{train_token}"
-    return f"{train_token}-{suffix}"[:_SLUG_MAX_LEN]
-
-
-def _make_variant_summary(
-    *,
-    method: str,
-    auto: str,
-    params: dict,
-    train_case_count: int,
-    base_instructions: str,
-    optimized_instructions: str,
-) -> str:
-    """One-line auto summary: settings + instruction char-length delta."""
-    extras: list[str] = []
-    for key in sorted(params):
-        if key == "auto":
-            continue
-        value = params[key]
-        if isinstance(value, (int, float, bool)):
-            extras.append(f"{key}={value}")
-        elif isinstance(value, str) and len(value) <= 32:
-            one_line = re.sub(r"\s+", " ", value).strip()
-            if one_line:
-                extras.append(f"{key}={one_line}")
-    extra_s = (" " + " ".join(extras)) if extras else ""
-    return (
-        f"{method} auto={auto}{extra_s} train={train_case_count}; "
-        f"instructions {len(base_instructions)}→{len(optimized_instructions)} chars"
-    )
-
-
-def _append_optimized_index(paths: TaskPaths, entry: dict) -> None:
-    paths.optimized_dir.mkdir(parents=True, exist_ok=True)
-    with paths.optimized_index.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-
+# Backward-compatible re-exports: moved to evalloop.variants.
+from evalloop.variants import (  # noqa: F401
+    _OPTIMIZED_DIR_RE,
+    _PARAM_KEY_SHORT,
+    _SLUG_MAX_LEN,
+    _append_optimized_index,
+    _format_param_token,
+    _instructions_hash,
+    _make_variant_slug,
+    _make_variant_summary,
+    _occupied_slugs,
+    _reroot_file_refs,
+    _sanitize_slug_part,
+    _short_param_key,
+    _slug_from_dir_name,
+    build_variant_config,
+    to_variant_relpath,
+)
 
 # ---------------------------------------------------------------------------
 # optimize orchestration
@@ -956,366 +629,3 @@ def optimize(
         base_run_id=base_run_id,
         compare_path=compare_path,
     )
-
-
-# ---------------------------------------------------------------------------
-# compare
-# ---------------------------------------------------------------------------
-
-
-def _fmt_pct(v):
-    return f"{v:.1%}" if v is not None else "n/a"
-
-
-def _fmt_pct_signed(v):
-    return f"{v:+.1%}" if v is not None else "n/a"
-
-
-def _fmt_usd(v):
-    return f"${v:.4f}" if v is not None else "n/a"
-
-
-def _fmt_usd_signed(v):
-    return f"{'+' if v >= 0 else ''}${v:.4f}" if v is not None else "n/a"
-
-
-# Conditionality disclaimer for multi-run method matrices (APO-13 / issue #72).
-_COMPARE_MULTI_DISCLAIMER = (
-    "手法の優劣はデータセット・meta-LLM・タスク形式に条件依存する。この結果は本タスク・本設定に限る"
-)
-
-# APO-21 / issue #80: flag accuracy gains that come with large cost/length spikes.
-COMPARE_TRADEOFF_COST_INCREASE_RATIO = 0.50
-COMPARE_TRADEOFF_OUTPUT_TOKENS_INCREASE_RATIO = 0.50
-COMPARE_TRADEOFF_PROMPT_LENGTH_INCREASE_RATIO = 0.50
-
-
-def _load_run_meta(run_id: str, paths: TaskPaths) -> dict:
-    meta_path = paths.runs_dir / run_id / "meta.json"
-    if not meta_path.exists():
-        return {}
-    try:
-        raw = json.loads(meta_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-    return raw if isinstance(raw, dict) else {}
-
-
-def _iter_optimized_index(paths: TaskPaths):
-    index_path = paths.optimized_index
-    if not index_path.exists():
-        return
-    try:
-        for line in index_path.read_text(encoding="utf-8").splitlines():
-            if not line.strip():
-                continue
-            entry = json.loads(line)
-            if isinstance(entry, dict):
-                yield entry
-    except (OSError, json.JSONDecodeError, TypeError):
-        return
-
-
-def _method_for_variant(variant: str | None, paths: TaskPaths) -> str | None:
-    """Resolve optimizer method from optimized/index.jsonl or the variant slug."""
-    if not variant:
-        return None
-    for entry in _iter_optimized_index(paths):
-        if entry.get("variant_name") == variant and entry.get("method"):
-            return str(entry["method"])
-    # variant naming: {alias}_{method}_{timestamp}_{slug}
-    parts = variant.split("_")
-    if len(parts) >= 2 and parts[1] in {"gepa", "miprov2", "copro", "tapo"}:
-        return parts[1]
-    return None
-
-
-def _read_optimize_log_from_index_entry(entry: dict, paths: TaskPaths) -> dict | None:
-    rel = entry.get("optimize_log")
-    if not isinstance(rel, str) or not rel:
-        return None
-    log_path = paths.optimized_dir / rel
-    if not log_path.exists():
-        return None
-    try:
-        data = json.loads(log_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError, TypeError):
-        return None
-    return data if isinstance(data, dict) else None
-
-
-def _load_optimize_log_for_run(run_id: str, paths: TaskPaths, *, variant: str | None = None) -> dict | None:
-    """Load optimize_log.json via optimized/index.jsonl (APO-14).
-
-    Prefer an exact ``run_id`` match; fall back to ``variant_name`` so a
-    re-eval of the same variant (new run_id) still resolves explore cost/time.
-    """
-    entries = list(_iter_optimized_index(paths))
-    for entry in entries:
-        if entry.get("run_id") == run_id:
-            return _read_optimize_log_from_index_entry(entry, paths)
-    if variant:
-        # Last matching index row wins (newest append) if names collide.
-        match: dict | None = None
-        for entry in entries:
-            if entry.get("variant_name") == variant:
-                match = entry
-        if match is not None:
-            return _read_optimize_log_from_index_entry(match, paths)
-    return None
-
-
-def _fmt_explore_cost(variant: str | None, log: dict | None) -> str:
-    """Base runs → ``-``; missing log/field → ``n/a``; else USD."""
-    if not variant:
-        return "-"
-    if not log or log.get("search_cost_usd") is None:
-        return "n/a"
-    try:
-        return _fmt_usd(float(log["search_cost_usd"]))
-    except (TypeError, ValueError):
-        return "n/a"
-
-
-def _fmt_explore_duration(variant: str | None, log: dict | None) -> str:
-    """Base runs → ``-``; missing log/field → ``n/a``; else seconds."""
-    if not variant:
-        return "-"
-    if not log or log.get("duration_seconds") is None:
-        return "n/a"
-    try:
-        return f"{float(log['duration_seconds']):.1f}"
-    except (TypeError, ValueError):
-        return "n/a"
-
-
-def _compare_report_filename(run_ids: list[str]) -> str:
-    """Keep readable names for <=3 runs; hash-shorten at 4+ (APO-13)."""
-    if len(run_ids) <= 3:
-        return "compare_" + "_".join(run_ids) + ".md"
-    digest = hashlib.sha1("|".join(run_ids).encode("utf-8")).hexdigest()[:10]
-    return f"compare_{len(run_ids)}runs_{digest}.md"
-
-
-def _relative_increase(before: float | None, after: float | None) -> float | None:
-    """(after - before) / before when before > 0; else None."""
-    if before is None or after is None or before <= 0:
-        return None
-    return (after - before) / before
-
-
-def _fmt_num(v: float | None, spec: str = ".1f") -> str:
-    return format(v, spec) if v is not None else "n/a"
-
-
-def _fmt_int(v: int | None) -> str:
-    return str(v) if v is not None else "n/a"
-
-
-def _compare_tradeoff_notes(
-    *,
-    alias: str,
-    accuracy_delta: float | None,
-    cost_ratio: float | None,
-    output_tok_ratio: float | None,
-    prompt_len_ratio: float | None,
-) -> list[str]:
-    """Warn when accuracy improves but cost/tokens/prompt length spike (APO-21)."""
-    if accuracy_delta is None or accuracy_delta <= 0:
-        return []
-    spikes: list[str] = []
-    if cost_ratio is not None and cost_ratio > COMPARE_TRADEOFF_COST_INCREASE_RATIO:
-        spikes.append(f"コスト +{cost_ratio:.0%}")
-    if output_tok_ratio is not None and output_tok_ratio > COMPARE_TRADEOFF_OUTPUT_TOKENS_INCREASE_RATIO:
-        spikes.append(f"出力トークン +{output_tok_ratio:.0%}")
-    if prompt_len_ratio is not None and prompt_len_ratio > COMPARE_TRADEOFF_PROMPT_LENGTH_INCREASE_RATIO:
-        spikes.append(f"プロンプト長 +{prompt_len_ratio:.0%}")
-    if not spikes:
-        return []
-    return [f"> ⚠ トレードオフ注意 ({alias}): 精度 {_fmt_pct_signed(accuracy_delta)} 改善に対し、" + "、".join(spikes)]
-
-
-def _compare_pair(run_a: str, run_b: str, paths: TaskPaths) -> list[str]:
-    """Before/after delta table with APO-21 tradeoff columns."""
-    stats_a = {
-        s.alias: s
-        for s in report_mod.compute_alias_stats(parse_promptfoo_output(paths.runs_dir / run_a / "output.json").results)
-    }
-    stats_b = {
-        s.alias: s
-        for s in report_mod.compute_alias_stats(parse_promptfoo_output(paths.runs_dir / run_b / "output.json").results)
-    }
-    meta_a = _load_run_meta(run_a, paths)
-    meta_b = _load_run_meta(run_b, paths)
-    prompt_a = report_mod.prompt_file_char_len(meta_a, root=paths.root)
-    prompt_b = report_mod.prompt_file_char_len(meta_b, root=paths.root)
-    prompt_delta = (prompt_b - prompt_a) if (prompt_a is not None and prompt_b is not None) else None
-    prompt_ratio = _relative_increase(
-        float(prompt_a) if prompt_a is not None else None,
-        float(prompt_b) if prompt_b is not None else None,
-    )
-    aliases = sorted(set(stats_a) | set(stats_b))
-
-    lines = [
-        f"# Compare: {run_a} (A, before) vs {run_b} (B, after)",
-        "",
-        "| alias | pass_rate A | pass_rate B | delta | beyond_95ci | "
-        "cost A | cost B | cost delta | cost delta % | "
-        "avg_out_tok A | avg_out_tok B | out_tok delta | "
-        "prompt_len A | prompt_len B | prompt_len delta |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
-    ]
-    tradeoff_notes: list[str] = []
-    for alias in aliases:
-        a, b = stats_a.get(alias), stats_b.get(alias)
-        pa = a.pass_rate if a else None
-        pb = b.pass_rate if b else None
-        delta = (pb - pa) if (pa is not None and pb is not None) else None
-        # issue #11: flag whether the delta clears the noise floor -- "yes"
-        # only when the two Wilson 95% intervals do not overlap at all
-        if a and b and a.pass_ci_low is not None and b.pass_ci_low is not None:
-            non_overlap = b.pass_ci_low > a.pass_ci_high or b.pass_ci_high < a.pass_ci_low
-            beyond_ci = "yes" if non_overlap else "no"
-        else:
-            beyond_ci = "n/a"
-        ca = a.total_cost_usd if a else None
-        cb = b.total_cost_usd if b else None
-        cdelta = (cb - ca) if (ca is not None and cb is not None) else None
-        cost_ratio = _relative_increase(ca, cb)
-        ta = a.avg_model_completion_tokens if a else None
-        tb = b.avg_model_completion_tokens if b else None
-        tdelta = (tb - ta) if (ta is not None and tb is not None) else None
-        tok_ratio = _relative_increase(ta, tb)
-        lines.append(
-            f"| {alias} | {_fmt_pct(pa)} | {_fmt_pct(pb)} | {_fmt_pct_signed(delta)} | {beyond_ci} | "
-            f"{_fmt_usd(ca)} | {_fmt_usd(cb)} | {_fmt_usd_signed(cdelta)} | {_fmt_pct_signed(cost_ratio)} | "
-            f"{_fmt_num(ta)} | {_fmt_num(tb)} | {_fmt_num(tdelta, '+.1f')} | "
-            f"{_fmt_int(prompt_a)} | {_fmt_int(prompt_b)} | {_fmt_num(prompt_delta, '+.0f')} |"
-        )
-        tradeoff_notes.extend(
-            _compare_tradeoff_notes(
-                alias=alias,
-                accuracy_delta=delta,
-                cost_ratio=cost_ratio,
-                output_tok_ratio=tok_ratio,
-                prompt_len_ratio=prompt_ratio,
-            )
-        )
-    lines.append("")
-    lines.append(
-        "> beyond_95ci: yes when the Wilson 95% intervals of A and B do not overlap "
-        "(a conservative significance check; overlapping intervals mean the delta may be noise)."
-    )
-    lines.append(
-        "> cost delta % / out_tok / prompt_len: tradeoff axes vs A (APO-21). "
-        f"A tradeoff warning is emitted when accuracy improves but cost/tokens/prompt grow "
-        f"> {COMPARE_TRADEOFF_COST_INCREASE_RATIO:.0%}."
-    )
-    lines.append("")
-    lines.extend(tradeoff_notes)
-    if tradeoff_notes:
-        lines.append("")
-    return lines
-
-
-def _compare_matrix(run_ids: list[str], paths: TaskPaths) -> list[str]:
-    """Model × run matrix for 3+ runs (accuracy / cost / latency / explore)."""
-    per_run_stats: list[dict[str, report_mod.AliasStats]] = []
-    headers: list[str] = []
-    explore_costs: list[str] = []
-    explore_durations: list[str] = []
-    for run_id in run_ids:
-        meta = _load_run_meta(run_id, paths)
-        variant_raw = meta.get("variant")
-        variant = variant_raw if isinstance(variant_raw, str) else None
-        method = _method_for_variant(variant, paths)
-        variant_label = variant or "(base)"
-        method_label = method or "n/a"
-        headers.append(f"`{run_id}` (variant=`{variant_label}`, method=`{method_label}`)")
-        opt_log = _load_optimize_log_for_run(run_id, paths, variant=variant) if variant else None
-        explore_costs.append(_fmt_explore_cost(variant, opt_log))
-        explore_durations.append(_fmt_explore_duration(variant, opt_log))
-        per_run_stats.append(
-            {
-                s.alias: s
-                for s in report_mod.compute_alias_stats(
-                    parse_promptfoo_output(paths.runs_dir / run_id / "output.json").results
-                )
-            }
-        )
-
-    aliases = sorted({alias for stats in per_run_stats for alias in stats})
-    # Compact column labels R1..Rn; full run identity lives in the Runs list.
-    col_labels = [f"R{i + 1}" for i in range(len(run_ids))]
-
-    lines = [
-        "# Compare: " + " vs ".join(run_ids),
-        "",
-        "## Runs",
-        "",
-    ]
-    for label, header in zip(col_labels, headers, strict=True):
-        lines.append(f"- {label}: {header}")
-    lines.append("")
-
-    header_cells = ["alias"]
-    align_cells = ["---"]
-    for label in col_labels:
-        header_cells.extend(
-            [
-                f"pass_rate {label}",
-                f"cost {label}",
-                f"p50_ms {label}",
-                f"search_cost {label}",
-                f"duration_s {label}",
-            ]
-        )
-        align_cells.extend(["---:", "---:", "---:", "---:", "---:"])
-    lines.append("| " + " | ".join(header_cells) + " |")
-    lines.append("|" + "|".join(align_cells) + "|")
-
-    for alias in aliases:
-        cells = [alias]
-        for stats, search_cost, duration_s in zip(per_run_stats, explore_costs, explore_durations, strict=True):
-            s = stats.get(alias)
-            cells.append(_fmt_pct(s.pass_rate if s else None))
-            cells.append(_fmt_usd(s.total_cost_usd if s else None))
-            cells.append(report_mod.fmt(s.p50_latency_ms if s else None, ".0f"))
-            cells.append(search_cost)
-            cells.append(duration_s)
-        lines.append("| " + " | ".join(cells) + " |")
-    lines.append("")
-    lines.append(
-        "> search_cost / duration_s: optimize exploration (from optimize_log.json); "
-        "base runs show `-`, missing logs show `n/a`. `cost` is the holdout eval cost."
-    )
-    lines.append("")
-    lines.append(f"> {_COMPARE_MULTI_DISCLAIMER}")
-    lines.append("")
-    return lines
-
-
-def compare(run_ids: list[str], paths: TaskPaths) -> Path:
-    """Compare 2+ runs into ``results/<task>/reports/compare_*.md``.
-
-    Two runs keep the legacy before/after delta table. Three or more emit a
-    model×run matrix with variant/method headers (APO-13 / issue #72).
-    """
-    cleaned = [r.strip() for r in run_ids if r and r.strip()]
-    if len(cleaned) < 2:
-        raise OptimizeError("compare requires at least 2 run_ids")
-    if len(cleaned) != len(set(cleaned)):
-        raise OptimizeError("compare run_ids must be unique")
-
-    for run_id in cleaned:
-        output = paths.runs_dir / run_id / "output.json"
-        if not output.exists():
-            raise OptimizeError(f"run {run_id!r} not found ({output})")
-
-    lines = _compare_pair(cleaned[0], cleaned[1], paths) if len(cleaned) == 2 else _compare_matrix(cleaned, paths)
-
-    paths.reports_dir.mkdir(parents=True, exist_ok=True)
-    path = paths.reports_dir / _compare_report_filename(cleaned)
-    path.write_text("\n".join(lines), encoding="utf-8")
-    print(f"[compare] wrote {path}")
-    return path
