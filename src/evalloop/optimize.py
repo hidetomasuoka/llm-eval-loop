@@ -229,10 +229,7 @@ def _cost_from_history_entry(entry: object, model: ModelConfig | None) -> float 
     if tokens is None or model is None:
         return None
     in_tok, out_tok = tokens
-    return (
-        in_tok / 1_000_000 * model.price_in_per_mtok
-        + out_tok / 1_000_000 * model.price_out_per_mtok
-    )
+    return in_tok / 1_000_000 * model.price_in_per_mtok + out_tok / 1_000_000 * model.price_out_per_mtok
 
 
 def summarize_lm_search_cost(task_lm, reflection_lm, cfg: Config) -> SearchCostSummary:
@@ -260,9 +257,7 @@ def summarize_lm_search_cost(task_lm, reflection_lm, cfg: Config) -> SearchCostS
     return SearchCostSummary(search_cost_usd=round(total, 6), search_lm_call_count=call_count)
 
 
-def estimate_optimize_cost(
-    cfg: Config, train_cases: list[GoldenCase], prompt_template: str
-) -> OptimizeCostEstimate:
+def estimate_optimize_cost(cfg: Config, train_cases: list[GoldenCase], prompt_template: str) -> OptimizeCostEstimate:
     """Rough optimize cost from the config.yaml price table: target-model
     rollouts (train size x method factor) plus reflection calls. Target-model
     input counting shares the provider-aware implementation used by build.py;
@@ -384,7 +379,7 @@ def _short_param_key(key: str) -> str:
     if key in _PARAM_KEY_SHORT:
         return _PARAM_KEY_SHORT[key]
     cleaned = re.sub(r"[^a-z0-9]+", "", str(key).lower())
-    return (cleaned[:6] if cleaned else "p")
+    return cleaned[:6] if cleaned else "p"
 
 
 def _format_param_token(key: str, value) -> str | None:
@@ -512,10 +507,7 @@ def _alias_pass_rate(run_id: str, alias: str, paths: TaskPaths) -> float | None:
     output_path = paths.runs_dir / run_id / "output.json"
     if not output_path.exists():
         return None
-    stats = {
-        s.alias: s
-        for s in report_mod.compute_alias_stats(parse_promptfoo_output(output_path).results)
-    }
+    stats = {s.alias: s for s in report_mod.compute_alias_stats(parse_promptfoo_output(output_path).results)}
     stat = stats.get(alias)
     return stat.pass_rate if stat else None
 
@@ -567,8 +559,7 @@ def _patch_optimize_log(log_path: Path, record: GeneralizationRecord) -> None:
 def _print_generalization_gate(console, record: GeneralizationRecord) -> None:
     console.print("[optimize] generalization gate (train proxy vs holdout pass rate):")
     console.print(
-        f"[optimize]   train_score={_fmt_pct(record.train_score)} "
-        f"holdout_score={_fmt_pct(record.holdout_score)}"
+        f"[optimize]   train_score={_fmt_pct(record.train_score)} holdout_score={_fmt_pct(record.holdout_score)}"
     )
     if record.base_holdout_score is not None:
         console.print(
@@ -653,9 +644,7 @@ def optimize(
 
     from evalloop import preflight as preflight_mod
 
-    preflight_result = preflight_mod.run_preflight(
-        cfg, train_cases, len(test_ids), force=force
-    )
+    preflight_result = preflight_mod.run_preflight(cfg, train_cases, len(test_ids), force=force)
     console = Console()  # format_preflight() lines carry rich markup; plain print would show the tags
     for line in preflight_mod.format_preflight(preflight_result):
         console.print(line)
@@ -679,10 +668,7 @@ def optimize(
         # MIPROv2 will choose demos; strip placeholder so it is not baked into instructions.
         original_template = raw_template.replace(DEMOS_PLACEHOLDER, "")
     elif paths.demos.exists() and DEMOS_PLACEHOLDER not in original_template:
-        print(
-            f"[optimize] WARN: {paths.demos} exists but prompt has no {DEMOS_PLACEHOLDER}; "
-            "demos are ignored"
-        )
+        print(f"[optimize] WARN: {paths.demos} exists but prompt has no {DEMOS_PLACEHOLDER}; demos are ignored")
     elif DEMOS_PLACEHOLDER in original_template:
         try:
             original_template, n_demos = expand_demos_in_template(
@@ -768,8 +754,7 @@ def optimize(
         return dspy.Prediction(score=score, feedback=feedback)
 
     trainset = [
-        dspy.Example(input=c.input, expected=c.expected, case_id=c.id).with_inputs("input")
-        for c in optimize_cases
+        dspy.Example(input=c.input, expected=c.expected, case_id=c.id).with_inputs("input") for c in optimize_cases
     ]
 
     # optimizer selection by cfg.optimize.method (validated against
@@ -840,9 +825,7 @@ def optimize(
         ]
         demos_only = [d for d, _o in demos_with_origin]
         try:
-            assert_demos_do_not_leak_test(
-                demos_only, test_ids=demos_test_ids, test_inputs=demos_test_inputs
-            )
+            assert_demos_do_not_leak_test(demos_only, test_ids=demos_test_ids, test_inputs=demos_test_inputs)
         except DemoError as e:
             raise OptimizeError(str(e)) from e
         demos_path = out_dir / "demos.jsonl"
@@ -852,9 +835,7 @@ def optimize(
             provenance={
                 "source": "miprov2-optimize",
                 "method": result.method,
-                "max_bootstrapped_demos": int(
-                    cfg.optimize.params.get("max_bootstrapped_demos", 0) or 0
-                ),
+                "max_bootstrapped_demos": int(cfg.optimize.params.get("max_bootstrapped_demos", 0) or 0),
                 "max_labeled_demos": int(cfg.optimize.params.get("max_labeled_demos", 0) or 0),
                 "seed": int(cfg.optimize.params.get("seed", 0) or 0),
                 "created_at": created_at,
@@ -865,14 +846,9 @@ def optimize(
         shell = render_optimized_template(result.optimized_instructions, raw_template)
         if DEMOS_PLACEHOLDER not in shell:
             if DEMOS_PLACEHOLDER not in raw_template:
-                raise OptimizeError(
-                    f"miprov2 produced demos but {cfg.task.prompt_file} has no {DEMOS_PLACEHOLDER}"
-                )
+                raise OptimizeError(f"miprov2 produced demos but {cfg.task.prompt_file} has no {DEMOS_PLACEHOLDER}")
             _instr, trailer = _split_template(raw_template)
-            shell = (
-                f"{result.optimized_instructions.strip()}\n\n"
-                f"{DEMOS_PLACEHOLDER}\n\n{trailer}\n"
-            )
+            shell = f"{result.optimized_instructions.strip()}\n\n{DEMOS_PLACEHOLDER}\n\n{trailer}\n"
         try:
             optimized_template, n_demos = expand_demos_in_template(
                 shell,
@@ -883,16 +859,12 @@ def optimize(
         except DemoError as e:
             raise OptimizeError(str(e)) from e
         if n_demos is None:
-            raise OptimizeError(
-                f"miprov2 produced demos but {cfg.task.prompt_file} has no {DEMOS_PLACEHOLDER}"
-            )
+            raise OptimizeError(f"miprov2 produced demos but {cfg.task.prompt_file} has no {DEMOS_PLACEHOLDER}")
         extra_log["demos_path"] = f"{cfg.optimize.target_alias}/{dir_name}/demos.jsonl"
         extra_log["demo_ids"] = [d.id for d in demos_only if d.id]
         print(f"[optimize] wrote {demos_path} ({len(demos_only)} demos)")
     else:
-        optimized_template = render_optimized_template(
-            result.optimized_instructions, original_template
-        )
+        optimized_template = render_optimized_template(result.optimized_instructions, original_template)
 
     task_path = out_dir / "task.txt"
     task_path.write_text(optimized_template, encoding="utf-8")
@@ -1009,8 +981,7 @@ def _fmt_usd_signed(v):
 
 # Conditionality disclaimer for multi-run method matrices (APO-13 / issue #72).
 _COMPARE_MULTI_DISCLAIMER = (
-    "手法の優劣はデータセット・meta-LLM・タスク形式に条件依存する。"
-    "この結果は本タスク・本設定に限る"
+    "手法の優劣はデータセット・meta-LLM・タスク形式に条件依存する。この結果は本タスク・本設定に限る"
 )
 
 # APO-21 / issue #80: flag accuracy gains that come with large cost/length spikes.
@@ -1073,9 +1044,7 @@ def _read_optimize_log_from_index_entry(entry: dict, paths: TaskPaths) -> dict |
     return data if isinstance(data, dict) else None
 
 
-def _load_optimize_log_for_run(
-    run_id: str, paths: TaskPaths, *, variant: str | None = None
-) -> dict | None:
+def _load_optimize_log_for_run(run_id: str, paths: TaskPaths, *, variant: str | None = None) -> dict | None:
     """Load optimize_log.json via optimized/index.jsonl (APO-14).
 
     Prefer an exact ``run_id`` match; fall back to ``variant_name`` so a
@@ -1157,37 +1126,24 @@ def _compare_tradeoff_notes(
     spikes: list[str] = []
     if cost_ratio is not None and cost_ratio > COMPARE_TRADEOFF_COST_INCREASE_RATIO:
         spikes.append(f"コスト +{cost_ratio:.0%}")
-    if (
-        output_tok_ratio is not None
-        and output_tok_ratio > COMPARE_TRADEOFF_OUTPUT_TOKENS_INCREASE_RATIO
-    ):
+    if output_tok_ratio is not None and output_tok_ratio > COMPARE_TRADEOFF_OUTPUT_TOKENS_INCREASE_RATIO:
         spikes.append(f"出力トークン +{output_tok_ratio:.0%}")
-    if (
-        prompt_len_ratio is not None
-        and prompt_len_ratio > COMPARE_TRADEOFF_PROMPT_LENGTH_INCREASE_RATIO
-    ):
+    if prompt_len_ratio is not None and prompt_len_ratio > COMPARE_TRADEOFF_PROMPT_LENGTH_INCREASE_RATIO:
         spikes.append(f"プロンプト長 +{prompt_len_ratio:.0%}")
     if not spikes:
         return []
-    return [
-        f"> ⚠ トレードオフ注意 ({alias}): 精度 {_fmt_pct_signed(accuracy_delta)} 改善に対し、"
-        + "、".join(spikes)
-    ]
+    return [f"> ⚠ トレードオフ注意 ({alias}): 精度 {_fmt_pct_signed(accuracy_delta)} 改善に対し、" + "、".join(spikes)]
 
 
 def _compare_pair(run_a: str, run_b: str, paths: TaskPaths) -> list[str]:
     """Before/after delta table with APO-21 tradeoff columns."""
     stats_a = {
         s.alias: s
-        for s in report_mod.compute_alias_stats(
-            parse_promptfoo_output(paths.runs_dir / run_a / "output.json").results
-        )
+        for s in report_mod.compute_alias_stats(parse_promptfoo_output(paths.runs_dir / run_a / "output.json").results)
     }
     stats_b = {
         s.alias: s
-        for s in report_mod.compute_alias_stats(
-            parse_promptfoo_output(paths.runs_dir / run_b / "output.json").results
-        )
+        for s in report_mod.compute_alias_stats(parse_promptfoo_output(paths.runs_dir / run_b / "output.json").results)
     }
     meta_a = _load_run_meta(run_a, paths)
     meta_b = _load_run_meta(run_b, paths)
@@ -1276,9 +1232,7 @@ def _compare_matrix(run_ids: list[str], paths: TaskPaths) -> list[str]:
         variant_label = variant or "(base)"
         method_label = method or "n/a"
         headers.append(f"`{run_id}` (variant=`{variant_label}`, method=`{method_label}`)")
-        opt_log = (
-            _load_optimize_log_for_run(run_id, paths, variant=variant) if variant else None
-        )
+        opt_log = _load_optimize_log_for_run(run_id, paths, variant=variant) if variant else None
         explore_costs.append(_fmt_explore_cost(variant, opt_log))
         explore_durations.append(_fmt_explore_duration(variant, opt_log))
         per_run_stats.append(
@@ -1322,9 +1276,7 @@ def _compare_matrix(run_ids: list[str], paths: TaskPaths) -> list[str]:
 
     for alias in aliases:
         cells = [alias]
-        for stats, search_cost, duration_s in zip(
-            per_run_stats, explore_costs, explore_durations, strict=True
-        ):
+        for stats, search_cost, duration_s in zip(per_run_stats, explore_costs, explore_durations, strict=True):
             s = stats.get(alias)
             cells.append(_fmt_pct(s.pass_rate if s else None))
             cells.append(_fmt_usd(s.total_cost_usd if s else None))
@@ -1360,11 +1312,7 @@ def compare(run_ids: list[str], paths: TaskPaths) -> Path:
         if not output.exists():
             raise OptimizeError(f"run {run_id!r} not found ({output})")
 
-    lines = (
-        _compare_pair(cleaned[0], cleaned[1], paths)
-        if len(cleaned) == 2
-        else _compare_matrix(cleaned, paths)
-    )
+    lines = _compare_pair(cleaned[0], cleaned[1], paths) if len(cleaned) == 2 else _compare_matrix(cleaned, paths)
 
     paths.reports_dir.mkdir(parents=True, exist_ok=True)
     path = paths.reports_dir / _compare_report_filename(cleaned)

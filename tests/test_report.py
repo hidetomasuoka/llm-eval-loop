@@ -159,8 +159,15 @@ def test_compute_alias_stats_repeat_axis_and_flips():
 
 def test_render_markdown_repeat_section_only_when_repeats_exist():
     single = report_mod.compute_alias_stats([_cr("haiku45", True)])
-    meta = {"task_name": "t", "answer_type": "label", "created_at": "now", "repeat": 1, "limit": None,
-            "promptfoo_config_path": "x", "promptfoo_version": "0.1.0"}
+    meta = {
+        "task_name": "t",
+        "answer_type": "label",
+        "created_at": "now",
+        "repeat": 1,
+        "limit": None,
+        "promptfoo_config_path": "x",
+        "promptfoo_version": "0.1.0",
+    }
     md = report_mod.render_markdown("run-1", meta, single, [])
     assert "pass_95ci" in md
     assert "Repeat stability" not in md
@@ -177,13 +184,18 @@ def test_render_markdown_repeat_section_only_when_repeats_exist():
 
 
 def test_render_markdown_includes_warnings_and_table():
-    stats = report_mod.compute_alias_stats(
-        [_cr("haiku45", True, token_usage={"prompt": 100, "completion": 20})]
-    )
+    stats = report_mod.compute_alias_stats([_cr("haiku45", True, token_usage={"prompt": 100, "completion": 20})])
     md = report_mod.render_markdown(
         "20260101-000000-abcd",
-        {"task_name": "t", "answer_type": "label", "created_at": "now", "repeat": 1, "limit": None,
-         "promptfoo_config_path": "promptfoo/t1/promptfooconfig.yaml", "promptfoo_version": "0.1.0"},
+        {
+            "task_name": "t",
+            "answer_type": "label",
+            "created_at": "now",
+            "repeat": 1,
+            "limit": None,
+            "promptfoo_config_path": "promptfoo/t1/promptfooconfig.yaml",
+            "promptfoo_version": "0.1.0",
+        },
         stats,
         ["uncalibrated/low-agreement judge: run `evalloop calibrate`"],
     )
@@ -200,8 +212,15 @@ def test_render_markdown_shows_na_for_missing_token_usage():
     stats = report_mod.compute_alias_stats([_cr("ollama", True, token_usage={})])
     md = report_mod.render_markdown(
         "run-ollama",
-        {"task_name": "t", "answer_type": "label", "created_at": "now", "repeat": 1, "limit": None,
-         "promptfoo_config_path": "x", "promptfoo_version": "0.1.0"},
+        {
+            "task_name": "t",
+            "answer_type": "label",
+            "created_at": "now",
+            "repeat": 1,
+            "limit": None,
+            "promptfoo_config_path": "x",
+            "promptfoo_version": "0.1.0",
+        },
         stats,
         [],
     )
@@ -261,9 +280,18 @@ def test_report_end_to_end(isolated_root):
     }
     (run_dir / "output.json").write_text(json.dumps(output), encoding="utf-8")
     (run_dir / "meta.json").write_text(
-        json.dumps({"task_name": "t", "answer_type": "label", "created_at": "now", "repeat": 1, "limit": None,
-                    "promptfoo_config_path": "x", "promptfoo_version": "0.1.0",
-                    "judge": {"provider": "j", "calibration_status": "uncalibrated"}}),
+        json.dumps(
+            {
+                "task_name": "t",
+                "answer_type": "label",
+                "created_at": "now",
+                "repeat": 1,
+                "limit": None,
+                "promptfoo_config_path": "x",
+                "promptfoo_version": "0.1.0",
+                "judge": {"provider": "j", "calibration_status": "uncalibrated"},
+            }
+        ),
         encoding="utf-8",
     )
 

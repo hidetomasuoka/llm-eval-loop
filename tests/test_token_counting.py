@@ -83,9 +83,7 @@ def test_anthropic_partial_api_failure_falls_back(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     monkeypatch.setattr(token_counting.urllib.request, "urlopen", fake_urlopen)
 
-    result = token_counting.average_input_tokens(
-        "anthropic:messages:claude-sonnet-5", ["case-a", "case-b"]
-    )
+    result = token_counting.average_input_tokens("anthropic:messages:claude-sonnet-5", ["case-a", "case-b"])
 
     assert result.method == "heuristic:mixed-text-v1"
     assert result.average_input_tokens > 0

@@ -64,9 +64,7 @@ def test_select_metrics_for_answer_type():
 
 
 def test_optimize_end_to_end_with_stubbed_tapo_and_promptfoo(isolated_root, monkeypatch):
-    cfg, paths = _scaffold_tapo_task(
-        isolated_root, params={"population_size": 3, "generations": 2, "seed": 9}
-    )
+    cfg, paths = _scaffold_tapo_task(isolated_root, params={"population_size": 3, "generations": 2, "seed": 9})
     build_mod.build(cfg, paths, yes=True)
 
     captured = {}

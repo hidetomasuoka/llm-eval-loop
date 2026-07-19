@@ -22,7 +22,10 @@ from tests.conftest import scaffold_task
 
 
 def test_provider_mapping_anthropic():
-    assert optimize_mod.promptfoo_provider_to_dspy_lm("anthropic:messages:claude-sonnet-4-6") == "anthropic/claude-sonnet-4-6"
+    assert (
+        optimize_mod.promptfoo_provider_to_dspy_lm("anthropic:messages:claude-sonnet-4-6")
+        == "anthropic/claude-sonnet-4-6"
+    )
 
 
 def test_provider_mapping_ollama():
@@ -279,9 +282,7 @@ def test_text_metric_over_extraction_scores_higher_than_under_extraction():
     # over-extraction (gold + extra) should beat under-extraction (one word)
     # because the rubric tolerates mild over-extraction but fails truncation.
     under, _ = optimize_mod.text_score_and_feedback("Agreement", GOLD_SPAN)
-    over, _ = optimize_mod.text_score_and_feedback(
-        f"{GOLD_SPAN} and some surrounding context", GOLD_SPAN
-    )
+    over, _ = optimize_mod.text_score_and_feedback(f"{GOLD_SPAN} and some surrounding context", GOLD_SPAN)
     assert over > under
 
 
@@ -289,9 +290,7 @@ def test_text_metric_full_extraction_with_extra_keeps_high_score():
     # gold fully covered + mild extra context -- recall is 1.0 so the score
     # should stay close to 1.0 (the rubric tolerates this; the old F1 metric
     # would have pulled it down via precision).
-    score, _ = optimize_mod.text_score_and_feedback(
-        f"{GOLD_SPAN} Additional surrounding sentences.", GOLD_SPAN
-    )
+    score, _ = optimize_mod.text_score_and_feedback(f"{GOLD_SPAN} Additional surrounding sentences.", GOLD_SPAN)
     assert score >= 0.8
 
 
@@ -347,10 +346,34 @@ def test_find_latest_base_run_picks_most_recent_successful_base(isolated_root):
     paths = TaskPaths(root=isolated_root, task="t1")
     paths.results_dir.mkdir(parents=True)
     entries = [
-        {"run_id": "old", "created_at": "2026-01-01T00:00:00Z", "task_name": "t", "variant": None, "promptfoo_exit_code": 0},
-        {"run_id": "variant-run", "created_at": "2026-01-02T00:00:00Z", "task_name": "t", "variant": "x", "promptfoo_exit_code": 0},
-        {"run_id": "failed", "created_at": "2026-01-03T00:00:00Z", "task_name": "t", "variant": None, "promptfoo_exit_code": 1},
-        {"run_id": "newest-base", "created_at": "2026-01-04T00:00:00Z", "task_name": "t", "variant": None, "promptfoo_exit_code": 0},
+        {
+            "run_id": "old",
+            "created_at": "2026-01-01T00:00:00Z",
+            "task_name": "t",
+            "variant": None,
+            "promptfoo_exit_code": 0,
+        },
+        {
+            "run_id": "variant-run",
+            "created_at": "2026-01-02T00:00:00Z",
+            "task_name": "t",
+            "variant": "x",
+            "promptfoo_exit_code": 0,
+        },
+        {
+            "run_id": "failed",
+            "created_at": "2026-01-03T00:00:00Z",
+            "task_name": "t",
+            "variant": None,
+            "promptfoo_exit_code": 1,
+        },
+        {
+            "run_id": "newest-base",
+            "created_at": "2026-01-04T00:00:00Z",
+            "task_name": "t",
+            "variant": None,
+            "promptfoo_exit_code": 0,
+        },
     ]
     paths.index.write_text("\n".join(json.dumps(e) for e in entries) + "\n", encoding="utf-8")
 
@@ -392,8 +415,16 @@ def _row(case_id, alias, passed, cost=0.001, *, completion_tokens=None):
 def test_compare_computes_deltas(isolated_root):
     paths = TaskPaths(root=isolated_root, task="t1")
 
-    _write_output(paths.runs_dir, "before", [_row("case-0001", "qwen7b", False, cost=0.0), _row("case-0002", "qwen7b", False, cost=0.0)])
-    _write_output(paths.runs_dir, "after", [_row("case-0001", "qwen7b", True, cost=0.0), _row("case-0002", "qwen7b", True, cost=0.0)])
+    _write_output(
+        paths.runs_dir,
+        "before",
+        [_row("case-0001", "qwen7b", False, cost=0.0), _row("case-0002", "qwen7b", False, cost=0.0)],
+    )
+    _write_output(
+        paths.runs_dir,
+        "after",
+        [_row("case-0001", "qwen7b", True, cost=0.0), _row("case-0002", "qwen7b", True, cost=0.0)],
+    )
 
     path = optimize_mod.compare(["before", "after"], paths)
     content = path.read_text(encoding="utf-8")
@@ -737,9 +768,7 @@ def test_optimize_end_to_end_with_text_task(isolated_root, monkeypatch):
 
     def fake_gepa(student, trainset, metric, reflection_lm, auto, seed=0):
         # exercise the real metric wiring with one plausible rollout per case
-        captured["scores"] = [
-            metric(gold, types.SimpleNamespace(output=gold.expected)).score for gold in trainset
-        ]
+        captured["scores"] = [metric(gold, types.SimpleNamespace(output=gold.expected)).score for gold in trainset]
         return types.SimpleNamespace(signature=types.SimpleNamespace(instructions="optimized text instructions"))
 
     monkeypatch.setattr(optimize_mod, "run_gepa", fake_gepa)

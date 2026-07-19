@@ -191,10 +191,7 @@ def _resolve_prompt_template(config: Config, paths: TaskPaths, test_cases: list[
     demos_exist = paths.demos.exists()
 
     if demos_exist and DEMOS_PLACEHOLDER not in template:
-        print(
-            f"[build] WARN: {paths.demos} exists but prompt has no {DEMOS_PLACEHOLDER}; "
-            "demos are ignored"
-        )
+        print(f"[build] WARN: {paths.demos} exists but prompt has no {DEMOS_PLACEHOLDER}; demos are ignored")
         return template, prompt_path
 
     try:
@@ -246,13 +243,9 @@ def build(
     cases = load_golden_jsonl(paths.golden)
 
     if config.task.answer_type == "label":
-        bad = sorted(
-            {c.id for c in cases if isinstance(c.expected, str) and c.expected not in config.task.labels}
-        )
+        bad = sorted({c.id for c in cases if isinstance(c.expected, str) and c.expected not in config.task.labels})
         if bad:
-            raise BuildError(
-                f"golden.jsonl has case(s) with `expected` not in task.labels {config.task.labels}: {bad}"
-            )
+            raise BuildError(f"golden.jsonl has case(s) with `expected` not in task.labels {config.task.labels}: {bad}")
 
     train_cases = [c for c in cases if c.split == "train"]
     test_cases = [c for c in cases if c.split == "test"]
@@ -266,9 +259,7 @@ def build(
     # Resolve demos / promptfoo config before writing build artifacts so a failed
     # demo leak check cannot leave fresh tests_*.yaml next to a stale config.
     prompt_template, prompt_path_for_eval = _resolve_prompt_template(config, paths, test_cases)
-    promptfoo_config = _build_promptfoo_config(
-        config, allow_same_judge, paths, prompt_path=prompt_path_for_eval
-    )
+    promptfoo_config = _build_promptfoo_config(config, allow_same_judge, paths, prompt_path=prompt_path_for_eval)
     config_text = yaml.safe_dump(promptfoo_config, allow_unicode=True, sort_keys=False)
     _assert_config_never_references_train(config_text)
 

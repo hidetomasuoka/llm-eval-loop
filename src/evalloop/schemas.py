@@ -44,9 +44,7 @@ class TaskConfig:
 
     def __post_init__(self) -> None:
         if self.answer_type not in VALID_ANSWER_TYPES:
-            raise SchemaError(
-                f"task.answer_type must be one of {sorted(VALID_ANSWER_TYPES)}, got {self.answer_type!r}"
-            )
+            raise SchemaError(f"task.answer_type must be one of {sorted(VALID_ANSWER_TYPES)}, got {self.answer_type!r}")
         if self.answer_type == "label" and not self.labels:
             raise SchemaError("task.answer_type=label requires a non-empty task.labels list")
         if self.answer_type == "json" and not self.json_schema_file:
@@ -195,9 +193,7 @@ def resolve_task_name(task: str | None, global_config: GlobalConfig) -> str:
     """--task flag > EVALLOOP_TASK env > config.yaml default_task."""
     name = task or os.environ.get("EVALLOOP_TASK") or global_config.default_task
     if not name:
-        raise SchemaError(
-            "no task specified: pass --task NAME, set EVALLOOP_TASK, or set default_task in config.yaml"
-        )
+        raise SchemaError("no task specified: pass --task NAME, set EVALLOOP_TASK, or set default_task in config.yaml")
     return name
 
 
@@ -243,8 +239,7 @@ def load_task(task: str | None = None, root: Path | None = None) -> tuple[Config
         unknown = [a for a in selection if a not in by_alias]
         if unknown:
             raise SchemaError(
-                f"{tp.task_config}: models {unknown} not in the global registry "
-                f"(known: {sorted(by_alias)})"
+                f"{tp.task_config}: models {unknown} not in the global registry (known: {sorted(by_alias)})"
             )
         models = [by_alias[a] for a in selection]
     else:
@@ -271,7 +266,9 @@ def load_task(task: str | None = None, root: Path | None = None) -> tuple[Config
         allowed_sources=blog_raw.get("allowed_sources") or ["self-made"],
     )
 
-    config = Config(task=task_cfg, models=models, run=run, judge=judge, optimize=optimize, blog=blog, path=tp.task_config)
+    config = Config(
+        task=task_cfg, models=models, run=run, judge=judge, optimize=optimize, blog=blog, path=tp.task_config
+    )
     return config, tp
 
 
@@ -357,9 +354,7 @@ def assert_split_disjoint(train_ids: set[str], test_ids: set[str]) -> None:
     """Iron rule #1: split separation must hold. Raise loudly if it doesn't."""
     overlap = train_ids & test_ids
     if overlap:
-        raise SchemaError(
-            "train/test split ID overlap detected (must never happen): " f"{sorted(overlap)}"
-        )
+        raise SchemaError(f"train/test split ID overlap detected (must never happen): {sorted(overlap)}")
 
 
 # ---------------------------------------------------------------------------

@@ -158,9 +158,7 @@ def for_task(name: str, root: Path = REPO_ROOT) -> TaskPaths:
     paths = TaskPaths(root=root, task=name)
     if not paths.task_config.exists():
         known = ", ".join(list_tasks(root)) or "(none)"
-        raise TaskNotFoundError(
-            f"task {name!r} not found: {paths.task_config} does not exist. Known tasks: {known}"
-        )
+        raise TaskNotFoundError(f"task {name!r} not found: {paths.task_config} does not exist. Known tasks: {known}")
     return paths
 
 

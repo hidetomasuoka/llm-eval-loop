@@ -147,8 +147,20 @@ class Labels:
 
 def _labels(has_cjk_font: bool) -> Labels:
     if has_cjk_font:
-        return Labels(accuracy="精度", cost="コスト (USD/件, 対数軸)", model="モデル", category="失敗カテゴリ", unassigned="未割当")
-    return Labels(accuracy="Accuracy", cost="Cost (USD/case, log scale)", model="Model", category="Failure category", unassigned="unassigned")
+        return Labels(
+            accuracy="精度",
+            cost="コスト (USD/件, 対数軸)",
+            model="モデル",
+            category="失敗カテゴリ",
+            unassigned="未割当",
+        )
+    return Labels(
+        accuracy="Accuracy",
+        cost="Cost (USD/case, log scale)",
+        model="Model",
+        category="Failure category",
+        unassigned="unassigned",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -230,8 +242,15 @@ def make_fig01_accuracy_by_model(runs: list[RunData], out_dir: Path, labels: Lab
 
         yerr = [[_err(a, "low") for a in aliases], [_err(a, "high") for a in aliases]]
         ax.bar(
-            xs, values, width=width, color=colors, alpha=alpha, label=run.label,
-            yerr=yerr, capsize=3, error_kw={"ecolor": "#333333", "alpha": 0.7},
+            xs,
+            values,
+            width=width,
+            color=colors,
+            alpha=alpha,
+            label=run.label,
+            yerr=yerr,
+            capsize=3,
+            error_kw={"ecolor": "#333333", "alpha": 0.7},
         )
     ax.set_xticks([x + width * (len(runs) - 1) / 2 for x in range(len(aliases))])
     ax.set_xticklabels(aliases, rotation=30, ha="right")
@@ -253,8 +272,10 @@ def pareto_front_mask(costs: list[float], accuracies: list[float]) -> list[bool]
         for j in range(n):
             if i == j:
                 continue
-            if costs[j] <= costs[i] and accuracies[j] >= accuracies[i] and (
-                costs[j] < costs[i] or accuracies[j] > accuracies[i]
+            if (
+                costs[j] <= costs[i]
+                and accuracies[j] >= accuracies[i]
+                and (costs[j] < costs[i] or accuracies[j] > accuracies[i])
             ):
                 on_front[i] = False
                 break
@@ -515,9 +536,8 @@ def render_conditions_md(runs: list[RunData], config, fig03_written: bool) -> st
     # config that was used for the run, not the config passed to blog().
     _meta_judge_provider = grader.get("provider", "")
     _meta_models = primary.meta.get("models", [])
-    same_judge = (
-        primary.meta.get("answer_type") == "text"
-        and any(m.get("provider") == _meta_judge_provider for m in _meta_models)
+    same_judge = primary.meta.get("answer_type") == "text" and any(
+        m.get("provider") == _meta_judge_provider for m in _meta_models
     )
     same_judge_flag = " --allow-same-judge" if same_judge else ""
     lines.append(f"evalloop build{task_flag}{same_judge_flag}")
@@ -660,11 +680,11 @@ def blog(
         if not fig03_written:
             print(f"[blog] fig03 skipped: {paths.taxonomy} not defined yet (run `evalloop cluster` then merge it)")
 
-        (staging_dir / "tables.md").write_text(
-            render_tables_md(runs, paths=paths), encoding="utf-8"
-        )
+        (staging_dir / "tables.md").write_text(render_tables_md(runs, paths=paths), encoding="utf-8")
         (staging_dir / "conditions.md").write_text(render_conditions_md(runs, config, fig03_written), encoding="utf-8")
-        (staging_dir / "article_draft.md").write_text(render_article_draft(runs, config, fig03_written), encoding="utf-8")
+        (staging_dir / "article_draft.md").write_text(
+            render_article_draft(runs, config, fig03_written), encoding="utf-8"
+        )
 
         check_secret_guard(staging_dir)  # guard 2, only after everything is written
 
@@ -672,10 +692,14 @@ def blog(
         date_str = datetime.now().strftime("%Y%m%d")
         final_dir = paths.blog_dir / f"{date_str}_{slug_name}"
         if final_dir.exists():
-            shutil.rmtree(final_dir)  # re-running blog for the same day/slug regenerates, doesn't accumulate stale files
+            shutil.rmtree(
+                final_dir
+            )  # re-running blog for the same day/slug regenerates, doesn't accumulate stale files
         paths.blog_dir.mkdir(parents=True, exist_ok=True)
         shutil.copytree(staging_dir, final_dir)
 
     print(f"[blog] wrote {final_dir}")
-    print("[blog] reminder: `promptfoo share` is never used by this project; review the article draft before publishing")
+    print(
+        "[blog] reminder: `promptfoo share` is never used by this project; review the article draft before publishing"
+    )
     return final_dir

@@ -19,7 +19,9 @@ from evalloop.schemas import (
 
 
 def _case(id_, source="self-made"):
-    return GoldenCase(id=id_, input="x", expected="契約照会", split="test", category="基本", difficulty="easy", source=source)
+    return GoldenCase(
+        id=id_, input="x", expected="契約照会", split="test", category="基本", difficulty="easy", source=source
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -88,7 +90,9 @@ def test_labels_japanese_when_cjk_font_found():
 def test_labels_english_fallback_when_no_cjk_font():
     labels = blog_mod._labels(has_cjk_font=False)
     assert labels.accuracy == "Accuracy"
-    assert all(ord(ch) < 128 for ch in labels.accuracy + labels.cost + labels.model + labels.category + labels.unassigned)
+    assert all(
+        ord(ch) < 128 for ch in labels.accuracy + labels.cost + labels.model + labels.category + labels.unassigned
+    )
 
 
 def test_pareto_front_mask_keeps_non_dominated_points():
@@ -424,9 +428,7 @@ def test_blog_three_runs_method_compare_includes_disclaimer_and_matrix(blog_env)
     _write_run(paths.runs_dir, "run-mipro", ["qwen7b"], variant="qwen7b_miprov2_20260101_efgh")
     _write_run(paths.runs_dir, "run-base", ["qwen7b"])
 
-    out_dir = blog_mod.blog(
-        cfg, paths, run_ids=["run-gepa", "run-mipro", "run-base"], slug="methods"
-    )
+    out_dir = blog_mod.blog(cfg, paths, run_ids=["run-gepa", "run-mipro", "run-base"], slug="methods")
     assert (out_dir / "fig01_accuracy_by_model.png").exists()
     assert (out_dir / "fig02_cost_vs_accuracy.png").exists()
 

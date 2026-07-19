@@ -198,9 +198,7 @@ def test_compare_matrix_resolves_optimize_log_via_variant_on_reeval(isolated_roo
         encoding="utf-8",
     )
 
-    content = optimize_mod.compare(["base", "reeval-opt", "orig-opt"], paths).read_text(
-        encoding="utf-8"
-    )
+    content = optimize_mod.compare(["base", "reeval-opt", "orig-opt"], paths).read_text(encoding="utf-8")
     assert content.count("$0.0500") >= 2  # both variant runs resolve the log
     assert "12.0" in content
 

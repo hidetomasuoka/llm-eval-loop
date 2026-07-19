@@ -54,9 +54,7 @@ def split_train_val(trainset: list, val_ratio: float, seed: int) -> tuple[list, 
     if not 0.0 < val_ratio < 1.0:
         raise OptimizeError(f"optimize.params.val_ratio must be between 0 and 1 (exclusive), got {val_ratio!r}")
     if len(trainset) < 2:
-        raise OptimizeError(
-            f"miprov2 needs at least 2 train cases to carve out a validation set, got {len(trainset)}"
-        )
+        raise OptimizeError(f"miprov2 needs at least 2 train cases to carve out a validation set, got {len(trainset)}")
     indices = list(range(len(trainset)))
     random.Random(seed).shuffle(indices)
     val_count = max(1, round(len(trainset) * val_ratio))
@@ -167,13 +165,9 @@ class MiproV2Optimizer:
         # APO-17: when demo search is enabled, hand extracted demos to optimize()
         # for demos.jsonl + {{demos}} re-injection into the variant prompt.
         if max_bootstrapped_demos > 0 or max_labeled_demos > 0:
-            train_input_to_id = {
-                str(ex.input): str(getattr(ex, "case_id", None) or ex.input) for ex in trainset
-            }
+            train_input_to_id = {str(ex.input): str(getattr(ex, "case_id", None) or ex.input) for ex in trainset}
             try:
-                extracted = demos_from_dspy_program(
-                    optimized_program, train_input_to_id=train_input_to_id
-                )
+                extracted = demos_from_dspy_program(optimized_program, train_input_to_id=train_input_to_id)
             except Exception as e:
                 raise OptimizeError(str(e)) from e
             extra_log[OPTIMIZED_DEMOS_LOG_KEY] = [

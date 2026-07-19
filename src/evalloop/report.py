@@ -242,9 +242,7 @@ def render_markdown(run_id: str, meta: dict, stats: list[AliasStats], warnings_l
     )
     prompt_len = prompt_template_char_len(meta)
     if prompt_len is not None:
-        lines.append(
-            f"> variant prompt template: {prompt_len} characters (`{meta.get('prompt_file')}`)"
-        )
+        lines.append(f"> variant prompt template: {prompt_len} characters (`{meta.get('prompt_file')}`)")
     lines.append("")
 
     # repeat stability section, only when at least one alias actually has repeats
@@ -282,9 +280,7 @@ def report(run_id: str, paths: TaskPaths) -> Path:
     warnings_lines: list[str] = []
     grader_meta = meta.get("grader") or {}
     judge_meta = meta.get("judge") or {}
-    uses_judge = grader_meta.get("type") == "llm-rubric" or (
-        not grader_meta and meta.get("answer_type") == "text"
-    )
+    uses_judge = grader_meta.get("type") == "llm-rubric" or (not grader_meta and meta.get("answer_type") == "text")
     calibration_status = grader_meta.get("calibration_status", judge_meta.get("calibration_status"))
     judge_provider = grader_meta.get("provider", judge_meta.get("provider"))
     if uses_judge and calibration_status != "calibrated":

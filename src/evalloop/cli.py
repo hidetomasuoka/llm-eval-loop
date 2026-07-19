@@ -318,7 +318,9 @@ def build(
 @app.command()
 def run(
     task: str = _TASK_OPTION,
-    variant: str = typer.Option(None, help="Name of a promptfoo/<task>/variants/{name}.yaml to run instead of the base config"),
+    variant: str = typer.Option(
+        None, help="Name of a promptfoo/<task>/variants/{name}.yaml to run instead of the base config"
+    ),
     repeat: int = typer.Option(None, help="Override run.repeat from the config"),
     limit: int = typer.Option(None, help="Only run the first N test cases (maps to promptfoo --filter-first-n)"),
     no_cache: bool = typer.Option(False, "--no-cache", help="Disable promptfoo's disk cache for this run"),

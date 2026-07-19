@@ -274,9 +274,7 @@ def run(
     # meta must reflect what was actually evaluated: `build --models` may have
     # narrowed the provider set relative to the task config, and the built
     # promptfoo config -- not the task config -- is the ground truth (issue #49)
-    built_aliases = {
-        p.get("label") for p in (built.get("providers") or []) if isinstance(p, dict) and p.get("label")
-    }
+    built_aliases = {p.get("label") for p in (built.get("providers") or []) if isinstance(p, dict) and p.get("label")}
     evaluated_models = [m for m in config.models if m.alias in built_aliases] or list(config.models)
 
     grader_type = {

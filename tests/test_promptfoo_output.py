@@ -13,7 +13,11 @@ NESTED_SAMPLE = {
             {
                 "vars": {"case_id": "case-0001", "input": "x", "expected": "契約照会", "category": "基本"},
                 "provider": {"id": "anthropic:messages:claude-haiku-4-5-20251001", "label": "haiku45"},
-                "response": {"output": "契約照会", "tokenUsage": {"total": 10, "prompt": 8, "completion": 2}, "cached": False},
+                "response": {
+                    "output": "契約照会",
+                    "tokenUsage": {"total": 10, "prompt": 8, "completion": 2},
+                    "cached": False,
+                },
                 "gradingResult": {"pass": True, "score": 1, "reason": "normalized output matches"},
                 "success": True,
                 "score": 1,
