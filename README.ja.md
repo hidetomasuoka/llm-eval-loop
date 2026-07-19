@@ -285,11 +285,11 @@ run成果物の生出力（output.json / meta.json）にはローカル絶対パ
 - ローカル小型モデル（qwen2.5:7b）をジャッジに使うと、まれに英語・日本語以外の言語で
   採点理由を返すなど、フロンティアモデルほど指示追従が安定しない。ジャッジには
   極力、評価対象より十分強いモデルを使うことを推奨（`config.yaml`本来の設計どおり）
-- `tasks/cuad100/human_labels.jsonl` はCUAD-100タスクに対する実際の人手ラベルがまだ無いため
-  意図的に空にしてある。同タスクで `evalloop calibrate` を使うには先に人手レビューが必要。
-  較正が通ると `results/<task>/calibration.json` に永続化され、同一ジャッジ provider なら
-  以降の `run`/`report` が状態を引き継ぐ（issue #100）
-  （`sample-inquiry` には校正デモ用の合成ラベル10件が同梱されている）
+- `tasks/cuad100/human_labels.jsonl` は git 管理外。issue #100 では人手レビューではなく
+  **gold-oracle プロキシ**で `glm-5.2` / `deepseek-v4-pro` を agreement 100% まで較正済み
+  （詳細は [tasks/cuad100/PROVENANCE.md](tasks/cuad100/PROVENANCE.md)）。
+  較正ステータスは `results/<task>/calibration.json` に永続化され、同一ジャッジ provider なら
+  以降の `run`/`report` が引き継ぐ。`sample-inquiry` には校正デモ用の合成ラベル10件が同梱
 
 設計の背景・データ仕様・「鉄の掟」の詳細は [docs/DESIGN.md](docs/DESIGN.md) を参照。
 
