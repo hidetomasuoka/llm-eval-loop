@@ -172,6 +172,27 @@ def test_calibrate_run_id_mode_high_agreement(calibrate_env):
         [_row("case-0001", "haiku45", True)],
         judge_provider="ollama:chat:other",
     )
+    # Non-LLM graders share judge.provider in meta but must keep not_applicable.
+    label_dir = paths.runs_dir / "run-label"
+    label_dir.mkdir(parents=True)
+    (label_dir / "output.json").write_text(
+        json.dumps({"results": {"results": [_row("case-0001", "haiku45", True)]}}),
+        encoding="utf-8",
+    )
+    (label_dir / "meta.json").write_text(
+        json.dumps(
+            {
+                "answer_type": "label",
+                "grader": {"type": "label-match", "calibration_status": "not_applicable"},
+                "judge": {
+                    "provider": _JUDGE,
+                    "calibration_status": "not_applicable",
+                    "agreement_rate": None,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
 
     result = calibrate_mod.calibrate(cfg, paths, run_id="run-1")
 
@@ -194,6 +215,9 @@ def test_calibrate_run_id_mode_high_agreement(calibrate_env):
     assert sibling["judge"]["calibration_status"] == "calibrated"
     other = json.loads((paths.runs_dir / "run-other-judge" / "meta.json").read_text(encoding="utf-8"))
     assert other["judge"]["calibration_status"] == "uncalibrated"
+    label_meta = json.loads((label_dir / "meta.json").read_text(encoding="utf-8"))
+    assert label_meta["grader"]["calibration_status"] == "not_applicable"
+    assert label_meta["judge"]["calibration_status"] == "not_applicable"
 
 
 def test_calibrate_run_id_mode_low_agreement_warns(calibrate_env):

@@ -90,8 +90,22 @@ def save_task_calibration(paths: TaskPaths, config: Config, result: CalibrationR
     return payload
 
 
+def uses_llm_rubric_judge(meta: dict) -> bool:
+    """True when this run actually graded with llm-rubric (not label/json asserts)."""
+    grader = meta.get("grader") or {}
+    grader_type = grader.get("type") if isinstance(grader, dict) else None
+    if grader_type == "llm-rubric":
+        return True
+    if grader_type in ("label-match", "json-field-match"):
+        return False
+    # Legacy metas without a grader block: text tasks used the LLM judge.
+    return not grader and meta.get("answer_type") == "text"
+
+
 def apply_calibration_to_meta(meta: dict, calibration: dict) -> bool:
     """Stamp judge/grader calibration fields from a task-level snapshot. Returns True if changed."""
+    if not uses_llm_rubric_judge(meta):
+        return False
     status = calibration.get("calibration_status")
     if not status:
         return False
@@ -109,7 +123,7 @@ def apply_calibration_to_meta(meta: dict, calibration: dict) -> bool:
 
 
 def apply_calibration_to_runs(paths: TaskPaths, calibration: dict) -> int:
-    """Update meta.json for runs whose judge provider matches the snapshot."""
+    """Update meta.json for llm-rubric runs whose judge provider matches the snapshot."""
     provider = calibration.get("judge_provider")
     if not provider or not paths.runs_dir.is_dir():
         return 0
@@ -119,7 +133,7 @@ def apply_calibration_to_runs(paths: TaskPaths, calibration: dict) -> int:
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
-        if not isinstance(meta, dict):
+        if not isinstance(meta, dict) or not uses_llm_rubric_judge(meta):
             continue
         run_provider = (meta.get("grader") or {}).get("provider") or (meta.get("judge") or {}).get(
             "provider"
