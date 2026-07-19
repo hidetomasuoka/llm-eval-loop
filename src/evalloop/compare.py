@@ -12,6 +12,7 @@ import json
 from pathlib import Path
 
 from evalloop import report as report_mod
+from evalloop import stats as stats_mod
 from evalloop.optimizers.base import OptimizeError
 from evalloop.paths import TaskPaths
 from evalloop.schemas import parse_promptfoo_output
@@ -191,14 +192,10 @@ def _compare_tradeoff_notes(
 
 def _compare_pair(run_a: str, run_b: str, paths: TaskPaths) -> list[str]:
     """Before/after delta table with APO-21 tradeoff columns."""
-    stats_a = {
-        s.alias: s
-        for s in report_mod.compute_alias_stats(parse_promptfoo_output(paths.runs_dir / run_a / "output.json").results)
-    }
-    stats_b = {
-        s.alias: s
-        for s in report_mod.compute_alias_stats(parse_promptfoo_output(paths.runs_dir / run_b / "output.json").results)
-    }
+    results_a = parse_promptfoo_output(paths.runs_dir / run_a / "output.json").results
+    results_b = parse_promptfoo_output(paths.runs_dir / run_b / "output.json").results
+    stats_a = {s.alias: s for s in report_mod.compute_alias_stats(results_a)}
+    stats_b = {s.alias: s for s in report_mod.compute_alias_stats(results_b)}
     meta_a = _load_run_meta(run_a, paths)
     meta_b = _load_run_meta(run_b, paths)
     prompt_a = report_mod.prompt_file_char_len(meta_a, root=paths.root)
@@ -213,11 +210,11 @@ def _compare_pair(run_a: str, run_b: str, paths: TaskPaths) -> list[str]:
     lines = [
         f"# Compare: {run_a} (A, before) vs {run_b} (B, after)",
         "",
-        "| alias | pass_rate A | pass_rate B | delta | beyond_95ci | "
+        "| alias | pass_rate A | pass_rate B | delta | beyond_95ci | b/c | mcnemar_p | "
         "cost A | cost B | cost delta | cost delta % | "
         "avg_out_tok A | avg_out_tok B | out_tok delta | "
         "prompt_len A | prompt_len B | prompt_len delta |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     tradeoff_notes: list[str] = []
     for alias in aliases:
@@ -232,6 +229,16 @@ def _compare_pair(run_a: str, run_b: str, paths: TaskPaths) -> list[str]:
             beyond_ci = "yes" if non_overlap else "no"
         else:
             beyond_ci = "n/a"
+        # paired McNemar exact test on the shared case set (improvement plan #2):
+        # the same cases are graded in both runs, so the transition table has far
+        # more power than the independent-sample Wilson check above
+        transition = stats_mod.paired_transition(results_a, results_b, alias)
+        if transition.n_paired == 0:
+            bc_cell, p_cell = "n/a", "n/a"
+        else:
+            bc_cell = f"{transition.b}/{transition.c}"
+            p_value = transition.p_value
+            p_cell = f"{p_value:.3f}" if p_value is not None else "n/a"
         ca = a.total_cost_usd if a else None
         cb = b.total_cost_usd if b else None
         cdelta = (cb - ca) if (ca is not None and cb is not None) else None
@@ -242,6 +249,7 @@ def _compare_pair(run_a: str, run_b: str, paths: TaskPaths) -> list[str]:
         tok_ratio = _relative_increase(ta, tb)
         lines.append(
             f"| {alias} | {_fmt_pct(pa)} | {_fmt_pct(pb)} | {_fmt_pct_signed(delta)} | {beyond_ci} | "
+            f"{bc_cell} | {p_cell} | "
             f"{_fmt_usd(ca)} | {_fmt_usd(cb)} | {_fmt_usd_signed(cdelta)} | {_fmt_pct_signed(cost_ratio)} | "
             f"{_fmt_num(ta)} | {_fmt_num(tb)} | {_fmt_num(tdelta, '+.1f')} | "
             f"{_fmt_int(prompt_a)} | {_fmt_int(prompt_b)} | {_fmt_num(prompt_delta, '+.0f')} |"
@@ -259,6 +267,13 @@ def _compare_pair(run_a: str, run_b: str, paths: TaskPaths) -> list[str]:
     lines.append(
         "> beyond_95ci: yes when the Wilson 95% intervals of A and B do not overlap "
         "(a conservative significance check; overlapping intervals mean the delta may be noise)."
+    )
+    lines.append(
+        "> b/c, mcnemar_p: paired McNemar exact test on the case set graded in BOTH runs "
+        "(b = cases improved fail→pass, c = regressed pass→fail). Because the same cases are "
+        "compared, this has more power than the independent-sample beyond_95ci check; "
+        "mcnemar_p < 0.05 means the flip pattern is unlikely to be noise. n/a when no case is "
+        "graded in both runs or no case flipped."
     )
     lines.append(
         "> cost delta % / out_tok / prompt_len: tradeoff axes vs A (APO-21). "

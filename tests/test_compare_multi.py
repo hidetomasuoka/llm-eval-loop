@@ -235,3 +235,37 @@ def test_compare_matrix_missing_optimize_log_file_is_na(isolated_root):
     # table still renders; missing log → n/a for explore columns on R2
     assert "search_cost R2" in content
     assert "n/a" in content
+
+
+def test_compare_pair_includes_mcnemar_columns(isolated_root):
+    """2-run compare gets paired b/c + mcnemar_p columns (improvement plan #2)."""
+    paths = TaskPaths(root=isolated_root, task="t1")
+    rows_a = [
+        _row("case-0001", "m", False),  # improves in B (b)
+        _row("case-0002", "m", True),  # regresses in B (c)
+        _row("case-0003", "m", True),
+    ]
+    rows_b = [
+        _row("case-0001", "m", True),
+        _row("case-0002", "m", False),
+        _row("case-0003", "m", True),
+    ]
+    _write_output(paths.runs_dir, "base", rows_a)
+    _write_output(paths.runs_dir, "after", rows_b)
+
+    content = optimize_mod.compare(["base", "after"], paths).read_text(encoding="utf-8")
+
+    assert "| b/c | mcnemar_p |" in content
+    # b=1, c=1 -> two-sided exact p = 1.0
+    assert "| 1/1 | 1.000 |" in content
+    assert "paired McNemar exact test" in content
+
+
+def test_compare_pair_mcnemar_na_when_no_shared_cases(isolated_root):
+    paths = TaskPaths(root=isolated_root, task="t1")
+    _write_output(paths.runs_dir, "base", [_row("case-0001", "m", True)])
+    _write_output(paths.runs_dir, "after", [_row("case-0002", "m", True)])
+
+    content = optimize_mod.compare(["base", "after"], paths).read_text(encoding="utf-8")
+
+    assert "| n/a | n/a |" in content
