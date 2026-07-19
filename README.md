@@ -88,6 +88,7 @@ uv run evalloop calibrate --run-id <run_id>                 # agreement rate bet
 uv run evalloop optimize                                    # improve the prompt with dspy (GEPA / MIPROv2 / COPRO / TAPO, uses the train split only)
 #   -> select the method via optimize.method in task.yaml (unset = gepa). afterwards run/report/compare (against the latest base run, if any) execute automatically
 #   -> after the automatic holdout run, optimize prints a train-vs-holdout generalization gate (pass/fail vs baseline holdout; display-only, exit code unchanged) and records it in optimize_log.json
+#   -> shipping gate: if golden.jsonl has split=="dev" cases (3-way split), the automatic eval runs on DEV only -- test stays reserved for one final confirmation. The variant is promoted=true only when it beats the latest base dev run with McNemar significance (delta > 0 and p < 0.05); establish the baseline once with `evalloop run --split dev`. Without a dev split the historical test eval runs with a warning and promoted stays n/a
 #   -> a rough cost estimate (train size x per-method iteration factor x registry prices) is shown first; exceeding run.cost_warn_usd prompts for confirmation (--yes suppresses, for CI)
 #   NOTE: every method trains on a deterministic proxy metric by answer_type (label match / token F1 / JSON deep-equal); the final promptfoo eval still uses the task's configured grader (label_match for sample-inquiry, llm-rubric for text tasks — see Known constraints)
 #   NOTE: for which failure symptoms warrant which optimization technique, see docs/APO_GUIDE.md (a symptom → granularity → method diagnostic guide)
@@ -113,7 +114,7 @@ Then run everything with `--task <name>`. Model definitions (provider IDs, price
 |---|---|
 | `evalloop doctor` | Connectivity check for Node/promptfoo/Ollama/API keys |
 | `evalloop build [--allow-same-judge] [--yes] [--shuffle-demos N]` | golden.jsonl → promptfoo configs, with a pre-run cost estimate. `--shuffle-demos N` also writes `<task>_demoshuffle_{0..N-1}` variants for few-shot order sensitivity (requires `{{demos}}`) |
-| `evalloop run [--variant NAME] [--repeat N] [--limit N] [--no-cache]` | Run promptfoo eval and record results/runs/{run_id}/ |
+| `evalloop run [--variant NAME] [--split dev\|test] [--repeat N] [--limit N] [--no-cache]` | Run promptfoo eval and record results/runs/{run_id}/. `--split dev` evaluates the dev split (requires `split=="dev"` cases in golden.jsonl + rebuild); it feeds the optimize shipping gate without consuming the test split |
 | `evalloop view` | promptfoo's local viewer (pass-through to `promptfoo view`) |
 | `evalloop report RUN_ID` | Markdown report: model × accuracy × cost × latency |
 | `evalloop calibrate [--run-id ID]` | Agreement rate between the LLM judge and human_labels.jsonl; writes `results/<task>/calibration.json` and stamps matching run metas so later `run`/`report` keep the status |
@@ -121,8 +122,8 @@ Then run everything with `--task <name>`. Model definitions (provider IDs, price
 | `evalloop cluster [--notes PATH]` | An LLM drafts a failure taxonomy from notes.csv |
 | `evalloop pivot RUN_ID` | Failure-category × model cross-tab |
 | `evalloop diagnose [--answers 1,2,3]` | Interactive symptom → granularity → method checklist (APO readiness and recommended `optimize.method`; no LLM) |
-| `evalloop optimize` | Prompt optimization with dspy (GEPA / MIPROv2 / COPRO / TAPO, chosen via `optimize.method` in task.yaml), then automatic run/report/compare (method selection guide: [docs/APO_GUIDE.md](docs/APO_GUIDE.md)) |
-| `evalloop compare --runs A,B[,C...]` | Compare 2 runs (before/after deltas + cost%/tokens/prompt-length tradeoff note) or 3+ runs (model×run matrix; matrix also shows optimize `search_cost` / `duration_s` from optimize_log) |
+| `evalloop optimize` | Prompt optimization with dspy (GEPA / MIPROv2 / COPRO / TAPO, chosen via `optimize.method` in task.yaml), then automatic run/report/compare (method selection guide: [docs/APO_GUIDE.md](docs/APO_GUIDE.md)). With a dev split, the automatic eval runs on dev only and a McNemar shipping gate decides `promoted` (see "Improvement loop" note below) |
+| `evalloop compare --runs A,B[,C...]` | Compare 2 runs (before/after deltas + paired McNemar `b/c`/`mcnemar_p` columns + cost%/tokens/prompt-length tradeoff note) or 3+ runs (model×run matrix; matrix also shows optimize `search_cost` / `duration_s` from optimize_log) |
 | `evalloop blog --runs A[,B[,C...]] [--slug NAME]` | Publish-guarded blog export (2+ runs insert the conditionality disclaimer; 3+ also embed the compare model×run matrix in tables.md; includes Pareto cost×accuracy fig04) |
 
 ## Tests / CI

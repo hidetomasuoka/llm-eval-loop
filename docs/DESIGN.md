@@ -140,10 +140,20 @@ llm-eval-loop/
 | id | str | ○ | 一意。`case-` プレフィックス |
 | input | str | ○ | プロンプトの `{{input}}` に入る |
 | expected | str \| dict | ○ | answer_typeに応じた期待値 |
-| split | "train" \| "test" | ○ | **後から変更しない** |
+| split | "train" \| "dev" \| "test" | ○ | **後から変更しない**。dev は任意（3-way split、下の注記参照） |
 | meta.category | str | ○ | ピボット軸になる事前分類 |
 | meta.difficulty | str | - | easy / normal / hard |
 | meta.source | str | ○ | **"self-made" またはライセンス明記。ブログ公開ガードが参照する** |
+
+**dev split と出荷ゲート**（improvement-plan-gepa-cuad100 ゲート2の対応）: `split=="dev"` の
+ケースがあると build は `tests_dev.yaml` と `promptfooconfig.dev.yaml` を追加生成し、
+`evalloop run --split dev` / optimize の自動評価が dev を使う。狙いは **test の温存**:
+出荷ゲートが無い構成では最適化実験のたびに test 80件を消費し、test に対するメタ過学習が
+進む。dev があるタスクでは optimize は dev のみで評価し、直近の base dev run に対して
+paired McNemar exact 検定（`evalloop.stats`）で `delta > 0 かつ p < 0.05` のときだけ
+`promoted=true` を optimize_log.json / optimized/index.jsonl に記録する。test での最終確認は
+promoted な variant に対して人間が1回だけ実行する運用。train/dev/test は3対すべて
+`assert_split_disjoint()` で検証され、demos のリークチェックも dev を含む。
 
 ### 5.2 promptfoo output.json（実行×判定結果）
 
@@ -314,7 +324,10 @@ human_labels.jsonl の各ケースについて、`--run-id` があれば既存ru
    `promptfoo/variants/`は`promptfoo/`の1階層下なので、`file://`参照はすべて
    `../`を1つ多く挿入して再root化している）を生成
 5. 自動で `run --variant` → `report` → `compare`（index.jsonlにある直近のベースrunがあれば
-   最適化前後を比較。大型モデルも同じrunに含まれるため表に自然に含まれる）まで実行
+   最適化前後を比較。大型モデルも同じrunに含まれるため表に自然に含まれる）まで実行。
+   dev split があるタスクではこの自動 run は dev のみで行われ、McNemar 出荷ゲートが
+   `promoted` を判定する（§5.1 の注記参照）。GEPA の候補選抜には train から `val_ratio`
+   （既定 0.2）で切り出した valset を渡し、訓練データでの自己採点による過学習を抑える
 6. **現状 `answer_type=="label"` のみ対応**（metricがlabel_match.js相当のみ移植済みのため）。
    json/textタイプでoptimizeを呼ぶと明示的にOptimizeErrorになる — 対応する場合は
    json用・text用のmetricをoptimize.pyに追加すること
