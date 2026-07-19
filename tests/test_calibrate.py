@@ -76,7 +76,10 @@ def calibrate_env(isolated_root):
     return {"paths": paths, "cfg": _make_config(paths.rubric_file)}
 
 
-def _write_run_output(paths, run_id, rows):
+_JUDGE = "anthropic:messages:claude-sonnet-4-6"
+
+
+def _write_run_output(paths, run_id, rows, judge_provider=_JUDGE):
     run_dir = paths.runs_dir / run_id
     run_dir.mkdir(parents=True)
     (run_dir / "output.json").write_text(json.dumps({"results": {"results": rows}}), encoding="utf-8")
@@ -86,11 +89,15 @@ def _write_run_output(paths, run_id, rows):
                 "answer_type": "text",
                 "grader": {
                     "type": "llm-rubric",
-                    "provider": "j",
+                    "provider": judge_provider,
                     "calibration_status": "uncalibrated",
                     "agreement_rate": None,
                 },
-                "judge": {"provider": "j", "calibration_status": "uncalibrated", "agreement_rate": None},
+                "judge": {
+                    "provider": judge_provider,
+                    "calibration_status": "uncalibrated",
+                    "agreement_rate": None,
+                },
             }
         ),
         encoding="utf-8",
@@ -157,6 +164,14 @@ def test_calibrate_run_id_mode_high_agreement(calibrate_env):
             _row("case-0003", "haiku45", False),
         ],
     )
+    # Sibling run with the same judge should also pick up the task-level stamp.
+    _write_run_output(paths, "run-sibling", [_row("case-0001", "haiku45", True)])
+    _write_run_output(
+        paths,
+        "run-other-judge",
+        [_row("case-0001", "haiku45", True)],
+        judge_provider="ollama:chat:other",
+    )
 
     result = calibrate_mod.calibrate(cfg, paths, run_id="run-1")
 
@@ -169,6 +184,16 @@ def test_calibrate_run_id_mode_high_agreement(calibrate_env):
     assert meta["judge"]["agreement_rate"] == pytest.approx(1.0)
     assert meta["grader"]["calibration_status"] == "calibrated"
     assert meta["grader"]["agreement_rate"] == pytest.approx(1.0)
+
+    snap = json.loads(paths.calibration.read_text(encoding="utf-8"))
+    assert snap["judge_provider"] == _JUDGE
+    assert snap["calibration_status"] == "calibrated"
+    assert snap["agreement_rate"] == pytest.approx(1.0)
+
+    sibling = json.loads((paths.runs_dir / "run-sibling" / "meta.json").read_text(encoding="utf-8"))
+    assert sibling["judge"]["calibration_status"] == "calibrated"
+    other = json.loads((paths.runs_dir / "run-other-judge" / "meta.json").read_text(encoding="utf-8"))
+    assert other["judge"]["calibration_status"] == "uncalibrated"
 
 
 def test_calibrate_run_id_mode_low_agreement_warns(calibrate_env):

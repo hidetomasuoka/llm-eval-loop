@@ -284,10 +284,23 @@ def run(
         "label": "label-match",
         "json": "json-field-match",
     }[config.task.answer_type]
-    calibration_status = "uncalibrated" if grader_type == "llm-rubric" else "not_applicable"
+    agreement_rate = None
+    if grader_type == "llm-rubric":
+        # Lazy import: calibrate.py imports this module for fresh re-grading.
+        from evalloop.calibrate import load_task_calibration
+
+        # Reuse task-level calibration when the judge provider still matches (issue #100).
+        snap = load_task_calibration(paths, judge_provider=config.judge.provider)
+        if snap and snap.get("calibration_status"):
+            calibration_status = str(snap["calibration_status"])
+            agreement_rate = snap.get("agreement_rate")
+        else:
+            calibration_status = "uncalibrated"
+    else:
+        calibration_status = "not_applicable"
     grader = {"type": grader_type, "calibration_status": calibration_status}
     if grader_type == "llm-rubric":
-        grader.update({"provider": config.judge.provider, "agreement_rate": None})
+        grader.update({"provider": config.judge.provider, "agreement_rate": agreement_rate})
 
     meta = {
         "run_id": run_id,
@@ -312,8 +325,8 @@ def run(
         "grader": grader,
         "judge": {
             "provider": config.judge.provider,
-            "calibration_status": calibration_status,  # legacy compatibility; updated by calibrate
-            "agreement_rate": None,
+            "calibration_status": calibration_status,  # legacy; also stamped from calibration.json
+            "agreement_rate": agreement_rate,
         },
         "promptfoo_version": get_promptfoo_version(),
         "node_version": get_node_version(),

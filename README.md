@@ -116,7 +116,7 @@ Then run everything with `--task <name>`. Model definitions (provider IDs, price
 | `evalloop run [--variant NAME] [--repeat N] [--limit N] [--no-cache]` | Run promptfoo eval and record results/runs/{run_id}/ |
 | `evalloop view` | promptfoo's local viewer (pass-through to `promptfoo view`) |
 | `evalloop report RUN_ID` | Markdown report: model × accuracy × cost × latency |
-| `evalloop calibrate [--run-id ID]` | Agreement rate between the LLM judge and human_labels.jsonl |
+| `evalloop calibrate [--run-id ID]` | Agreement rate between the LLM judge and human_labels.jsonl; writes `results/<task>/calibration.json` and stamps matching run metas so later `run`/`report` keep the status |
 | `evalloop failures RUN_ID` | Extract failing cases, append note rows to notes.csv (idempotent) |
 | `evalloop cluster [--notes PATH]` | An LLM drafts a failure taxonomy from notes.csv |
 | `evalloop pivot RUN_ID` | Failure-category × model cross-tab |
@@ -192,7 +192,7 @@ Each task documents its data source and how to re-obtain it in `tasks/<name>/PRO
 - To check few-shot **order sensitivity**, run `evalloop build --shuffle-demos N` to write `<task>_demoshuffle_{seed}` variants, then `evalloop run --variant ...` / `report` each and inspect spread with `evalloop compare --runs A,B,C...` (no automated run loop)
 - The "training metric is a proxy" constraint above is common to **GEPA, MIPROv2, and COPRO**, and to any future optimizer (OPRO, APE, EASE, etc.) this harness may add. Fast in-process candidate evaluation requires a structured verdict (label match, token F1, deep-equal, etc.); invoking an LLM judge per candidate rollout is forbidden by the iron rule (Python never calls a model provider directly). So "train on a proxy metric, verify on a separate final metric" is a harness-wide APO premise (see [docs/APO_GUIDE.md](docs/APO_GUIDE.md) for method selection)
 - With a small local model (qwen2.5:7b) as judge, instruction following is less stable than with frontier models (e.g. it occasionally returns grading rationales in languages other than English/Japanese). Prefer a judge substantially stronger than the models being evaluated (as `config.yaml` is designed to do)
-- `tasks/cuad100/human_labels.jsonl` is intentionally empty because there are no human labels for the CUAD-100 task yet. Using `evalloop calibrate` there requires a human review pass first (the `sample-inquiry` task ships 10 synthetic labels for the calibration demo)
+- `tasks/cuad100/human_labels.jsonl` is intentionally empty because there are no human labels for the CUAD-100 task yet. Using `evalloop calibrate` there requires a human review pass first (the `sample-inquiry` task ships 10 synthetic labels for the calibration demo). Once calibrate succeeds, status is persisted in `results/<task>/calibration.json` and reused by later `run`/`report` for the same judge provider (issue #100)
 
 For design background, data specs, and the details of the "iron rules", see [docs/DESIGN.md](docs/DESIGN.md) (Japanese).
 

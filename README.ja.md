@@ -155,7 +155,7 @@ uv run evalloop blog --runs <run_id>                        # ブログ用の図
 | `evalloop run [--variant NAME] [--repeat N] [--limit N] [--no-cache]` | promptfoo evalを実行してresults/runs/{run_id}/に記録 |
 | `evalloop view` | promptfooのローカルビューア（`promptfoo view`のパススルー） |
 | `evalloop report RUN_ID` | モデル×精度×コスト×レイテンシのMarkdownレポート |
-| `evalloop calibrate [--run-id ID]` | LLMジャッジとhuman_labels.jsonlの一致率を算出 |
+| `evalloop calibrate [--run-id ID]` | LLMジャッジとhuman_labels.jsonlの一致率を算出。`results/<task>/calibration.json` を書き、同一ジャッジの run meta にスタンプして以降の `run`/`report` が状態を引き継ぐ |
 | `evalloop failures RUN_ID` | 失敗ケース抽出、notes.csvにメモ欄を追記（冪等） |
 | `evalloop cluster [--notes PATH]` | notes.csvからLLMが失敗タクソノミー案を生成 |
 | `evalloop pivot RUN_ID` | 失敗カテゴリ×モデルのクロス集計 |
@@ -286,7 +286,9 @@ run成果物の生出力（output.json / meta.json）にはローカル絶対パ
   採点理由を返すなど、フロンティアモデルほど指示追従が安定しない。ジャッジには
   極力、評価対象より十分強いモデルを使うことを推奨（`config.yaml`本来の設計どおり）
 - `tasks/cuad100/human_labels.jsonl` はCUAD-100タスクに対する実際の人手ラベルがまだ無いため
-  意図的に空にしてある。同タスクで `evalloop calibrate` を使うには先に人手レビューが必要
+  意図的に空にしてある。同タスクで `evalloop calibrate` を使うには先に人手レビューが必要。
+  較正が通ると `results/<task>/calibration.json` に永続化され、同一ジャッジ provider なら
+  以降の `run`/`report` が状態を引き継ぐ（issue #100）
   （`sample-inquiry` には校正デモ用の合成ラベル10件が同梱されている）
 
 設計の背景・データ仕様・「鉄の掟」の詳細は [docs/DESIGN.md](docs/DESIGN.md) を参照。
