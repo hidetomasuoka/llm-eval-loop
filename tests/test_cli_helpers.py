@@ -91,3 +91,5 @@ def test_smoke_test_omits_temperature_for_no_sampling_models(monkeypatch):
     by_label = {p["label"]: p["config"] for p in captured["config"]["providers"]}
     assert by_label["samples"] == {"temperature": 0.0, "max_tokens": 16}
     assert by_label["nosample"] == {"max_tokens": 16}
+    # case_id keeps parse_promptfoo_output from warning on every smoke row
+    assert captured["config"]["tests"][0]["vars"]["case_id"] == "doctor-smoke-0001"
