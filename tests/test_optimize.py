@@ -7,6 +7,7 @@ import yaml
 from evalloop import build as build_mod
 from evalloop import optimize as optimize_mod
 from evalloop import run as run_mod
+from evalloop.optimizers import metrics as metrics_mod
 from evalloop.paths import REPO_ROOT, TaskPaths
 from evalloop.schemas import GoldenCase, load_task
 from tests.conftest import scaffold_task
@@ -292,6 +293,70 @@ def test_text_metric_full_extraction_with_extra_keeps_high_score():
     # would have pulled it down via precision).
     score, _ = optimize_mod.text_score_and_feedback(f"{GOLD_SPAN} Additional surrounding sentences.", GOLD_SPAN)
     assert score >= 0.8
+
+
+# --- verbatim check + WE/PE feedback split (improvement plan #3) ------------
+
+SOURCE_DOC = f"Preamble text. {GOLD_SPAN} Further clauses about termination and fees follow here."
+
+
+def test_text_metric_verbatim_quote_from_source_is_not_capped():
+    score, _ = optimize_mod.text_score_and_feedback(GOLD_SPAN, GOLD_SPAN, SOURCE_DOC)
+    assert score == 1.0
+
+
+def test_text_metric_paraphrase_is_capped_with_verbatim_feedback():
+    # token-level overlap is perfect (same words, reordered) but the text is
+    # not a contiguous quote of the source -> capped at VERBATIM_SCORE_CAP
+    paraphrase = "the laws of the State of New York shall govern this Agreement"
+    uncapped, _ = optimize_mod.text_score_and_feedback(paraphrase, GOLD_SPAN)
+    capped, feedback = optimize_mod.text_score_and_feedback(paraphrase, GOLD_SPAN, SOURCE_DOC)
+    assert uncapped > metrics_mod.VERBATIM_SCORE_CAP  # the cap actually bites
+    assert capped == metrics_mod.VERBATIM_SCORE_CAP
+    assert "verbatim" in feedback
+
+
+def test_text_metric_verbatim_check_tolerates_case_and_line_wrap():
+    rewrapped = GOLD_SPAN.upper().replace(" governed ".upper(), "\n  GOVERNED ")
+    score, feedback = optimize_mod.text_score_and_feedback(rewrapped, GOLD_SPAN, SOURCE_DOC)
+    assert score == 1.0
+    assert "verbatim" not in feedback
+
+
+def test_text_metric_without_source_skips_verbatim_check():
+    paraphrase = "the laws of the State of New York shall govern this Agreement"
+    score, feedback = optimize_mod.text_score_and_feedback(paraphrase, GOLD_SPAN)
+    assert score > metrics_mod.VERBATIM_SCORE_CAP
+    assert "verbatim quote" not in feedback
+
+
+def test_text_metric_near_zero_overlap_gets_wrong_clause_feedback():
+    # a different clause quoted verbatim from the source: WE, not PE
+    wrong_clause = "Further clauses about termination and fees follow here."
+    score, feedback = optimize_mod.text_score_and_feedback(wrong_clause, GOLD_SPAN, SOURCE_DOC)
+    assert score < metrics_mod.WE_OVERLAP_THRESHOLD
+    assert "DIFFERENT clause" in feedback
+    assert "legal concept" in feedback
+
+
+def test_text_metric_partial_extraction_keeps_complete_clause_feedback():
+    partial = "governed by the laws of the State of New York."
+    score, feedback = optimize_mod.text_score_and_feedback(partial, GOLD_SPAN, SOURCE_DOC)
+    assert metrics_mod.WE_OVERLAP_THRESHOLD <= score < 1.0
+    assert "COMPLETE clause" in feedback
+
+
+def test_score_fn_for_uniform_signature_accepts_source(isolated_root):
+    # every answer_type's score fn must tolerate the third positional source
+    # argument (the optimize metric closure always passes gold.input)
+    for answer_type, output, expected in [
+        ("label", "契約照会", "契約照会"),
+        ("json", '{"a": 1}', {"a": 1}),
+        ("text", "some clause", "some clause"),
+    ]:
+        cfg, _paths = scaffold_task(isolated_root, name=f"t-{answer_type}", answer_type=answer_type)
+        score, _ = optimize_mod._score_fn_for(cfg)(output, expected, "source doc some clause")
+        assert score == 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -724,6 +789,14 @@ def _text_type_golden_rows():
         "Either party may terminate upon thirty days written notice.",
         "該当条項なし",
     ]
+
+    def _excerpt(i, span):
+        # extraction-task realism: the gold span appears verbatim inside the
+        # source excerpt (except the 該当条項なし sentinel), so echoing the gold
+        # answer passes the verbatim check added in improvement plan #3
+        clause = "" if span == "該当条項なし" else f" {span}"
+        return f"CONTRACT EXCERPT {i}:{clause} Other boilerplate follows."
+
     rows = []
     # 12 train cases clear the APO-09 preflight minimum (text tasks have no
     # per-label check, only the size checks)
@@ -731,7 +804,7 @@ def _text_type_golden_rows():
         rows.append(
             {
                 "id": f"case-{i + 1:04d}",
-                "input": f"CONTRACT EXCERPT {i + 1} ...",
+                "input": _excerpt(i + 1, spans[i % len(spans)]),
                 "expected": spans[i % len(spans)],
                 "split": "train",
                 "meta": {"category": "governing-law", "source": "self-made"},
@@ -741,7 +814,7 @@ def _text_type_golden_rows():
         rows.append(
             {
                 "id": f"case-{i + 100:04d}",
-                "input": f"CONTRACT EXCERPT {i + 100} ...",
+                "input": _excerpt(i + 100, spans[i % len(spans)]),
                 "expected": spans[i % len(spans)],
                 "split": "test",
                 "meta": {"category": "governing-law", "source": "self-made"},

@@ -423,7 +423,9 @@ def optimize(
     base_instructions = extract_instructions_from_template(original_template)
 
     def metric(gold, pred, trace=None, pred_name=None, pred_trace=None):
-        score, feedback = score_fn(getattr(pred, "output", ""), gold.expected)
+        # gold.input is the case's source document -- the text metric uses it
+        # for the verbatim-quote check (improvement plan #3)
+        score, feedback = score_fn(getattr(pred, "output", ""), gold.expected, getattr(gold, "input", None))
         return dspy.Prediction(score=score, feedback=feedback)
 
     trainset = [
