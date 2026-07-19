@@ -162,8 +162,10 @@ def _build_promptfoo_config(
     paths: TaskPaths,
     *,
     prompt_path: Path | None = None,
+    tests_path: Path | None = None,
 ) -> dict:
     resolved_prompt = prompt_path if prompt_path is not None else (REPO_ROOT / config.task.prompt_file)
+    tests_target = tests_path if tests_path is not None else paths.tests_test
     providers = []
     for m in config.models:
         # claude-opus-4-8 / claude-fable-5 はsamplingパラメータ(temperature等)を
@@ -180,7 +182,7 @@ def _build_promptfoo_config(
         "providers": providers,
         "prompts": [f"file://{to_promptfoo_relpath(resolved_prompt, paths.promptfoo_dir)}"],
         "defaultTest": _build_default_test(config, allow_same_judge, paths),
-        "tests": f"file://{to_promptfoo_relpath(paths.tests_test, paths.promptfoo_dir)}",
+        "tests": f"file://{to_promptfoo_relpath(tests_target, paths.promptfoo_dir)}",
     }
 
 
@@ -248,31 +250,53 @@ def build(
             raise BuildError(f"golden.jsonl has case(s) with `expected` not in task.labels {config.task.labels}: {bad}")
 
     train_cases = [c for c in cases if c.split == "train"]
+    dev_cases = [c for c in cases if c.split == "dev"]
     test_cases = [c for c in cases if c.split == "test"]
     if not test_cases:
         raise BuildError("golden.jsonl has no split=='test' cases; promptfoo eval would run 0 tests")
 
     train_ids = {c.id for c in train_cases}
+    dev_ids = {c.id for c in dev_cases}
     test_ids = {c.id for c in test_cases}
     assert_split_disjoint(train_ids, test_ids)
+    assert_split_disjoint(train_ids, dev_ids, label="train/dev")
+    assert_split_disjoint(dev_ids, test_ids, label="dev/test")
 
     # Resolve demos / promptfoo config before writing build artifacts so a failed
     # demo leak check cannot leave fresh tests_*.yaml next to a stale config.
-    prompt_template, prompt_path_for_eval = _resolve_prompt_template(config, paths, test_cases)
+    # Demos must leak into neither test nor dev: dev is the shipping-gate holdout.
+    holdout_cases = test_cases + dev_cases
+    prompt_template, prompt_path_for_eval = _resolve_prompt_template(config, paths, holdout_cases)
     promptfoo_config = _build_promptfoo_config(config, allow_same_judge, paths, prompt_path=prompt_path_for_eval)
     config_text = yaml.safe_dump(promptfoo_config, allow_unicode=True, sort_keys=False)
     _assert_config_never_references_train(config_text)
+    dev_config_text = None
+    if dev_cases:
+        dev_config = _build_promptfoo_config(
+            config, allow_same_judge, paths, prompt_path=prompt_path_for_eval, tests_path=paths.tests_dev
+        )
+        dev_config_text = yaml.safe_dump(dev_config, allow_unicode=True, sort_keys=False)
+        _assert_config_never_references_train(dev_config_text)
 
     _write_tests_yaml(paths.tests_test, test_cases)
     _write_tests_yaml(paths.tests_train, train_cases)
     paths.promptfoo_dir.mkdir(parents=True, exist_ok=True)
     paths.promptfoo_config.write_text(config_text, encoding="utf-8")
+    if dev_cases:
+        _write_tests_yaml(paths.tests_dev, dev_cases)
+        paths.promptfoo_config_dev.write_text(dev_config_text, encoding="utf-8")
+    else:
+        # a stale dev config from a removed dev split must not stay runnable
+        paths.tests_dev.unlink(missing_ok=True)
+        paths.promptfoo_config_dev.unlink(missing_ok=True)
 
     estimate = estimate_cost(config, test_cases, prompt_template)
 
-    print(f"[build] {len(train_cases)} train / {len(test_cases)} test cases from {paths.golden}")
+    print(f"[build] {len(train_cases)} train / {len(dev_cases)} dev / {len(test_cases)} test cases from {paths.golden}")
     print(f"[build] wrote {paths.tests_test} and {paths.tests_train}")
     print(f"[build] wrote {paths.promptfoo_config}")
+    if dev_cases:
+        print(f"[build] wrote {paths.tests_dev} and {paths.promptfoo_config_dev}")
     print("[build] estimated pre-run cost (repeat=%d):" % config.run.repeat)
     for alias, usd in estimate.per_model_usd.items():
         print(

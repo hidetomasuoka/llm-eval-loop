@@ -102,6 +102,12 @@ class TaskPaths:
         return self.build_dir / "tests_train.yaml"
 
     @property
+    def tests_dev(self) -> Path:
+        """3-way split (improvement plan #4): dev is the optimize shipping-gate
+        holdout; test stays reserved for the final confirmation run."""
+        return self.build_dir / "tests_dev.yaml"
+
+    @property
     def resolved_prompt(self) -> Path:
         """Build-time prompt with ``{{demos}}`` expanded (gitignored under data/build/)."""
         return self.build_dir / "prompt.resolved.txt"
@@ -113,6 +119,12 @@ class TaskPaths:
     @property
     def promptfoo_config(self) -> Path:
         return self.promptfoo_dir / "promptfooconfig.yaml"
+
+    @property
+    def promptfoo_config_dev(self) -> Path:
+        """Same providers/prompt/grading as promptfoo_config but tests point at
+        tests_dev.yaml. Only written when golden.jsonl has split=='dev' cases."""
+        return self.promptfoo_dir / "promptfooconfig.dev.yaml"
 
     @property
     def variants_dir(self) -> Path:

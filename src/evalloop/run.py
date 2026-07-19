@@ -141,10 +141,25 @@ def get_node_version() -> str:
         return "unknown"
 
 
-def resolve_config_path(paths: TaskPaths, variant: str | None) -> Path:
+VALID_RUN_SPLITS = ("test", "dev")
+
+
+def resolve_config_path(paths: TaskPaths, variant: str | None, split: str = "test") -> Path:
+    """dev-split runs (improvement plan #4) use the *.dev.yaml siblings that
+    build/optimize write when golden.jsonl has split=='dev' cases."""
+    if split not in VALID_RUN_SPLITS:
+        raise RunError(f"split must be one of {VALID_RUN_SPLITS}, got {split!r}")
     if variant is None:
+        if split == "dev":
+            if not paths.promptfoo_config_dev.exists():
+                raise RunError(
+                    f"{paths.promptfoo_config_dev} not found -- add split=='dev' cases to "
+                    f"{paths.golden} and run `evalloop build --task {paths.task}` first"
+                )
+            return paths.promptfoo_config_dev
         return paths.promptfoo_config
-    variant_path = paths.variants_dir / f"{variant}.yaml"
+    suffix = ".dev.yaml" if split == "dev" else ".yaml"
+    variant_path = paths.variants_dir / f"{variant}{suffix}"
     if not variant_path.exists():
         raise RunError(f"variant config not found: {variant_path} (run `evalloop optimize` first?)")
     return variant_path
@@ -222,8 +237,9 @@ def run(
     limit: int | None = None,
     no_cache: bool = False,
     timeout_s: int | None = None,
+    split: str = "test",
 ) -> RunOutcome:
-    promptfoo_config_path = resolve_config_path(paths, variant)
+    promptfoo_config_path = resolve_config_path(paths, variant, split=split)
     if not promptfoo_config_path.exists():
         raise RunError(f"{promptfoo_config_path} does not exist; run `evalloop build --task {paths.task}` first")
 
@@ -307,6 +323,9 @@ def run(
         "task_name": config.task.name,
         "answer_type": config.task.answer_type,
         "variant": variant,
+        # which holdout this run evaluated; runs recorded before the dev split
+        # existed have no key and are treated as "test" by readers
+        "split": split,
         "promptfoo_config_path": promptfoo_config_display,
         "promptfoo_config_sha256": sha256_of_file(promptfoo_config_path),
         "prompt_file": prompt_file_display,
@@ -331,6 +350,7 @@ def run(
         "evalloop_command": (
             f"evalloop run --task {paths.task}"
             f"{f' --variant {variant}' if variant else ''}"
+            f"{' --split dev' if split == 'dev' else ''}"
             f" --repeat {effective_repeat}{f' --limit {limit}' if limit else ''}{' --no-cache' if no_cache else ''}"
         ),
         "promptfoo_exit_code": proc.returncode,
@@ -345,6 +365,7 @@ def run(
         "task": paths.task,
         "task_name": config.task.name,
         "variant": variant,
+        "split": split,
         "actual_cost_usd": actual_cost,
         "promptfoo_exit_code": proc.returncode,
     }

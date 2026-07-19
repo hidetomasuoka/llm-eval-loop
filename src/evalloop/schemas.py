@@ -21,7 +21,10 @@ import yaml
 
 from evalloop import paths as paths_mod
 
-VALID_SPLITS = {"train", "test"}
+# dev (improvement plan #4): optional shipping-gate holdout between train and
+# test. optimize auto-runs evaluate on dev so test is preserved for one final
+# confirmation instead of being consumed by every experiment.
+VALID_SPLITS = {"train", "dev", "test"}
 VALID_ANSWER_TYPES = {"label", "json", "text"}
 
 
@@ -350,11 +353,15 @@ def load_golden_jsonl(path: str | Path) -> list[GoldenCase]:
     return cases
 
 
-def assert_split_disjoint(train_ids: set[str], test_ids: set[str]) -> None:
-    """Iron rule #1: split separation must hold. Raise loudly if it doesn't."""
+def assert_split_disjoint(train_ids: set[str], test_ids: set[str], label: str = "train/test") -> None:
+    """Iron rule #1: split separation must hold. Raise loudly if it doesn't.
+
+    ``label`` names the pair in the error ("train/test", "train/dev", ...);
+    positional call sites predate the dev split and keep the old message.
+    """
     overlap = train_ids & test_ids
     if overlap:
-        raise SchemaError(f"train/test split ID overlap detected (must never happen): {sorted(overlap)}")
+        raise SchemaError(f"{label} split ID overlap detected (must never happen): {sorted(overlap)}")
 
 
 # ---------------------------------------------------------------------------

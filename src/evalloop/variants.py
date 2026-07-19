@@ -40,10 +40,18 @@ def to_variant_relpath(target: Path, variants_dir: Path) -> str:
     return rel.replace(os.sep, "/")
 
 
-def build_variant_config(target_alias: str, task_path: Path, paths: TaskPaths) -> dict:
-    if not paths.promptfoo_config.exists():
-        raise OptimizeError(f"{paths.promptfoo_config} not found; run `evalloop build --task {paths.task}` first")
-    base_config = yaml.safe_load(paths.promptfoo_config.read_text(encoding="utf-8"))
+def build_variant_config(target_alias: str, task_path: Path, paths: TaskPaths, split: str = "test") -> dict:
+    """split='dev' derives from promptfooconfig.dev.yaml (tests -> tests_dev),
+    producing the variant config the optimize shipping gate runs on."""
+    source = paths.promptfoo_config_dev if split == "dev" else paths.promptfoo_config
+    if not source.exists():
+        hint = (
+            f"add split=='dev' cases to {paths.golden} and run `evalloop build --task {paths.task}`"
+            if split == "dev"
+            else f"run `evalloop build --task {paths.task}` first"
+        )
+        raise OptimizeError(f"{source} not found; {hint}")
+    base_config = yaml.safe_load(source.read_text(encoding="utf-8"))
     variant_config = _reroot_file_refs(base_config, prefix="../")
     variant_config["prompts"] = [f"file://{to_variant_relpath(task_path, paths.variants_dir)}"]
     variant_config["description"] = f"{base_config.get('description', '')} (optimized: {target_alias})"

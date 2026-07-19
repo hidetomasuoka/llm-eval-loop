@@ -324,6 +324,14 @@ def run(
     repeat: int = typer.Option(None, help="Override run.repeat from the config"),
     limit: int = typer.Option(None, help="Only run the first N test cases (maps to promptfoo --filter-first-n)"),
     no_cache: bool = typer.Option(False, "--no-cache", help="Disable promptfoo's disk cache for this run"),
+    split: str = typer.Option(
+        "test",
+        help=(
+            "Which holdout to evaluate: 'test' (default) or 'dev'. dev requires split=='dev' "
+            "cases in golden.jsonl and a rebuild; it feeds the optimize shipping gate without "
+            "consuming the test split."
+        ),
+    ),
     timeout: int = typer.Option(
         None,
         help=(
@@ -337,7 +345,9 @@ def run(
     """Run `npx promptfoo eval` against the built config and record results/<task>/runs/{run_id}/."""
     cfg, paths = _load_task_or_exit(task)
     try:
-        run_mod.run(cfg, paths, variant=variant, repeat=repeat, limit=limit, no_cache=no_cache, timeout_s=timeout)
+        run_mod.run(
+            cfg, paths, variant=variant, repeat=repeat, limit=limit, no_cache=no_cache, timeout_s=timeout, split=split
+        )
     except (SchemaError, run_mod.RunError) as e:
         console.print(f"[bold red]run failed:[/bold red] {e}")
         raise typer.Exit(1) from e

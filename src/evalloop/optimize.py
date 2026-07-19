@@ -32,6 +32,7 @@ import yaml
 
 from evalloop import report as report_mod
 from evalloop import run as run_mod
+from evalloop import stats as stats_mod
 
 # Backward-compatible re-exports: cli.py, blog.py, and the test suite import
 # these names from evalloop.optimize; the implementations moved to
@@ -165,6 +166,13 @@ class OptimizeOutcome:
     run_id: str
     base_run_id: str | None
     compare_path: Path | None
+    # shipping gate (improvement plan #4): which holdout the auto-run evaluated
+    # ("dev" when the task has a dev split, else "test"), and whether the
+    # variant significantly beat base on it. promoted is None when the gate
+    # could not be decided (no dev split, or no base run on the gate split).
+    gate_split: str | None = None
+    gate_p_value: float | None = None
+    promoted: bool | None = None
 
 
 @dataclass
@@ -229,6 +237,12 @@ def _patch_optimize_log(log_path: Path, record: GeneralizationRecord) -> None:
     log_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _patch_optimize_log_with_gate(log_path: Path, record: "ShippingGateRecord") -> None:
+    data = json.loads(log_path.read_text(encoding="utf-8"))
+    data.update(_shipping_gate_to_log(record))
+    log_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 def _print_generalization_gate(console, record: GeneralizationRecord) -> None:
     console.print("[optimize] generalization gate (train proxy vs holdout pass rate):")
     console.print(
@@ -247,25 +261,140 @@ def _print_generalization_gate(console, record: GeneralizationRecord) -> None:
         console.print("[optimize]   generalization: n/a (no baseline run to compare against)")
 
 
-def _load_holdout_from_build(paths: TaskPaths) -> tuple[set[str], set[str]]:
-    """Return (case_ids, inputs) from the last build's tests_test.yaml.
+# Shipping gate (improvement plan #4): a variant is only "promoted" when it
+# beats base on the dev split with McNemar significance. Without this, every
+# experiment consumed the test split and any positive-looking delta shipped.
+GATE_ALPHA = 0.05
 
-    promptfoo eval uses this YAML, so demo leak checks must cover it even when
-    golden.jsonl was edited without a rebuild.
+
+@dataclass
+class ShippingGateRecord:
+    gate_split: str  # "dev" | "test" (what the auto-run actually evaluated)
+    delta: float | None  # optimized - base pass rate on the gate split
+    p_value: float | None  # McNemar exact p over the paired case set
+    n_paired: int | None
+    b: int | None  # cases improved fail->pass
+    c: int | None  # cases regressed pass->fail
+    promoted: bool | None  # None: gate undecidable (no dev split / no base run)
+
+
+def evaluate_shipping_gate(
+    *,
+    optimized_run_id: str,
+    base_run_id: str | None,
+    target_alias: str,
+    paths: TaskPaths,
+    gate_split: str,
+) -> ShippingGateRecord:
+    """promoted=True only when delta > 0 AND McNemar p < GATE_ALPHA on dev.
+
+    A test-split run (task without a dev split) still reports delta/p for
+    information but never promotes -- deciding promotion on test would keep
+    consuming the final holdout, which is exactly what the gate exists to stop.
+    """
+    undecided = ShippingGateRecord(
+        gate_split=gate_split, delta=None, p_value=None, n_paired=None, b=None, c=None, promoted=None
+    )
+    if base_run_id is None:
+        return undecided
+    optimized_output = paths.runs_dir / optimized_run_id / "output.json"
+    base_output = paths.runs_dir / base_run_id / "output.json"
+    if not optimized_output.exists() or not base_output.exists():
+        return undecided
+
+    results_base = parse_promptfoo_output(base_output).results
+    results_opt = parse_promptfoo_output(optimized_output).results
+    transition = stats_mod.paired_transition(results_base, results_opt, target_alias)
+    p_value = transition.p_value
+    opt_rate = _alias_pass_rate(optimized_run_id, target_alias, paths)
+    base_rate = _alias_pass_rate(base_run_id, target_alias, paths)
+    delta = (opt_rate - base_rate) if (opt_rate is not None and base_rate is not None) else None
+
+    promoted: bool | None = None
+    if gate_split == "dev":
+        promoted = bool(delta is not None and delta > 0 and p_value is not None and p_value < GATE_ALPHA)
+    return ShippingGateRecord(
+        gate_split=gate_split,
+        delta=delta,
+        p_value=p_value,
+        n_paired=transition.n_paired,
+        b=transition.b,
+        c=transition.c,
+        promoted=promoted,
+    )
+
+
+def _shipping_gate_to_log(record: ShippingGateRecord) -> dict:
+    payload = {
+        "gate_split": record.gate_split,
+        "gate_delta": record.delta,
+        "gate_p_value": record.p_value,
+        "gate_n_paired": record.n_paired,
+        "gate_b": record.b,
+        "gate_c": record.c,
+        "promoted": record.promoted,
+    }
+    # promoted=False is a real verdict and must be persisted; drop only None
+    return {k: v for k, v in payload.items() if v is not None or k == "promoted"}
+
+
+def _print_shipping_gate(console, record: ShippingGateRecord, *, task: str) -> None:
+    console.print(f"[optimize] shipping gate (split={record.gate_split}, McNemar α={GATE_ALPHA}):")
+    if record.p_value is None and record.delta is None:
+        if record.gate_split == "dev":
+            console.print(
+                f"[optimize]   no base dev run to compare against -- run "
+                f"`evalloop run --task {task} --split dev` once to establish the baseline, "
+                "then re-run optimize (promoted: n/a)"
+            )
+        else:
+            console.print("[optimize]   no base run to compare against (promoted: n/a)")
+        return
+    console.print(
+        f"[optimize]   delta={_fmt_pct_signed(record.delta)} "
+        f"b={record.b} c={record.c} n_paired={record.n_paired} "
+        f"p={record.p_value:.3f}"
+        if record.p_value is not None
+        else f"[optimize]   delta={_fmt_pct_signed(record.delta)} b={record.b} c={record.c} (no discordant cases)"
+    )
+    if record.promoted is True:
+        console.print("[optimize]   [green]promoted: yes[/green] (significantly beats base on dev)")
+    elif record.promoted is False:
+        console.print(
+            "[optimize]   promoted: no (dev で base に有意勝ちしていない -- test での最終確認は温存されました)"
+        )
+    else:
+        console.print(
+            "[optimize]   promoted: n/a (no dev split -- this run consumed the TEST holdout; "
+            "add split=='dev' cases to golden.jsonl to enable the gate)"
+        )
+
+
+def _load_holdout_from_build(paths: TaskPaths) -> tuple[set[str], set[str]]:
+    """Return (case_ids, inputs) from the last build's tests_test.yaml, plus
+    tests_dev.yaml when present.
+
+    promptfoo eval uses these YAMLs, so demo leak checks must cover them even
+    when golden.jsonl was edited without a rebuild. dev counts as holdout: the
+    shipping gate is decided on it.
     """
     if not paths.tests_test.exists():
         raise OptimizeError(f"{paths.tests_test} not found; run `evalloop build --task {paths.task}` first")
-    entries = yaml.safe_load(paths.tests_test.read_text(encoding="utf-8")) or []
     ids: set[str] = set()
     inputs: set[str] = set()
-    for entry in entries:
-        vars_ = entry.get("vars") or {}
-        case_id = vars_.get("case_id")
-        if case_id is not None:
-            ids.add(str(case_id))
-        inp = vars_.get("input")
-        if inp is not None:
-            inputs.add(str(inp))
+    sources = [paths.tests_test]
+    if paths.tests_dev.exists():
+        sources.append(paths.tests_dev)
+    for source in sources:
+        entries = yaml.safe_load(source.read_text(encoding="utf-8")) or []
+        for entry in entries:
+            vars_ = entry.get("vars") or {}
+            case_id = vars_.get("case_id")
+            if case_id is not None:
+                ids.add(str(case_id))
+            inp = vars_.get("input")
+            if inp is not None:
+                inputs.add(str(inp))
     return ids, inputs
 
 
@@ -274,7 +403,7 @@ def _load_test_ids(paths: TaskPaths) -> set[str]:
     return ids
 
 
-def _find_latest_base_run(task_name: str, paths: TaskPaths) -> str | None:
+def _find_latest_base_run(task_name: str, paths: TaskPaths, split: str = "test") -> str | None:
     if not paths.index.exists():
         return None
     candidates = []
@@ -288,6 +417,9 @@ def _find_latest_base_run(task_name: str, paths: TaskPaths) -> str | None:
                 entry.get("task_name") == task_name
                 and not entry.get("variant")
                 and entry.get("promptfoo_exit_code") == 0
+                # entries recorded before the dev split existed have no split
+                # key and were always test runs
+                and entry.get("split", "test") == split
             ):
                 candidates.append(entry)
     if not candidates:
@@ -583,10 +715,30 @@ def optimize(
     variant_path.write_text(yaml.safe_dump(variant_config, allow_unicode=True, sort_keys=False), encoding="utf-8")
     print(f"[optimize] wrote {variant_path}")
 
-    outcome = run_mod.run(cfg, paths, variant=variant_name)
+    # Shipping gate (improvement plan #4): when the task has a dev split, the
+    # automatic post-optimize eval runs on dev ONLY -- test stays reserved for
+    # one final confirmation of a promoted variant. Tasks without a dev split
+    # keep the historical behavior (evaluate on test) with a warning.
+    dev_available = paths.promptfoo_config_dev.exists() and paths.tests_dev.exists()
+    gate_split = "dev" if dev_available else "test"
+    if dev_available:
+        variant_config_dev = build_variant_config(cfg.optimize.target_alias, task_path, paths, split="dev")
+        variant_path_dev = paths.variants_dir / f"{variant_name}.dev.yaml"
+        variant_path_dev.write_text(
+            yaml.safe_dump(variant_config_dev, allow_unicode=True, sort_keys=False), encoding="utf-8"
+        )
+        print(f"[optimize] wrote {variant_path_dev}")
+        print("[optimize] dev split found: evaluating on dev only (test is reserved for final confirmation)")
+    else:
+        print(
+            "[optimize] WARN: no dev split -- this eval consumes the TEST holdout. "
+            "Add split=='dev' cases to golden.jsonl and rebuild to enable the shipping gate."
+        )
+
+    outcome = run_mod.run(cfg, paths, variant=variant_name, split=gate_split)
     report_mod.report(outcome.run_id, paths)
 
-    base_run_id = _find_latest_base_run(cfg.task.name, paths)
+    base_run_id = _find_latest_base_run(cfg.task.name, paths, split=gate_split)
     generalization = evaluate_generalization_gate(
         train_score=result.extra_log.get("train_score"),
         optimized_run_id=outcome.run_id,
@@ -596,6 +748,16 @@ def optimize(
     )
     _print_generalization_gate(console, generalization)
     _patch_optimize_log(log_path, generalization)
+
+    gate = evaluate_shipping_gate(
+        optimized_run_id=outcome.run_id,
+        base_run_id=base_run_id,
+        target_alias=cfg.optimize.target_alias,
+        paths=paths,
+        gate_split=gate_split,
+    )
+    _print_shipping_gate(console, gate, task=paths.task)
+    _patch_optimize_log_with_gate(log_path, gate)
 
     compare_path = None
     if base_run_id:
@@ -618,6 +780,9 @@ def optimize(
             "train_case_count": len(optimize_cases),
             "run_id": outcome.run_id,
             "base_run_id": base_run_id,
+            "gate_split": gate.gate_split,
+            "gate_p_value": gate.p_value,
+            "promoted": gate.promoted,
             "optimize_log": f"{rel_dir}/optimize_log.json",
         },
     )
@@ -630,4 +795,7 @@ def optimize(
         run_id=outcome.run_id,
         base_run_id=base_run_id,
         compare_path=compare_path,
+        gate_split=gate.gate_split,
+        gate_p_value=gate.p_value,
+        promoted=gate.promoted,
     )
