@@ -416,7 +416,10 @@ def _find_latest_base_run(task_name: str, paths: TaskPaths, split: str = "test")
             if (
                 entry.get("task_name") == task_name
                 and not entry.get("variant")
-                and entry.get("promptfoo_exit_code") == 0
+                # promptfoo exits 0 (all pass) or 100 (some asserts failed);
+                # both mean the eval completed. Anything else is an execution
+                # failure whose output.json can't serve as a baseline.
+                and entry.get("promptfoo_exit_code") in (0, 100)
                 # entries recorded before the dev split existed have no split
                 # key and were always test runs
                 and entry.get("split", "test") == split

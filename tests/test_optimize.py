@@ -445,6 +445,34 @@ def test_find_latest_base_run_picks_most_recent_successful_base(isolated_root):
     assert optimize_mod._find_latest_base_run("t", paths) == "newest-base"
 
 
+def test_find_latest_base_run_accepts_exit_code_100(isolated_root):
+    # promptfoo exits 100 whenever any assert fails, which is the normal state
+    # of a real baseline run -- it must still qualify as a gate baseline.
+    paths = TaskPaths(root=isolated_root, task="t1")
+    paths.results_dir.mkdir(parents=True)
+    entries = [
+        {
+            "run_id": "base-with-failures",
+            "created_at": "2026-01-01T00:00:00Z",
+            "task_name": "t",
+            "variant": None,
+            "promptfoo_exit_code": 100,
+            "split": "dev",
+        },
+        {
+            "run_id": "crashed",
+            "created_at": "2026-01-02T00:00:00Z",
+            "task_name": "t",
+            "variant": None,
+            "promptfoo_exit_code": 1,
+            "split": "dev",
+        },
+    ]
+    paths.index.write_text("\n".join(json.dumps(e) for e in entries) + "\n", encoding="utf-8")
+
+    assert optimize_mod._find_latest_base_run("t", paths, split="dev") == "base-with-failures"
+
+
 def test_find_latest_base_run_returns_none_when_missing(isolated_root):
     paths = TaskPaths(root=isolated_root, task="t1")  # no index.jsonl
     assert optimize_mod._find_latest_base_run("t", paths) is None
