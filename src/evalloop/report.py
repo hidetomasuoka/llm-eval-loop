@@ -288,10 +288,21 @@ def report(run_id: str, paths: TaskPaths) -> Path:
     calibration_status = grader_meta.get("calibration_status", judge_meta.get("calibration_status"))
     judge_provider = grader_meta.get("provider", judge_meta.get("provider"))
     if uses_judge and calibration_status != "calibrated":
-        warnings_lines.append(
-            "uncalibrated/low-agreement judge: run `evalloop calibrate` before trusting these pass rates "
-            f"(judge={judge_provider})"
-        )
+        # Fall back to task-level calibration.json when meta is still uncalibrated (issue #100).
+        from evalloop.calibrate import apply_calibration_to_meta, load_task_calibration
+
+        snap = load_task_calibration(paths, judge_provider=judge_provider)
+        if snap and snap.get("calibration_status") == "calibrated":
+            if apply_calibration_to_meta(meta, snap):
+                meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+            calibration_status = "calibrated"
+            grader_meta = meta.get("grader") or grader_meta
+            judge_meta = meta.get("judge") or judge_meta
+        else:
+            warnings_lines.append(
+                "uncalibrated/low-agreement judge: run `evalloop calibrate` before trusting these pass rates "
+                f"(judge={judge_provider})"
+            )
     warnings_lines.extend(f"promptfoo output.json parser warning: {w}" for w in parsed.warnings)
 
     markdown = render_markdown(run_id, meta, stats, warnings_lines)

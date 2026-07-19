@@ -135,6 +135,11 @@ class TaskPaths:
         return self.results_dir / "index.jsonl"
 
     @property
+    def calibration(self) -> Path:
+        """Task-level judge calibration snapshot written by ``evalloop calibrate``."""
+        return self.results_dir / "calibration.json"
+
+    @property
     def blog_dir(self) -> Path:
         return self.root / "blog" / self.task
 

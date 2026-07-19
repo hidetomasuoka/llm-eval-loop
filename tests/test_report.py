@@ -281,3 +281,70 @@ def test_report_missing_run_raises(isolated_root):
     paths = TaskPaths(root=isolated_root, task="t1")
     with pytest.raises(report_mod.ReportError):
         report_mod.report("does-not-exist", paths)
+
+
+def test_report_falls_back_to_task_calibration_json(isolated_root):
+    """Issue #100: uncalibrated meta + calibrated calibration.json clears the warning."""
+    paths = TaskPaths(root=isolated_root, task="t1")
+    run_id = "run-cal"
+    run_dir = paths.runs_dir / run_id
+    run_dir.mkdir(parents=True)
+    (run_dir / "output.json").write_text(
+        json.dumps(
+            {
+                "results": {
+                    "results": [
+                        {
+                            "vars": {"case_id": "case-0001", "expected": "x", "category": "基本"},
+                            "provider": {"id": "p", "label": "m1"},
+                            "response": {"output": "x", "cached": False},
+                            "gradingResult": {"pass": True, "score": 1, "reason": "ok"},
+                            "success": True,
+                            "cost": 0.001,
+                            "latencyMs": 120,
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    judge = "anthropic:messages:claude-sonnet-4-6"
+    (run_dir / "meta.json").write_text(
+        json.dumps(
+            {
+                "task_name": "t",
+                "answer_type": "text",
+                "created_at": "now",
+                "repeat": 1,
+                "limit": None,
+                "promptfoo_config_path": "x",
+                "promptfoo_version": "0.1.0",
+                "grader": {
+                    "type": "llm-rubric",
+                    "provider": judge,
+                    "calibration_status": "uncalibrated",
+                    "agreement_rate": None,
+                },
+                "judge": {"provider": judge, "calibration_status": "uncalibrated", "agreement_rate": None},
+            }
+        ),
+        encoding="utf-8",
+    )
+    paths.results_dir.mkdir(parents=True, exist_ok=True)
+    paths.calibration.write_text(
+        json.dumps(
+            {
+                "judge_provider": judge,
+                "calibration_status": "calibrated",
+                "agreement_rate": 0.95,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    content = report_mod.report(run_id, paths).read_text(encoding="utf-8")
+    assert "uncalibrated" not in content
+    meta = json.loads((run_dir / "meta.json").read_text(encoding="utf-8"))
+    assert meta["judge"]["calibration_status"] == "calibrated"
+    assert meta["grader"]["calibration_status"] == "calibrated"

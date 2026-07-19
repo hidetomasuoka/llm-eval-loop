@@ -161,6 +161,30 @@ def test_run_meta_records_effective_grader(
         assert "provider" not in outcome.meta["grader"]
 
 
+def test_run_meta_reuses_task_calibration_for_matching_judge(isolated_root, monkeypatch):
+    """Issue #100: after calibrate, new runs stamp llm-rubric status from calibration.json."""
+    paths = TaskPaths(root=isolated_root, task="t1")
+    _prepare_env(monkeypatch, paths)
+    monkeypatch.setattr(run_mod, "run_promptfoo_eval", _fake_success_eval)
+    paths.results_dir.mkdir(parents=True, exist_ok=True)
+    paths.calibration.write_text(
+        json.dumps(
+            {
+                "judge_provider": "anthropic:messages:claude-sonnet-4-6",
+                "calibration_status": "calibrated",
+                "agreement_rate": 0.9,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    outcome = run_mod.run(_make_config("text"), paths)
+
+    assert outcome.meta["grader"]["calibration_status"] == "calibrated"
+    assert outcome.meta["grader"]["agreement_rate"] == pytest.approx(0.9)
+    assert outcome.meta["judge"]["calibration_status"] == "calibrated"
+
+
 def test_run_variant_meta_records_optimized_prompt_and_config_hash(isolated_root, monkeypatch):
     paths = TaskPaths(root=isolated_root, task="t1")
     _prepare_env(monkeypatch, paths)

@@ -23,8 +23,9 @@ In both modes, judge verdicts are joined back to human labels on the
 same case may carry one label per model (see docs/DESIGN.md section 5.3).
 
 Iron rule #6: results/reports must show an explicit warning whenever the
-judge is uncalibrated or below judge.agreement_threshold. This module is what
-produces the calibration_status that report.py reads back out of meta.json.
+judge is uncalibrated or below judge.agreement_threshold. This module writes
+``results/<task>/calibration.json`` and stamps matching run ``meta.json``
+files so ``run`` / ``report`` keep the status across runs (issue #100).
 """
 
 from __future__ import annotations
@@ -34,6 +35,7 @@ import statistics
 import tempfile
 import uuid
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 import yaml
@@ -52,6 +54,84 @@ from evalloop.schemas import (
 
 class CalibrateError(RuntimeError):
     pass
+
+
+def load_task_calibration(paths: TaskPaths, *, judge_provider: str | None = None) -> dict | None:
+    """Load task-level calibration.json; None if missing or judge provider mismatches."""
+    path = paths.calibration
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    if judge_provider is not None and data.get("judge_provider") != judge_provider:
+        return None
+    return data
+
+
+def save_task_calibration(paths: TaskPaths, config: Config, result: CalibrationResult) -> dict:
+    """Persist calibration so later ``run`` / ``report`` pick up the status (issue #100)."""
+    status = "calibrated" if result.status == "calibrated" else result.status
+    payload = {
+        "judge_provider": config.judge.provider,
+        "calibration_status": status,
+        "agreement_rate": result.agreement_rate,
+        "agreement_threshold": result.threshold,
+        "n_compared": result.n_compared,
+        "n_skipped": result.n_skipped,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    paths.results_dir.mkdir(parents=True, exist_ok=True)
+    paths.calibration.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"[calibrate] wrote {paths.calibration} status={status}")
+    return payload
+
+
+def apply_calibration_to_meta(meta: dict, calibration: dict) -> bool:
+    """Stamp judge/grader calibration fields from a task-level snapshot. Returns True if changed."""
+    status = calibration.get("calibration_status")
+    if not status:
+        return False
+    rate = calibration.get("agreement_rate")
+    changed = False
+    for key in ("judge", "grader"):
+        block = meta.setdefault(key, {})
+        if not isinstance(block, dict):
+            continue
+        if block.get("calibration_status") != status or block.get("agreement_rate") != rate:
+            block["calibration_status"] = status
+            block["agreement_rate"] = rate
+            changed = True
+    return changed
+
+
+def apply_calibration_to_runs(paths: TaskPaths, calibration: dict) -> int:
+    """Update meta.json for runs whose judge provider matches the snapshot."""
+    provider = calibration.get("judge_provider")
+    if not provider or not paths.runs_dir.is_dir():
+        return 0
+    updated = 0
+    for meta_path in sorted(paths.runs_dir.glob("*/meta.json")):
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(meta, dict):
+            continue
+        run_provider = (meta.get("grader") or {}).get("provider") or (meta.get("judge") or {}).get(
+            "provider"
+        )
+        if run_provider != provider:
+            continue
+        if apply_calibration_to_meta(meta, calibration):
+            meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+            updated += 1
+    if updated:
+        print(f"[calibrate] updated judge.calibration_status on {updated} run meta.json file(s)")
+    return updated
 
 
 @dataclass
@@ -277,19 +357,24 @@ def calibrate(config: Config, paths: TaskPaths, run_id: str | None = None) -> Ca
     else:
         print("[calibrate] WARNING: no comparable cases; calibration status left as 'no_data'")
 
+    snapshot = save_task_calibration(paths, cfg, result)
+
     if run_id is not None:
         meta_path = paths.runs_dir / run_id / "meta.json"
         if meta_path.exists():
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
             meta.setdefault("judge", {})
-            calibration_status = "calibrated" if result.status == "calibrated" else result.status
-            meta["judge"]["calibration_status"] = calibration_status
-            meta["judge"]["agreement_rate"] = result.agreement_rate
             if meta.get("answer_type") == "text" or meta.get("grader", {}).get("type") == "llm-rubric":
-                meta.setdefault("grader", {"type": "llm-rubric", "provider": meta["judge"].get("provider")})
-                meta["grader"]["calibration_status"] = calibration_status
-                meta["grader"]["agreement_rate"] = result.agreement_rate
+                meta.setdefault(
+                    "grader",
+                    {"type": "llm-rubric", "provider": meta["judge"].get("provider")},
+                )
+            apply_calibration_to_meta(meta, snapshot)
             meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
-            print(f"[calibrate] updated {meta_path} judge.calibration_status={meta['judge']['calibration_status']}")
+            print(
+                f"[calibrate] updated {meta_path} "
+                f"judge.calibration_status={meta['judge']['calibration_status']}"
+            )
 
+    apply_calibration_to_runs(paths, snapshot)
     return result
