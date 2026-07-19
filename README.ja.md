@@ -258,8 +258,10 @@ run成果物の生出力（output.json / meta.json）にはローカル絶対パ
   （`meta.source: "self-made"`、一般的なSaaS問い合わせを模した創作文）と、ジャッジ校正
   デモ用の**合成フィクスチャ10件**（`output_raw` は架空のモデル出力）
 - `tasks/cuad100/`（データ非追跡） — [CUAD v1](https://www.atticusprojectai.org/cuad)
-  （The Atticus Project発行、**CC BY 4.0**）から抽出した100件のサブセット。取得元は
-  Hugging Faceの `chenghao/cuad_qa` ミラー。ファイル指紋と復元手順は PROVENANCE.md 参照
+  （The Atticus Project発行、**CC BY 4.0**）から抽出した150件のサブセット
+  （train 50 / dev 40 / test 60。「該当条項なし」が正解のネガティブ18件を含む）。
+  取得元は Hugging Faceの `chenghao/cuad_qa` ミラー。`tasks/cuad100/scripts/build_golden.py`
+  で決定的に再生成できる。ファイル指紋と選定手順は PROVENANCE.md 参照
 
 ## 既知の制約
 

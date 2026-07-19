@@ -184,7 +184,7 @@ Raw run outputs (output.json / meta.json) can contain local absolute paths and p
 Each task documents its data source and how to re-obtain it in `tasks/<name>/PROVENANCE.md`. All data ever bundled here comes from public datasets or was created synthetically for this project; **none of it is related to real customer data, business data, or actual inquiries**.
 
 - `tasks/sample-inquiry/` (tracked, opt-in) — **24 self-made dummy cases** for 4-way inquiry classification (`meta.source: "self-made"`; invented texts imitating generic SaaS inquiries) plus **10 synthetic fixtures** for the judge-calibration demo (`output_raw` values are fictional model outputs)
-- `tasks/cuad100/` (data untracked) — a 100-case subset extracted from [CUAD v1](https://www.atticusprojectai.org/cuad) (published by The Atticus Project, **CC BY 4.0**), obtained via the `chenghao/cuad_qa` mirror on Hugging Face; see its PROVENANCE.md for the file fingerprint and recovery steps
+- `tasks/cuad100/` (data untracked) — a 150-case subset extracted from [CUAD v1](https://www.atticusprojectai.org/cuad) (published by The Atticus Project, **CC BY 4.0**), obtained via the `chenghao/cuad_qa` mirror on Hugging Face (train 50 / dev 40 / test 60, including 18 negative cases whose gold answer is "該当条項なし"); regenerate deterministically with `tasks/cuad100/scripts/build_golden.py`, and see its PROVENANCE.md for the file fingerprint and selection procedure
 
 ## Known constraints
 
