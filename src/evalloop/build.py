@@ -289,6 +289,13 @@ def build(
         # a stale dev config from a removed dev split must not stay runnable
         paths.tests_dev.unlink(missing_ok=True)
         paths.promptfoo_config_dev.unlink(missing_ok=True)
+        # ... and neither must any optimized variant's dev config: it still
+        # references the tests_dev.yaml just deleted above, so `evalloop run
+        # --variant X --split dev` would otherwise hit a confusing promptfoo
+        # error instead of resolve_config_path's clear "add dev cases" one.
+        if paths.variants_dir.exists():
+            for stale in paths.variants_dir.glob("*.dev.yaml"):
+                stale.unlink()
 
     estimate = estimate_cost(config, test_cases, prompt_template)
 

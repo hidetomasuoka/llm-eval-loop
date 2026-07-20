@@ -159,10 +159,6 @@ def _relative_increase(before: float | None, after: float | None) -> float | Non
     return (after - before) / before
 
 
-def _fmt_num(v: float | None, spec: str = ".1f") -> str:
-    return format(v, spec) if v is not None else "n/a"
-
-
 def _fmt_int(v: int | None) -> str:
     return str(v) if v is not None else "n/a"
 
@@ -251,8 +247,8 @@ def _compare_pair(run_a: str, run_b: str, paths: TaskPaths) -> list[str]:
             f"| {alias} | {_fmt_pct(pa)} | {_fmt_pct(pb)} | {_fmt_pct_signed(delta)} | {beyond_ci} | "
             f"{bc_cell} | {p_cell} | "
             f"{_fmt_usd(ca)} | {_fmt_usd(cb)} | {_fmt_usd_signed(cdelta)} | {_fmt_pct_signed(cost_ratio)} | "
-            f"{_fmt_num(ta)} | {_fmt_num(tb)} | {_fmt_num(tdelta, '+.1f')} | "
-            f"{_fmt_int(prompt_a)} | {_fmt_int(prompt_b)} | {_fmt_num(prompt_delta, '+.0f')} |"
+            f"{report_mod.fmt(ta, '.1f')} | {report_mod.fmt(tb, '.1f')} | {report_mod.fmt(tdelta, '+.1f')} | "
+            f"{_fmt_int(prompt_a)} | {_fmt_int(prompt_b)} | {report_mod.fmt(prompt_delta, '+.0f')} |"
         )
         tradeoff_notes.extend(
             _compare_tradeoff_notes(

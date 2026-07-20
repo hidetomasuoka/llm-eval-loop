@@ -8,12 +8,14 @@ without a dev split keep evaluating on test (with a warning) and never promote.
 import json
 import types
 
+import pytest
 import yaml
 
 from evalloop import build as build_mod
 from evalloop import optimize as optimize_mod
 from evalloop import run as run_mod
 from evalloop.paths import TaskPaths
+from evalloop.schemas import SchemaError
 from tests.conftest import scaffold_task
 from tests.test_optimize import _label_type_golden_rows, _stub_run_env
 
@@ -113,6 +115,12 @@ def test_build_removes_stale_dev_artifacts_when_dev_split_removed(isolated_root)
     build_mod.build(cfg, paths, yes=True)
     assert paths.tests_dev.exists()
 
+    # a leftover optimized variant's dev config, as if `evalloop optimize`
+    # had run before the dev split was removed
+    paths.variants_dir.mkdir(parents=True, exist_ok=True)
+    stale_variant_dev = paths.variants_dir / "qwen7b_gepa_20260101-000000.dev.yaml"
+    stale_variant_dev.write_text("tests: file://../tests_dev.yaml\n", encoding="utf-8")
+
     # rewrite golden without dev cases and rebuild
     rows = [json.dumps(r, ensure_ascii=False) for r in _label_type_golden_rows()]
     paths.golden.write_text("\n".join(rows) + "\n", encoding="utf-8")
@@ -120,6 +128,9 @@ def test_build_removes_stale_dev_artifacts_when_dev_split_removed(isolated_root)
 
     assert not paths.tests_dev.exists()
     assert not paths.promptfoo_config_dev.exists()
+    # otherwise `evalloop run --variant ... --split dev` would resolve to this
+    # file and hand promptfoo a tests: reference that no longer exists
+    assert not stale_variant_dev.exists()
 
 
 # --- run --split -------------------------------------------------------------
@@ -152,6 +163,54 @@ def test_run_records_split_in_meta_and_index(isolated_root, monkeypatch):
     assert "--split dev" in outcome.meta["evalloop_command"]
     index_lines = [json.loads(line) for line in paths.index.read_text(encoding="utf-8").splitlines()]
     assert index_lines[-1]["split"] == "dev"
+
+
+# --- optimize(): iron rule #1 re-check covers dev/test too --------------------
+
+
+def test_optimize_rejects_stale_dev_test_overlap_independently_of_build(isolated_root):
+    """build.py checks train/test, train/dev, and dev/test disjointness at
+    build time, but optimize.py re-checks independently in case the build
+    artifacts are stale (golden.jsonl edited without a rebuild). The old
+    re-check only compared train against the *merged* test+dev holdout, so a
+    dev/test overlap introduced after the last build was invisible to it --
+    the union silently absorbed the duplicate id.
+    """
+    cfg, paths = scaffold_task(isolated_root, golden_rows=_golden_rows_with_dev())
+    build_mod.build(cfg, paths, yes=True)
+
+    # Simulate a stale tests_dev.yaml: a test case id now also appears in dev.
+    test_entries = yaml.safe_load(paths.tests_test.read_text(encoding="utf-8"))
+    dev_entries = yaml.safe_load(paths.tests_dev.read_text(encoding="utf-8"))
+    dev_entries.append(test_entries[0])
+    paths.tests_dev.write_text(yaml.safe_dump(dev_entries, allow_unicode=True), encoding="utf-8")
+
+    with pytest.raises(SchemaError, match="dev/test"):
+        optimize_mod.optimize(cfg, paths, yes=True)
+
+
+def test_optimize_demo_leak_check_covers_golden_dev_cases(isolated_root):
+    """The demo-leak backstop unions golden.jsonl's holdout cases with the
+    build YAML holdout so a golden edit without a rebuild is still caught.
+    It must include split=='dev' cases, not just 'test': the shipping gate
+    decision is made on dev, so a demo leaking into a post-build dev case is
+    exactly as dangerous as leaking into test.
+    """
+    cfg, paths = scaffold_task(isolated_root, golden_rows=_golden_rows_with_dev())
+    build_mod.build(cfg, paths, yes=True)
+
+    # A demo whose input matches a dev case that exists in golden.jsonl but
+    # NOT yet in the (stale) tests_dev.yaml on disk.
+    paths.demos.write_text(
+        json.dumps({"id": "demo-1", "input": "問い合わせ文サンプルdev0", "output": "契約照会"}, ensure_ascii=False)
+        + "\n",
+        encoding="utf-8",
+    )
+    prompt_with_demos = paths.task_dir / "prompts" / "task.txt"
+    prompt_with_demos.write_text(prompt_with_demos.read_text(encoding="utf-8") + "\n{{demos}}\n", encoding="utf-8")
+
+    with pytest.raises(optimize_mod.OptimizeError, match="leak"):
+        optimize_mod.optimize(cfg, paths, yes=True)
 
 
 # --- evaluate_shipping_gate (unit) --------------------------------------------
@@ -202,6 +261,35 @@ def test_shipping_gate_never_promotes_on_test_split(isolated_root):
     # significant win, but on the test split: informational only, never promoted
     assert record.p_value is not None and record.p_value < optimize_mod.GATE_ALPHA
     assert record.promoted is None
+
+
+def test_shipping_gate_rejects_significant_p_when_paired_direction_regresses(isolated_root):
+    """delta and the paired transition can disagree because delta is the
+    per-row-averaged pass rate over each run's OWN rows (any non-shared
+    cases included), while b/c/p_value only look at the case intersection.
+    Here the 6 cases common to both runs regress unanimously (c=6, b=0,
+    p<0.05) but base also carries 10 base-only failing rows that drag its
+    overall rate down, so the naive delta still comes out positive. The gate
+    must not promote on p alone when the paired direction disagrees with it.
+    """
+    paths = TaskPaths(root=isolated_root, task="t1")
+    common_ids = [f"case-{i:04d}" for i in range(1, 7)]
+    base_only_ids = [f"case-{i:04d}" for i in range(101, 111)]
+    opt_only_ids = [f"case-{i:04d}" for i in range(201, 205)]
+    base_rows = [_row(cid, "qwen7b", True) for cid in common_ids] + [
+        _row(cid, "qwen7b", False) for cid in base_only_ids
+    ]
+    opt_rows = [_row(cid, "qwen7b", False) for cid in common_ids] + [_row(cid, "qwen7b", True) for cid in opt_only_ids]
+    _write_output(paths.runs_dir, "base", base_rows)
+    _write_output(paths.runs_dir, "opt", opt_rows)
+
+    record = optimize_mod.evaluate_shipping_gate(
+        optimized_run_id="opt", base_run_id="base", target_alias="qwen7b", paths=paths, gate_split="dev"
+    )
+    assert record.delta is not None and record.delta > 0  # 4/10 > 6/16 on the naive per-row rate
+    assert (record.b, record.c) == (0, 6)  # every shared case regressed
+    assert record.p_value is not None and record.p_value < optimize_mod.GATE_ALPHA
+    assert record.promoted is False
 
 
 def test_shipping_gate_undecided_without_base_run(isolated_root):

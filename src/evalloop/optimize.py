@@ -49,7 +49,6 @@ from evalloop.compare import (  # noqa: F401
     _fmt_explore_cost,
     _fmt_explore_duration,
     _fmt_int,
-    _fmt_num,
     _fmt_pct,
     _fmt_pct_signed,
     _fmt_usd,
@@ -286,7 +285,16 @@ def evaluate_shipping_gate(
     paths: TaskPaths,
     gate_split: str,
 ) -> ShippingGateRecord:
-    """promoted=True only when delta > 0 AND McNemar p < GATE_ALPHA on dev.
+    """promoted=True only when the paired transition improves (b > c) AND
+    McNemar p < GATE_ALPHA on dev.
+
+    Promotion is decided from the paired transition alone (b/c), not from the
+    per-row-averaged pass-rate delta: delta aggregates over each run's own
+    graded rows (including repeats and any non-shared cases), while b/c and
+    p_value are computed over the same case set. A build where those two
+    disagree -- e.g. delta > 0 while the paired table is regression-skewed
+    (b < c) -- must not promote just because the two-sided p-value is small;
+    the direction of the flip has to agree with the aggregate delta too.
 
     A test-split run (task without a dev split) still reports delta/p for
     information but never promotes -- deciding promotion on test would keep
@@ -306,13 +314,21 @@ def evaluate_shipping_gate(
     results_opt = parse_promptfoo_output(optimized_output).results
     transition = stats_mod.paired_transition(results_base, results_opt, target_alias)
     p_value = transition.p_value
-    opt_rate = _alias_pass_rate(optimized_run_id, target_alias, paths)
-    base_rate = _alias_pass_rate(base_run_id, target_alias, paths)
+    opt_stats = {s.alias: s for s in report_mod.compute_alias_stats(results_opt)}
+    base_stats = {s.alias: s for s in report_mod.compute_alias_stats(results_base)}
+    opt_rate = opt_stats[target_alias].pass_rate if target_alias in opt_stats else None
+    base_rate = base_stats[target_alias].pass_rate if target_alias in base_stats else None
     delta = (opt_rate - base_rate) if (opt_rate is not None and base_rate is not None) else None
 
     promoted: bool | None = None
     if gate_split == "dev":
-        promoted = bool(delta is not None and delta > 0 and p_value is not None and p_value < GATE_ALPHA)
+        promoted = bool(
+            delta is not None
+            and delta > 0
+            and transition.b > transition.c
+            and p_value is not None
+            and p_value < GATE_ALPHA
+        )
     return ShippingGateRecord(
         gate_split=gate_split,
         delta=delta,
@@ -370,6 +386,21 @@ def _print_shipping_gate(console, record: ShippingGateRecord, *, task: str) -> N
         )
 
 
+def _read_yaml_case_vars(source: Path) -> tuple[set[str], set[str]]:
+    ids: set[str] = set()
+    inputs: set[str] = set()
+    entries = yaml.safe_load(source.read_text(encoding="utf-8")) or []
+    for entry in entries:
+        vars_ = entry.get("vars") or {}
+        case_id = vars_.get("case_id")
+        if case_id is not None:
+            ids.add(str(case_id))
+        inp = vars_.get("input")
+        if inp is not None:
+            inputs.add(str(inp))
+    return ids, inputs
+
+
 def _load_holdout_from_build(paths: TaskPaths) -> tuple[set[str], set[str]]:
     """Return (case_ids, inputs) from the last build's tests_test.yaml, plus
     tests_dev.yaml when present.
@@ -378,24 +409,26 @@ def _load_holdout_from_build(paths: TaskPaths) -> tuple[set[str], set[str]]:
     when golden.jsonl was edited without a rebuild. dev counts as holdout: the
     shipping gate is decided on it.
     """
+    test_ids, dev_ids, test_inputs, dev_inputs = _load_split_ids_from_build(paths)
+    return test_ids | dev_ids, test_inputs | dev_inputs
+
+
+def _load_split_ids_from_build(paths: TaskPaths) -> tuple[set[str], set[str], set[str], set[str]]:
+    """Return (test_ids, dev_ids, test_inputs, dev_inputs) read separately
+    from tests_test.yaml and tests_dev.yaml.
+
+    Kept separate (rather than pre-merged) so callers can re-verify dev/test
+    disjointness independently of build.py -- iron rule #1 covers all three
+    split pairs, not just train vs the merged holdout.
+    """
     if not paths.tests_test.exists():
         raise OptimizeError(f"{paths.tests_test} not found; run `evalloop build --task {paths.task}` first")
-    ids: set[str] = set()
-    inputs: set[str] = set()
-    sources = [paths.tests_test]
+    test_ids, test_inputs = _read_yaml_case_vars(paths.tests_test)
+    dev_ids: set[str] = set()
+    dev_inputs: set[str] = set()
     if paths.tests_dev.exists():
-        sources.append(paths.tests_dev)
-    for source in sources:
-        entries = yaml.safe_load(source.read_text(encoding="utf-8")) or []
-        for entry in entries:
-            vars_ = entry.get("vars") or {}
-            case_id = vars_.get("case_id")
-            if case_id is not None:
-                ids.add(str(case_id))
-            inp = vars_.get("input")
-            if inp is not None:
-                inputs.add(str(inp))
-    return ids, inputs
+        dev_ids, dev_inputs = _read_yaml_case_vars(paths.tests_dev)
+    return test_ids, dev_ids, test_inputs, dev_inputs
 
 
 def _load_test_ids(paths: TaskPaths) -> set[str]:
@@ -437,13 +470,20 @@ def optimize(
     cfg = config
     score_fn = _score_fn_for(cfg)  # resolve the training metric first: fail fast on unsupported types
 
-    test_ids, yaml_test_inputs = _load_holdout_from_build(paths)
+    split_test_ids, split_dev_ids, split_test_inputs, split_dev_inputs = _load_split_ids_from_build(paths)
+    test_ids = split_test_ids | split_dev_ids
+    yaml_test_inputs = split_test_inputs | split_dev_inputs
     cases = load_golden_jsonl(paths.golden)
     train_cases = [c for c in cases if c.split == "train"]
     if not train_cases:
         raise OptimizeError("golden.jsonl has no split=='train' cases; nothing to optimize against")
     train_ids = {c.id for c in train_cases}
-    assert_split_disjoint(train_ids, test_ids)  # iron rule #1, re-checked independently of build.py
+    # iron rule #1, re-checked independently of build.py: all three split
+    # pairs, not just train vs the merged test+dev holdout (a train/test-only
+    # check would miss a dev/test overlap introduced after the last build).
+    assert_split_disjoint(train_ids, split_test_ids)
+    assert_split_disjoint(train_ids, split_dev_ids, label="train/dev")
+    assert_split_disjoint(split_dev_ids, split_test_ids, label="dev/test")
 
     # APO-09: preflight checks (train size, label coverage, holdout presence).
     # Runs after split separation is confirmed and before any LM call. Errors
@@ -461,11 +501,14 @@ def optimize(
     raw_template = (REPO_ROOT / cfg.task.prompt_file).read_text(encoding="utf-8")
     # Expand {{demos}} the same way build does, so dspy trains on the prompt
     # promptfoo will evaluate (APO-16 / issue #75 Bugbot finding).
-    # Leak check unions golden test split with build YAML holdout: promptfoo
-    # still evaluates the last build's tests_test.yaml even if golden drifted.
-    golden_test_cases = [c for c in cases if c.split == "test"]
-    demos_test_ids = test_ids | {c.id for c in golden_test_cases}
-    demos_test_inputs = yaml_test_inputs | {c.input for c in golden_test_cases}
+    # Leak check unions golden test+dev split with build YAML holdout: promptfoo
+    # still evaluates the last build's tests_test.yaml/tests_dev.yaml even if
+    # golden drifted (dev is included because the shipping gate is decided on
+    # it -- a demo leaking into a post-build golden dev case must be caught
+    # even though the stale tests_dev.yaml doesn't have that case yet).
+    golden_holdout_cases = [c for c in cases if c.split in ("test", "dev")]
+    demos_test_ids = test_ids | {c.id for c in golden_holdout_cases}
+    demos_test_inputs = yaml_test_inputs | {c.input for c in golden_holdout_cases}
     miprov2_demo_search = cfg.optimize.method == MiproV2Optimizer.name and (
         int(cfg.optimize.params.get("max_bootstrapped_demos", 0) or 0) > 0
         or int(cfg.optimize.params.get("max_labeled_demos", 0) or 0) > 0
