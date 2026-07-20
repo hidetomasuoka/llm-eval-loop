@@ -79,8 +79,7 @@ def assert_demos_do_not_leak_test(
     for demo in demos:
         if demo.id is not None and demo.id in test_ids:
             raise DemoError(
-                f"demos.jsonl leaks test-split case id {demo.id!r}; "
-                "few-shot demos must not include holdout cases"
+                f"demos.jsonl leaks test-split case id {demo.id!r}; few-shot demos must not include holdout cases"
             )
         if demo.input in test_inputs:
             raise DemoError(
@@ -99,9 +98,7 @@ def _example_field(ex, name: str):
     return getattr(ex, name, None)
 
 
-def demos_from_dspy_program(
-    program, *, train_input_to_id: dict[str, str]
-) -> list[tuple[DemoCase, str]]:
+def demos_from_dspy_program(program, *, train_input_to_id: dict[str, str]) -> list[tuple[DemoCase, str]]:
     """Extract few-shot demos from a compiled dspy program (APO-17).
 
     Returns ``(DemoCase, origin)`` where origin is ``labeled`` or ``bootstrapped``.
@@ -129,9 +126,7 @@ def demos_from_dspy_program(
             raise DemoError(f"optimized demo for input {inp_s!r} has neither output nor expected")
         case_id = train_input_to_id.get(inp_s)
         if case_id is None:
-            raise DemoError(
-                f"optimized demo input is not from the train split (leak or drift): {inp_s!r}"
-            )
+            raise DemoError(f"optimized demo input is not from the train split (leak or drift): {inp_s!r}")
         extracted.append((DemoCase(input=inp_s, output=str(out), id=case_id), origin))
     return extracted
 

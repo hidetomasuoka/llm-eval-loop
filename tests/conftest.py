@@ -117,9 +117,7 @@ def scaffold_task(
     }
     if global_run:
         global_raw["run"] = global_run
-    (root / "config.yaml").write_text(
-        yaml.safe_dump(global_raw, allow_unicode=True, sort_keys=False), encoding="utf-8"
-    )
+    (root / "config.yaml").write_text(yaml.safe_dump(global_raw, allow_unicode=True, sort_keys=False), encoding="utf-8")
 
     task_dir = root / "tasks" / name
     (task_dir / "prompts").mkdir(parents=True, exist_ok=True)
@@ -139,9 +137,7 @@ def scaffold_task(
         task_raw["run"] = run_overrides
     if blog:
         task_raw["blog"] = blog
-    (task_dir / "task.yaml").write_text(
-        yaml.safe_dump(task_raw, allow_unicode=True, sort_keys=False), encoding="utf-8"
-    )
+    (task_dir / "task.yaml").write_text(yaml.safe_dump(task_raw, allow_unicode=True, sort_keys=False), encoding="utf-8")
 
     with (task_dir / "golden.jsonl").open("w", encoding="utf-8") as f:
         for row in golden_rows:

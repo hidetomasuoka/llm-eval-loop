@@ -72,8 +72,7 @@ Q1_PROMPT = (
     "ワークフロー破綻等）が主因の可能性がありますか?"
 )
 DEFER_NON_PROMPT_MESSAGE = (
-    "APO適用は保留。先にRAG / パース / ツール説明 / ワークフローを修正してください。"
-    "（docs/APO_GUIDE.md 第1章参照）"
+    "APO適用は保留。先にRAG / パース / ツール説明 / ワークフローを修正してください。（docs/APO_GUIDE.md 第1章参照）"
 )
 NEED_EVAL_SET_MESSAGE = (
     "train / holdout 分割が取れる評価セット整備が先です。"
@@ -125,8 +124,7 @@ def _print_symptom_result(symptom: SymptomChoice) -> None:
     console.print(f"推奨 method: [bold]{_format_methods(symptom.methods)}[/bold]")
     if symptom.out_of_scope:
         console.print(
-            "[yellow]evalloop optimize では未対応の粒度です。"
-            "根本原因の設計見直しを先に検討してください。[/yellow]"
+            "[yellow]evalloop optimize では未対応の粒度です。根本原因の設計見直しを先に検討してください。[/yellow]"
         )
 
 

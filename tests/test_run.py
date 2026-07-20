@@ -143,9 +143,7 @@ def test_run_base_meta_records_effective_prompt_and_config_hash(isolated_root, m
         ("text", "llm-rubric", "uncalibrated"),
     ],
 )
-def test_run_meta_records_effective_grader(
-    isolated_root, monkeypatch, answer_type, grader_type, calibration_status
-):
+def test_run_meta_records_effective_grader(isolated_root, monkeypatch, answer_type, grader_type, calibration_status):
     paths = TaskPaths(root=isolated_root, task="t1")
     _prepare_env(monkeypatch, paths)
     monkeypatch.setattr(run_mod, "run_promptfoo_eval", _fake_success_eval)

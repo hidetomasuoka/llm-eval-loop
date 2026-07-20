@@ -108,26 +108,76 @@ def test_unseen_label_errors(isolated_root):
     )
     train = _cases(
         [
-            {"id": "c1", "input": "x", "expected": "A", "split": "train",
-             "meta": {"category": "基本", "source": "self-made"}},
-            {"id": "c2", "input": "x", "expected": "A", "split": "train",
-             "meta": {"category": "基本", "source": "self-made"}},
-            {"id": "c3", "input": "x", "expected": "B", "split": "train",
-             "meta": {"category": "基本", "source": "self-made"}},
-            {"id": "c4", "input": "x", "expected": "B", "split": "train",
-             "meta": {"category": "基本", "source": "self-made"}},
-            {"id": "c5", "input": "x", "expected": "B", "split": "train",
-             "meta": {"category": "基本", "source": "self-made"}},
-            {"id": "c6", "input": "x", "expected": "B", "split": "train",
-             "meta": {"category": "基本", "source": "self-made"}},
-            {"id": "c7", "input": "x", "expected": "B", "split": "train",
-             "meta": {"category": "基本", "source": "self-made"}},
-            {"id": "c8", "input": "x", "expected": "B", "split": "train",
-             "meta": {"category": "基本", "source": "self-made"}},
-            {"id": "c9", "input": "x", "expected": "B", "split": "train",
-             "meta": {"category": "基本", "source": "self-made"}},
-            {"id": "c10", "input": "x", "expected": "B", "split": "train",
-             "meta": {"category": "基本", "source": "self-made"}},
+            {
+                "id": "c1",
+                "input": "x",
+                "expected": "A",
+                "split": "train",
+                "meta": {"category": "基本", "source": "self-made"},
+            },
+            {
+                "id": "c2",
+                "input": "x",
+                "expected": "A",
+                "split": "train",
+                "meta": {"category": "基本", "source": "self-made"},
+            },
+            {
+                "id": "c3",
+                "input": "x",
+                "expected": "B",
+                "split": "train",
+                "meta": {"category": "基本", "source": "self-made"},
+            },
+            {
+                "id": "c4",
+                "input": "x",
+                "expected": "B",
+                "split": "train",
+                "meta": {"category": "基本", "source": "self-made"},
+            },
+            {
+                "id": "c5",
+                "input": "x",
+                "expected": "B",
+                "split": "train",
+                "meta": {"category": "基本", "source": "self-made"},
+            },
+            {
+                "id": "c6",
+                "input": "x",
+                "expected": "B",
+                "split": "train",
+                "meta": {"category": "基本", "source": "self-made"},
+            },
+            {
+                "id": "c7",
+                "input": "x",
+                "expected": "B",
+                "split": "train",
+                "meta": {"category": "基本", "source": "self-made"},
+            },
+            {
+                "id": "c8",
+                "input": "x",
+                "expected": "B",
+                "split": "train",
+                "meta": {"category": "基本", "source": "self-made"},
+            },
+            {
+                "id": "c9",
+                "input": "x",
+                "expected": "B",
+                "split": "train",
+                "meta": {"category": "基本", "source": "self-made"},
+            },
+            {
+                "id": "c10",
+                "input": "x",
+                "expected": "B",
+                "split": "train",
+                "meta": {"category": "基本", "source": "self-made"},
+            },
         ],
         "train",
     )
@@ -143,8 +193,13 @@ def test_singleton_label_errors(isolated_root):
     # 10 cases: A once, B nine times -> A is a singleton
     train = _cases(
         [
-            {"id": f"c{i}", "input": "x", "expected": "B" if i > 0 else "A", "split": "train",
-             "meta": {"category": "基本", "source": "self-made"}}
+            {
+                "id": f"c{i}",
+                "input": "x",
+                "expected": "B" if i > 0 else "A",
+                "split": "train",
+                "meta": {"category": "基本", "source": "self-made"},
+            }
             for i in range(10)
         ],
         "train",
@@ -159,8 +214,13 @@ def test_singleton_label_force_demotes(isolated_root):
     cfg, _p = scaffold_task(isolated_root, answer_type="label", labels=["A", "B"], golden_rows=rows)
     train = _cases(
         [
-            {"id": f"c{i}", "input": "x", "expected": "B" if i > 0 else "A", "split": "train",
-             "meta": {"category": "基本", "source": "self-made"}}
+            {
+                "id": f"c{i}",
+                "input": "x",
+                "expected": "B" if i > 0 else "A",
+                "split": "train",
+                "meta": {"category": "基本", "source": "self-made"},
+            }
             for i in range(10)
         ],
         "train",
@@ -178,8 +238,13 @@ def test_label_coverage_normalizes_task_yaml_spelling_variants(isolated_root):
     task_labels = ["「契約照会」", "障害報告。", "ＡＢ"]
     plain = ["契約照会", "障害報告", "AB"]  # what golden.jsonl actually contains
     rows = [
-        {"id": f"c{i}", "input": "x", "expected": plain[i % 3], "split": "train",
-         "meta": {"category": "基本", "source": "self-made"}}
+        {
+            "id": f"c{i}",
+            "input": "x",
+            "expected": plain[i % 3],
+            "split": "train",
+            "meta": {"category": "基本", "source": "self-made"},
+        }
         for i in range(12)
     ]
     cfg, _p = scaffold_task(isolated_root, answer_type="label", labels=task_labels, golden_rows=rows)
@@ -193,8 +258,13 @@ def test_singleton_reported_with_task_yaml_spelling(isolated_root):
     # must quote the task.yaml spelling so the user can find the label they wrote
     task_labels = ["A", "Ｂ。"]  # full-width + trailing punctuation in task.yaml
     rows = [
-        {"id": f"c{i}", "input": "x", "expected": "B" if i == 0 else "A", "split": "train",
-         "meta": {"category": "基本", "source": "self-made"}}
+        {
+            "id": f"c{i}",
+            "input": "x",
+            "expected": "B" if i == 0 else "A",
+            "split": "train",
+            "meta": {"category": "基本", "source": "self-made"},
+        }
         for i in range(10)
     ]
     cfg, _p = scaffold_task(isolated_root, answer_type="label", labels=task_labels, golden_rows=rows)
@@ -362,9 +432,7 @@ def test_miprov2_zero_demos_skips_placeholder_check(isolated_root):
 
 def test_label_and_text_tasks_skip_json_priority_guard(isolated_root):
     label_rows = default_golden_rows(labels=DEFAULT_LABELS, n_train=12, n_test=4)
-    label_cfg, _p = scaffold_task(
-        isolated_root, answer_type="label", labels=DEFAULT_LABELS, golden_rows=label_rows
-    )
+    label_cfg, _p = scaffold_task(isolated_root, answer_type="label", labels=DEFAULT_LABELS, golden_rows=label_rows)
     label_result = run_preflight(label_cfg, _cases(label_rows, "train"), 4)
     assert not _json_priority_warning(label_result.warnings)
 

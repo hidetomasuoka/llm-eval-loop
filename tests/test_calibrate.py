@@ -62,9 +62,27 @@ def calibrate_env(isolated_root):
     _write_golden(
         paths.golden,
         [
-            {"id": "case-0001", "input": "x", "expected": "契約照会", "split": "test", "meta": {"category": "基本", "source": "self-made"}},
-            {"id": "case-0002", "input": "y", "expected": "障害報告", "split": "test", "meta": {"category": "基本", "source": "self-made"}},
-            {"id": "case-0003", "input": "z", "expected": "機能要望", "split": "test", "meta": {"category": "基本", "source": "self-made"}},
+            {
+                "id": "case-0001",
+                "input": "x",
+                "expected": "契約照会",
+                "split": "test",
+                "meta": {"category": "基本", "source": "self-made"},
+            },
+            {
+                "id": "case-0002",
+                "input": "y",
+                "expected": "障害報告",
+                "split": "test",
+                "meta": {"category": "基本", "source": "self-made"},
+            },
+            {
+                "id": "case-0003",
+                "input": "z",
+                "expected": "機能要望",
+                "split": "test",
+                "meta": {"category": "基本", "source": "self-made"},
+            },
         ],
     )
 
@@ -127,7 +145,12 @@ def test_calibrate_fresh_mode_label_task_replays_deterministically(calibrate_env
             # exact label match -> judge pass, human pass -> agree
             {"case_id": "case-0001", "model_label": "haiku45", "output_raw": "契約照会", "human_verdict": "pass"},
             # containment fallback -> judge pass, human pass -> agree
-            {"case_id": "case-0002", "model_label": "haiku45", "output_raw": "回答: 障害報告 です", "human_verdict": "pass"},
+            {
+                "case_id": "case-0002",
+                "model_label": "haiku45",
+                "output_raw": "回答: 障害報告 です",
+                "human_verdict": "pass",
+            },
             # wrong label (golden expects 機能要望) -> judge fail, human fail -> agree
             {"case_id": "case-0003", "model_label": "haiku45", "output_raw": "その他", "human_verdict": "fail"},
         ],

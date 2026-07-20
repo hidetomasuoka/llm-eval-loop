@@ -1,0 +1,791 @@
+{
+ "dataset": "chenghao/cuad_qa",
+ "cases": [
+  {
+   "case": "case-0001",
+   "dataset_id": "2ThemartComInc_19990826_10-12G_EX-10.10_6700288_EX-10.10_Co-Branding Agreement_ Agency Agreement__Parties_0",
+   "split": "train"
+  },
+  {
+   "case": "case-0002",
+   "dataset_id": "LifewayFoodsInc_20160316_10-K_EX-10.24_9489766_EX-10.24_Endorsement Agreement__Parties_2",
+   "split": "train"
+  },
+  {
+   "case": "case-0003",
+   "dataset_id": "2ThemartComInc_19990826_10-12G_EX-10.10_6700288_EX-10.10_Co-Branding Agreement_ Agency Agreement__Agreement Date_0",
+   "split": "train"
+  },
+  {
+   "case": "case-0004",
+   "dataset_id": "LECLANCHÉ S.A. - JOINT DEVELOPMENT AND MARKETING AGREEMENT__Agreement Date_0",
+   "split": "train"
+  },
+  {
+   "case": "case-0005",
+   "dataset_id": "2ThemartComInc_19990826_10-12G_EX-10.10_6700288_EX-10.10_Co-Branding Agreement_ Agency Agreement__License Grant_0",
+   "split": "train"
+  },
+  {
+   "case": "case-0006",
+   "dataset_id": "HEALTHGATEDATACORP_11_24_1999-EX-10.1-HOSTING AND MANAGEMENT AGREEMENT (1)__License Grant_4",
+   "split": "train"
+  },
+  {
+   "case": "case-0007",
+   "dataset_id": "2ThemartComInc_19990826_10-12G_EX-10.10_6700288_EX-10.10_Co-Branding Agreement_ Agency Agreement__Anti-Assignment_0",
+   "split": "train"
+  },
+  {
+   "case": "case-0008",
+   "dataset_id": "2ThemartComInc_19990826_10-12G_EX-10.10_6700288_EX-10.10_Co-Branding Agreement_ Agency Agreement__Audit Rights_0",
+   "split": "train"
+  },
+  {
+   "case": "case-0009",
+   "dataset_id": "2ThemartComInc_19990826_10-12G_EX-10.10_6700288_EX-10.10_Co-Branding Agreement_ Agency Agreement__Cap On Liability_0",
+   "split": "train"
+  },
+  {
+   "case": "case-0010",
+   "dataset_id": "2ThemartComInc_19990826_10-12G_EX-10.10_6700288_EX-10.10_Co-Branding Agreement_ Agency Agreement__Document Name_0",
+   "split": "train"
+  },
+  {
+   "case": "case-0011",
+   "dataset_id": "2ThemartComInc_19990826_10-12G_EX-10.10_6700288_EX-10.10_Co-Branding Agreement_ Agency Agreement__Effective Date_0",
+   "split": "train"
+  },
+  {
+   "case": "case-0012",
+   "dataset_id": "2ThemartComInc_19990826_10-12G_EX-10.10_6700288_EX-10.10_Co-Branding Agreement_ Agency Agreement__Expiration Date_0",
+   "split": "train"
+  },
+  {
+   "case": "case-0013",
+   "dataset_id": "2ThemartComInc_19990826_10-12G_EX-10.10_6700288_EX-10.10_Co-Branding Agreement_ Agency Agreement__Governing Law_0",
+   "split": "train"
+  },
+  {
+   "case": "case-0014",
+   "dataset_id": "ADAPTIMMUNETHERAPEUTICSPLC_04_06_2017-EX-10.11-STRATEGIC ALLIANCE AGREEMENT__Insurance_0",
+   "split": "train"
+  },
+  {
+   "case": "case-0015",
+   "dataset_id": "ABILITYINC_06_15_2020-EX-4.25-SERVICES AGREEMENT__Ip Ownership Assignment_0",
+   "split": "train"
+  },
+  {
+   "case": "case-0016",
+   "dataset_id": "2ThemartComInc_19990826_10-12G_EX-10.10_6700288_EX-10.10_Co-Branding Agreement_ Agency Agreement__Non-Compete_0",
+   "split": "train"
+  },
+  {
+   "case": "case-0017",
+   "dataset_id": "2ThemartComInc_19990826_10-12G_EX-10.10_6700288_EX-10.10_Co-Branding Agreement_ Agency Agreement__Post-Termination Services_0",
+   "split": "train"
+  },
+  {
+   "case": "case-0018",
+   "dataset_id": "2ThemartComInc_19990826_10-12G_EX-10.10_6700288_EX-10.10_Co-Branding Agreement_ Agency Agreement__Renewal Term_0",
+   "split": "train"
+  },
+  {
+   "case": "case-0019",
+   "dataset_id": "ADAPTIMMUNETHERAPEUTICSPLC_04_06_2017-EX-10.11-STRATEGIC ALLIANCE AGREEMENT__Rofr/Rofo/Rofn_0",
+   "split": "train"
+  },
+  {
+   "case": "case-0020",
+   "dataset_id": "ABILITYINC_06_15_2020-EX-4.25-SERVICES AGREEMENT__Termination For Convenience_0",
+   "split": "train"
+  },
+  {
+   "case": "case-0021",
+   "dataset_id": "ARMSTRONGFLOORING,INC_01_07_2019-EX-10.2-INTELLECTUAL PROPERTY AGREEMENT__Affiliate License-Licensee_0",
+   "split": "train"
+  },
+  {
+   "case": "case-0022",
+   "dataset_id": "FOUNDATIONMEDICINE,INC_02_02_2015-EX-10.2-Collaboration Agreement__Affiliate License-Licensee_1",
+   "split": "test"
+  },
+  {
+   "case": "case-0023",
+   "dataset_id": "ANIXABIOSCIENCESINC_06_09_2020-EX-10.1-COLLABORATION AGREEMENT__Affiliate License-Licensor_0",
+   "split": "train"
+  },
+  {
+   "case": "case-0024",
+   "dataset_id": "BERKELEYLIGHTS,INC_06_26_2020-EX-10.12-COLLABORATION AGREEMENT__Affiliate License-Licensor_1",
+   "split": "test"
+  },
+  {
+   "case": "case-0025",
+   "dataset_id": "FIDELITYNATIONALINFORMATIONSERVICES,INC_08_05_2009-EX-10.3-INTELLECTUAL PROPERTY AGREEMENT__Affiliate License-Licensor_6",
+   "split": "test"
+  },
+  {
+   "case": "case-0026",
+   "dataset_id": "2ThemartComInc_19990826_10-12G_EX-10.10_6700288_EX-10.10_Co-Branding Agreement_ Agency Agreement__Agreement Date_0",
+   "split": "test"
+  },
+  {
+   "case": "case-0027",
+   "dataset_id": "LECLANCHÉ S.A. - JOINT DEVELOPMENT AND MARKETING AGREEMENT__Agreement Date_0",
+   "split": "test"
+  },
+  {
+   "case": "case-0028",
+   "dataset_id": "2ThemartComInc_19990826_10-12G_EX-10.10_6700288_EX-10.10_Co-Branding Agreement_ Agency Agreement__Anti-Assignment_0",
+   "split": "test"
+  },
+  {
+   "case": "case-0029",
+   "dataset_id": "2ThemartComInc_19990826_10-12G_EX-10.10_6700288_EX-10.10_Co-Branding Agreement_ Agency Agreement__Audit Rights_0",
+   "split": "test"
+  },
+  {
+   "case": "case-0030",
+   "dataset_id": "2ThemartComInc_19990826_10-12G_EX-10.10_6700288_EX-10.10_Co-Branding Agreement_ Agency Agreement__Cap On Liability_0",
+   "split": "test"
+  },
+  {
+   "case": "case-0031",
+   "dataset_id": "MANUFACTURERSSERVICESLTD_06_05_2000-EX-10.14-OUTSOURCING AGREEMENT__Cap On Liability_6",
+   "split": "test"
+  },
+  {
+   "case": "case-0032",
+   "dataset_id": "2ThemartComInc_19990826_10-12G_EX-10.10_6700288_EX-10.10_Co-Branding Agreement_ Agency Agreement__Change Of Control_0",
+   "split": "train"
+  },
+  {
+   "case": "case-0033",
+   "dataset_id": "JOINTCORP_09_19_2014-EX-10.15-FRANCHISE AGREEMENT__Change Of Control_1",
+   "split": "test"
+  },
+  {
+   "case": "case-0034",
+   "dataset_id": "ADAMSGOLFINC_03_21_2005-EX-10.17-ENDORSEMENT AGREEMENT__Competitive Restriction Exception_0",
+   "split": "train"
+  },
+  {
+   "case": "case-0035",
+   "dataset_id": "DigitalCinemaDestinationsCorp_20111220_S-1_EX-10.10_7346719_EX-10.10_Affiliate Agreement__Competitive Restriction Exception_0",
+   "split": "test"
+  },
+  {
+   "case": "case-0036",
+   "dataset_id": "NETGROCERINC_07_31_1998-EX-10.15-SPONSORSHIP AGREEMENT__Competitive Restriction Exception_0",
+   "split": "test"
+  },
+  {
+   "case": "case-0037",
+   "dataset_id": "ADIANUTRITION,INC_04_01_2005-EX-10.D2-RESELLER AGREEMENT__Covenant Not To Sue_0",
+   "split": "train"
+  },
+  {
+   "case": "case-0038",
+   "dataset_id": "GarrettMotionInc_20181001_8-K_EX-2.4_11364532_EX-2.4_Intellectual Property Agreement__Covenant Not To Sue_2",
+   "split": "test"
+  },
+  {
+   "case": "case-0039",
+   "dataset_id": "MRSFIELDSORIGINALCOOKIESINC_01_29_1998-EX-10-FRANCHISE AGREEMENT__Covenant Not To Sue_2",
+   "split": "test"
+  },
+  {
+   "case": "case-0040",
+   "dataset_id": "2ThemartComInc_19990826_10-12G_EX-10.10_6700288_EX-10.10_Co-Branding Agreement_ Agency Agreement__Document Name_0",
+   "split": "test"
+  },
+  {
+   "case": "case-0041",
+   "dataset_id": "FulucaiProductionsLtd_20131223_10-Q_EX-10.9_8368347_EX-10.9_Content License Agreement__Document Name_0",
+   "split": "test"
+  },
+  {
+   "case": "case-0042",
+   "dataset_id": "ORBSATCORP_08_17_2007-EX-7.3-STRATEGIC ALLIANCE AGREEMENT__Document Name_0",
+   "split": "test"
+  },
+  {
+   "case": "case-0043",
+   "dataset_id": "2ThemartComInc_19990826_10-12G_EX-10.10_6700288_EX-10.10_Co-Branding Agreement_ Agency Agreement__Effective Date_0",
+   "split": "test"
+  },
+  {
+   "case": "case-0044",
+   "dataset_id": "KALLOINC_11_03_2011-EX-10.1-STRATEGIC ALLIANCE AGREEMENT__Effective Date_0",
+   "split": "test"
+  },
+  {
+   "case": "case-0045",
+   "dataset_id": "ADAMSGOLFINC_03_21_2005-EX-10.17-ENDORSEMENT AGREEMENT__Exclusivity_0",
+   "split": "train"
+  },
+  {
+   "case": "case-0046",
+   "dataset_id": "2ThemartComInc_19990826_10-12G_EX-10.10_6700288_EX-10.10_Co-Branding Agreement_ Agency Agreement__Expiration Date_0",
+   "split": "test"
+  },
+  {
+   "case": "case-0047",
+   "dataset_id": "LEJUHOLDINGSLTD_03_12_2014-EX-10.34-INTERNET CHANNEL COOPERATION AGREEMENT__Expiration Date_0",
+   "split": "test"
+  },
+  {
+   "case": "case-0048",
+   "dataset_id": "2ThemartComInc_19990826_10-12G_EX-10.10_6700288_EX-10.10_Co-Branding Agreement_ Agency Agreement__Governing Law_0",
+   "split": "test"
+  },
+  {
+   "case": "case-0049",
+   "dataset_id": "FuelcellEnergyInc_20191106_8-K_EX-10.1_11868007_EX-10.1_Development Agreement__Governing Law_0",
+   "split": "test"
+  },
+  {
+   "case": "case-0050",
+   "dataset_id": "OPERALTD_04_30_2020-EX-4.14-SERVICE AGREEMENT__Governing Law_0",
+   "split": "test"
+  },
+  {
+   "case": "case-0051",
+   "dataset_id": "ADAPTIMMUNETHERAPEUTICSPLC_04_06_2017-EX-10.11-STRATEGIC ALLIANCE AGREEMENT__Insurance_0",
+   "split": "test"
+  },
+  {
+   "case": "case-0052",
+   "dataset_id": "LECLANCHÉ S.A. - JOINT DEVELOPMENT AND MARKETING AGREEMENT__Insurance_0",
+   "split": "test"
+  },
+  {
+   "case": "case-0053",
+   "dataset_id": "ABILITYINC_06_15_2020-EX-4.25-SERVICES AGREEMENT__Ip Ownership Assignment_0",
+   "split": "test"
+  },
+  {
+   "case": "case-0054",
+   "dataset_id": "ADAPTIMMUNETHERAPEUTICSPLC_04_06_2017-EX-10.11-STRATEGIC ALLIANCE AGREEMENT__Irrevocable Or Perpetual License_0",
+   "split": "train"
+  },
+  {
+   "case": "case-0055",
+   "dataset_id": "FOUNDATIONMEDICINE,INC_02_02_2015-EX-10.2-Collaboration Agreement__Irrevocable Or Perpetual License_2",
+   "split": "test"
+  },
+  {
+   "case": "case-0056",
+   "dataset_id": "2ThemartComInc_19990826_10-12G_EX-10.10_6700288_EX-10.10_Co-Branding Agreement_ Agency Agreement__Joint Ip Ownership_0",
+   "split": "train"
+  },
+  {
+   "case": "case-0057",
+   "dataset_id": "2ThemartComInc_19990826_10-12G_EX-10.10_6700288_EX-10.10_Co-Branding Agreement_ Agency Agreement__License Grant_0",
+   "split": "test"
+  },
+  {
+   "case": "case-0058",
+   "dataset_id": "HEALTHGATEDATACORP_11_24_1999-EX-10.1-HOSTING AND MANAGEMENT AGREEMENT (1)__License Grant_4",
+   "split": "test"
+  },
+  {
+   "case": "case-0059",
+   "dataset_id": "ADMA BioManufacturing, LLC -  Amendment #3 to Manufacturing Agreement __Liquidated Damages_0",
+   "split": "train"
+  },
+  {
+   "case": "case-0060",
+   "dataset_id": "HOSPITALITYINVESTORSTRUST,INC_04_07_2014-EX-10.26-FRANCHISE AGREEMENT__Liquidated Damages_0",
+   "split": "test"
+  },
+  {
+   "case": "case-0061",
+   "dataset_id": "OFGBANCORP_03_28_2007-EX-10.23-OUTSOURCING AGREEMENT__Liquidated Damages_1",
+   "split": "test"
+  },
+  {
+   "case": "case-0062",
+   "dataset_id": "ADAMSGOLFINC_03_21_2005-EX-10.17-ENDORSEMENT AGREEMENT__Minimum Commitment_0",
+   "split": "train"
+  },
+  {
+   "case": "case-0063",
+   "dataset_id": "ASHWORTHINC_01_29_1999-EX-10.(D)-PROMOTION AGREEMENT AND NANTZ COMMUNICATIONS, INC.__Most Favored Nation_0",
+   "split": "train"
+  },
+  {
+   "case": "case-0064",
+   "dataset_id": "AIRTECHINTERNATIONALGROUPINC_05_08_2000-EX-10.4-FRANCHISE AGREEMENT__No-Solicit Of Customers_0",
+   "split": "train"
+  },
+  {
+   "case": "case-0065",
+   "dataset_id": "LegacyEducationAllianceInc_20200330_10-K_EX-10.18_12090678_EX-10.18_Development Agreement__No-Solicit Of Customers_0",
+   "split": "test"
+  },
+  {
+   "case": "case-0066",
+   "dataset_id": "ADUROBIOTECH,INC_06_02_2020-EX-10.7-CONSULTING AGREEMENT(1)__No-Solicit Of Employees_0",
+   "split": "train"
+  },
+  {
+   "case": "case-0067",
+   "dataset_id": "MANUFACTURERSSERVICESLTD_06_05_2000-EX-10.14-OUTSOURCING AGREEMENT__No-Solicit Of Employees_0",
+   "split": "test"
+  },
+  {
+   "case": "case-0068",
+   "dataset_id": "2ThemartComInc_19990826_10-12G_EX-10.10_6700288_EX-10.10_Co-Branding Agreement_ Agency Agreement__Non-Compete_0",
+   "split": "test"
+  },
+  {
+   "case": "case-0069",
+   "dataset_id": "ALLISONTRANSMISSIONHOLDINGSINC_12_15_2014-EX-99.1-COOPERATION AGREEMENT__Non-Disparagement_0",
+   "split": "train"
+  },
+  {
+   "case": "case-0070",
+   "dataset_id": "INTERNATIONALFASTFOODCORP_04_04_1997-EX-99-FRANCHISE AGREEMENT__Non-Disparagement_0",
+   "split": "test"
+  },
+  {
+   "case": "case-0071",
+   "dataset_id": "PapaJohnsInternationalInc_20190617_8-K_EX-10.1_11707365_EX-10.1_Endorsement Agreement__Non-Disparagement_1",
+   "split": "test"
+  },
+  {
+   "case": "case-0072",
+   "dataset_id": "2ThemartComInc_19990826_10-12G_EX-10.10_6700288_EX-10.10_Co-Branding Agreement_ Agency Agreement__Non-Transferable License_0",
+   "split": "train"
+  },
+  {
+   "case": "case-0073",
+   "dataset_id": "2ThemartComInc_19990826_10-12G_EX-10.10_6700288_EX-10.10_Co-Branding Agreement_ Agency Agreement__Notice Period To Terminate Renewal_0",
+   "split": "train"
+  },
+  {
+   "case": "case-0074",
+   "dataset_id": "EuromediaHoldingsCorp_20070215_10SB12G_EX-10.B(01)_525118_EX-10.B(01)_Content License Agreement__Notice Period To Terminate Renewal_0",
+   "split": "test"
+  },
+  {
+   "case": "case-0075",
+   "dataset_id": "NEONSYSTEMSINC_03_01_1999-EX-10.5-DISTRIBUTOR AGREEMENT_New__Notice Period To Terminate Renewal_0",
+   "split": "test"
+  },
+  {
+   "case": "case-0076",
+   "dataset_id": "2ThemartComInc_19990826_10-12G_EX-10.10_6700288_EX-10.10_Co-Branding Agreement_ Agency Agreement__Post-Termination Services_0",
+   "split": "test"
+  },
+  {
+   "case": "case-0077",
+   "dataset_id": "BNLFINANCIALCORP_03_30_2007-EX-10.8-OUTSOURCING AGREEMENT__Price Restrictions_0",
+   "split": "train"
+  },
+  {
+   "case": "case-0078",
+   "dataset_id": "2ThemartComInc_19990826_10-12G_EX-10.10_6700288_EX-10.10_Co-Branding Agreement_ Agency Agreement__Renewal Term_0",
+   "split": "test"
+  },
+  {
+   "case": "case-0079",
+   "dataset_id": "LEGACYTECHNOLOGYHOLDINGS,INC_12_09_2005-EX-10.2-DISTRIBUTOR AGREEMENT__Renewal Term_0",
+   "split": "test"
+  },
+  {
+   "case": "case-0080",
+   "dataset_id": "2ThemartComInc_19990826_10-12G_EX-10.10_6700288_EX-10.10_Co-Branding Agreement_ Agency Agreement__Revenue/Profit Sharing_0",
+   "split": "train"
+  },
+  {
+   "case": "case-0081",
+   "dataset_id": "IDREAMSKYTECHNOLOGYLTD_07_03_2014-EX-10.39-Cooperation Agreement on Mobile Game Business__Revenue/Profit Sharing_4",
+   "split": "test"
+  },
+  {
+   "case": "case-0082",
+   "dataset_id": "OASYSMOBILE,INC_07_05_2001-EX-10.17-OUTSOURCING AGREEMENT__Revenue/Profit Sharing_0",
+   "split": "test"
+  },
+  {
+   "case": "case-0083",
+   "dataset_id": "ADAPTIMMUNETHERAPEUTICSPLC_04_06_2017-EX-10.11-STRATEGIC ALLIANCE AGREEMENT__Rofr/Rofo/Rofn_0",
+   "split": "test"
+  },
+  {
+   "case": "case-0084",
+   "dataset_id": "INTERNATIONALFASTFOODCORP_04_04_1997-EX-99-FRANCHISE AGREEMENT__Rofr/Rofo/Rofn_5",
+   "split": "test"
+  },
+  {
+   "case": "case-0085",
+   "dataset_id": "ROCKYMOUNTAINCHOCOLATEFACTORY,INC_12_23_2019-EX-10.2-STRATEGIC ALLIANCE AGREEMENT__Rofr/Rofo/Rofn_12",
+   "split": "test"
+  },
+  {
+   "case": "case-0086",
+   "dataset_id": "CHANGEPOINTCORP_03_08_2000-EX-10.6-LICENSE AND HOSTING AGREEMENT__Source Code Escrow_0",
+   "split": "train"
+  },
+  {
+   "case": "case-0087",
+   "dataset_id": "ABILITYINC_06_15_2020-EX-4.25-SERVICES AGREEMENT__Termination For Convenience_0",
+   "split": "test"
+  },
+  {
+   "case": "case-0088",
+   "dataset_id": "EmeraldHealthBioceuticalsInc_20200218_1-A_EX1A-6 MAT CTRCT_11987205_EX1A-6 MAT CTRCT_Development Agreement__Termination For Convenience_0",
+   "split": "test"
+  },
+  {
+   "case": "case-0089",
+   "dataset_id": "NmfSlfIInc_20200115_10-12GA_EX-10.5_11946987_EX-10.5_Trademark License Agreement__Termination For Convenience_2",
+   "split": "test"
+  },
+  {
+   "case": "case-0090",
+   "dataset_id": "ASPIRITYHOLDINGSLLC_05_07_2012-EX-10.6-OUTSOURCING AGREEMENT__Third Party Beneficiary_0",
+   "split": "train"
+  },
+  {
+   "case": "case-0091",
+   "dataset_id": "DUOSTECHNOLOGIESGROUP,INC_04_21_2009-EX-10.1-STRATEGIC ALLIANCE AGREEMENT__Third Party Beneficiary_0",
+   "split": "test"
+  },
+  {
+   "case": "case-0092",
+   "dataset_id": "NmfSlfIInc_20200115_10-12GA_EX-10.5_11946987_EX-10.5_Trademark License Agreement__Third Party Beneficiary_0",
+   "split": "test"
+  },
+  {
+   "case": "case-0093",
+   "dataset_id": "2ThemartComInc_19990826_10-12G_EX-10.10_6700288_EX-10.10_Co-Branding Agreement_ Agency Agreement__Uncapped Liability_0",
+   "split": "test"
+  },
+  {
+   "case": "case-0094",
+   "dataset_id": "EhaveInc_20190515_20-F_EX-4.44_11678816_EX-4.44_License Agreement_ Reseller Agreement__Uncapped Liability_1",
+   "split": "test"
+  },
+  {
+   "case": "case-0095",
+   "dataset_id": "PHREESIA,INC_05_28_2019-EX-10.18-STRATEGIC ALLIANCE AGREEMENT__Uncapped Liability_2",
+   "split": "test"
+  },
+  {
+   "case": "case-0096",
+   "dataset_id": "ASIANDRAGONGROUPINC_08_11_2005-EX-10.5-Reseller Agreement__Unlimited/All-You-Can-Eat-License_0",
+   "split": "test"
+  },
+  {
+   "case": "case-0097",
+   "dataset_id": "FulucaiProductionsLtd_20131223_10-Q_EX-10.9_8368347_EX-10.9_Content License Agreement__Unlimited/All-You-Can-Eat-License_1",
+   "split": "test"
+  },
+  {
+   "case": "case-0098",
+   "dataset_id": "ADAMSGOLFINC_03_21_2005-EX-10.17-ENDORSEMENT AGREEMENT__Volume Restriction_0",
+   "split": "test"
+  },
+  {
+   "case": "case-0099",
+   "dataset_id": "ACCURAYINC_09_01_2010-EX-10.31-DISTRIBUTOR AGREEMENT__Warranty Duration_0",
+   "split": "test"
+  },
+  {
+   "case": "case-0100",
+   "dataset_id": "MANUFACTURERSSERVICESLTD_06_05_2000-EX-10.14-OUTSOURCING AGREEMENT__Warranty Duration_2",
+   "split": "test"
+  },
+  {
+   "case": "case-0101",
+   "split": "train",
+   "negative": true,
+   "title": "PenntexMidstreamPartnersLp_20150416_S-1A_EX-10.4_9042833_EX-10.4_Transportation Agreement",
+   "category": "Affiliate License-Licensee"
+  },
+  {
+   "case": "case-0102",
+   "split": "train",
+   "negative": true,
+   "title": "CARDAX,INC_08_19_2014-EX-10.1-COLLABORATION AGREEMENT",
+   "category": "Affiliate License-Licensor"
+  },
+  {
+   "case": "case-0103",
+   "split": "train",
+   "negative": true,
+   "title": "KitovPharmaLtd_20190326_20-F_EX-4.15_11584449_EX-4.15_Manufacturing Agreement",
+   "category": "Agreement Date"
+  },
+  {
+   "case": "case-0104",
+   "split": "train",
+   "negative": true,
+   "title": "GluMobileInc_20070319_S-1A_EX-10.09_436630_EX-10.09_Content License Agreement2",
+   "category": "Anti-Assignment"
+  },
+  {
+   "case": "case-0105",
+   "split": "train",
+   "negative": true,
+   "title": "PfHospitalityGroupInc_20150923_10-12G_EX-10.1_9266710_EX-10.1_Franchise Agreement3",
+   "category": "Audit Rights"
+  },
+  {
+   "case": "case-0106",
+   "split": "train",
+   "negative": true,
+   "title": "SoupmanInc_20150814_8-K_EX-10.1_9230148_EX-10.1_Franchise Agreement3",
+   "category": "Cap On Liability"
+  },
+  {
+   "case": "case-0107",
+   "split": "train",
+   "negative": true,
+   "title": "ENTRUSTINC_07_24_1998-EX-10.5-STRATEGIC ALLIANCE AGREEMENT",
+   "category": "Change Of Control"
+  },
+  {
+   "case": "case-0108",
+   "split": "train",
+   "negative": true,
+   "title": "CardlyticsInc_20180112_S-1_EX-10.16_11002987_EX-10.16_Maintenance Agreement2",
+   "category": "Competitive Restriction Exception"
+  },
+  {
+   "case": "case-0109",
+   "split": "train",
+   "negative": true,
+   "title": "BIOFRONTERAAG_04_29_2019-EX-4.17-SUPPLY AGREEMENT",
+   "category": "License Grant"
+  },
+  {
+   "case": "case-0110",
+   "split": "train",
+   "negative": true,
+   "title": "UnionDentalHoldingsInc_20050204_8-KA_EX-10_3345577_EX-10_Affiliate Agreement",
+   "category": "Affiliate License-Licensee"
+  },
+  {
+   "case": "case-0111",
+   "dataset_id": "ENERGOUSCORP_03_16_2017-EX-10.24-STRATEGIC ALLIANCE AGREEMENT__Affiliate License-Licensee_0",
+   "split": "dev"
+  },
+  {
+   "case": "case-0112",
+   "dataset_id": "GSITECHNOLOGYINC_11_16_2009-EX-10.2-INTELLECTUAL PROPERTY AGREEMENT between SONY ELECTRONICS INC. and GSI TECHNOLOGY, INC.__Affiliate License-Licensor",
+   "split": "dev"
+  },
+  {
+   "case": "case-0113",
+   "dataset_id": "INGEVITYCORP_05_16_2016-EX-10.5-INTELLECTUAL PROPERTY AGREEMENT__Agreement Date",
+   "split": "dev"
+  },
+  {
+   "case": "case-0114",
+   "dataset_id": "GluMobileInc_20070319_S-1A_EX-10.09_436630_EX-10.09_Content License Agreement1__Anti-Assignment_1",
+   "split": "dev"
+  },
+  {
+   "case": "case-0115",
+   "dataset_id": "RemarkHoldingsInc_20081114_10-Q_EX-10.24_2895649_EX-10.24_Content License Agreement__Audit Rights_1",
+   "split": "dev"
+  },
+  {
+   "case": "case-0116",
+   "dataset_id": "INTRICONCORP_03_10_2009-EX-10.22-Strategic Alliance Agreement__Cap On Liability_0",
+   "split": "dev"
+  },
+  {
+   "case": "case-0117",
+   "dataset_id": "WHITESMOKE,INC_11_08_2011-EX-10.26-PROMOTION AND DISTRIBUTION AGREEMENT__Change Of Control_3",
+   "split": "dev"
+  },
+  {
+   "case": "case-0118",
+   "dataset_id": "OPTIMIZEDTRANSPORTATIONMANAGEMENT,INC_07_26_2000-EX-6.6-DISTRIBUTOR AGREEMENT__Competitive Restriction Exception_0",
+   "split": "dev"
+  },
+  {
+   "case": "case-0119",
+   "dataset_id": "CORIOINC_07_20_2000-EX-10.5-LICENSE AND HOSTING AGREEMENT__Covenant Not To Sue_0",
+   "split": "dev"
+  },
+  {
+   "case": "case-0120",
+   "dataset_id": "UNITEDNATIONALBANCORP_03_03_1999-EX-99-Outsourcing Agreement with the BISYS Group, Inc.__Document Name_0",
+   "split": "dev"
+  },
+  {
+   "case": "case-0121",
+   "dataset_id": "VERSOTECHNOLOGIESINC_12_28_2007-EX-99.3-INTELLECTUAL PROPERTY AGREEMENT__Document Name_0",
+   "split": "dev"
+  },
+  {
+   "case": "case-0122",
+   "dataset_id": "QIWI_06_16_2017-EX-99.(D)(2)-COOPERATION AGREEMENT__Effective Date_0",
+   "split": "dev"
+  },
+  {
+   "case": "case-0123",
+   "dataset_id": "ArcaUsTreasuryFund_20200207_N-2_EX-99.K5_11971930_EX-99.K5_Development Agreement__Expiration Date_0",
+   "split": "dev"
+  },
+  {
+   "case": "case-0124",
+   "dataset_id": "ENTERTAINMENTGAMINGASIAINC_02_15_2005-EX-10.5-DISTRIBUTOR AGREEMENT__Governing Law_0",
+   "split": "dev"
+  },
+  {
+   "case": "case-0125",
+   "dataset_id": "Columbia Laboratories, (Bermuda) Ltd. - AMEND NO. 2 TO MANUFACTURING AND SUPPLY AGREEMENT__Governing Law",
+   "split": "dev"
+  },
+  {
+   "case": "case-0126",
+   "dataset_id": "SANDRIDGEENERGYINC_08_06_2009-EX-10.6-OPERATIONS AND MAINTENANCE AGREEMENT__Insurance_0",
+   "split": "dev"
+  },
+  {
+   "case": "case-0127",
+   "dataset_id": "DRIVENDELIVERIES,INC_05_22_2020-EX-10.4-CONSULTING AGREEMENT__Ip Ownership Assignment",
+   "split": "dev"
+  },
+  {
+   "case": "case-0128",
+   "dataset_id": "RUBIOSRESTAURANTSINC_03_31_2008-EX-10.75-SPONSORSHIP AGREEMENT__License Grant_0",
+   "split": "dev"
+  },
+  {
+   "case": "case-0129",
+   "dataset_id": "INTERSECTENT,INC_05_11_2020-EX-10.1-SUPPLY AGREEMENT__Liquidated Damages_0",
+   "split": "dev"
+  },
+  {
+   "case": "case-0130",
+   "dataset_id": "THERAVANCEBIOPHARMA,INC_05_08_2020-EX-10.2-SERVICE AGREEMENT__Non-Disparagement_1",
+   "split": "dev"
+  },
+  {
+   "case": "case-0131",
+   "dataset_id": "DataCallTechnologies_20060918_SB-2A_EX-10.9_944510_EX-10.9_Content License Agreement__Notice Period To Terminate Renewal_0",
+   "split": "dev"
+  },
+  {
+   "case": "case-0132",
+   "dataset_id": "StampscomInc_20001114_10-Q_EX-10.47_2631630_EX-10.47_Co-Branding Agreement__Renewal Term_1",
+   "split": "dev"
+  },
+  {
+   "case": "case-0133",
+   "dataset_id": "InvendaCorp_20000828_S-1A_EX-10.2_2588206_EX-10.2_Co-Branding Agreement__Revenue/Profit Sharing_1",
+   "split": "dev"
+  },
+  {
+   "case": "case-0134",
+   "dataset_id": "SFGFINANCIALCORP_05_12_2009-EX-10.1-SOFTWARE LICENSE AND MAINTENANCE AGREEMENT__Rofr/Rofo/Rofn_0",
+   "split": "dev"
+  },
+  {
+   "case": "case-0135",
+   "dataset_id": "MOELIS_CO_03_24_2014-EX-10.19-STRATEGIC ALLIANCE AGREEMENT__Rofr/Rofo/Rofn_8",
+   "split": "dev"
+  },
+  {
+   "case": "case-0136",
+   "dataset_id": "SEPARATEACCOUNTIIOFAGL_05_02_2011-EX-99.(J)(4)-UNCONDITIONAL CAPITAL MAINTENANCE AGREEMENT__Termination For Convenience_0",
+   "split": "dev"
+  },
+  {
+   "case": "case-0137",
+   "dataset_id": "IPAYMENT,INC_05_14_2007-EX-10.1-SPONSORSHIP AGREEMENT__Termination For Convenience_1",
+   "split": "dev"
+  },
+  {
+   "case": "case-0138",
+   "dataset_id": "SUCAMPOPHARMACEUTICALS,INC_11_04_2015-EX-10.2-STRATEGIC ALLIANCE AGREEMENT__Third Party Beneficiary",
+   "split": "dev"
+  },
+  {
+   "case": "case-0139",
+   "dataset_id": "EdietsComInc_20001030_10QSB_EX-10.4_2606646_EX-10.4_Co-Branding Agreement__Uncapped Liability_0",
+   "split": "dev"
+  },
+  {
+   "case": "case-0140",
+   "dataset_id": "HealthcentralCom_19991108_S-1A_EX-10.27_6623292_EX-10.27_Co-Branding Agreement__Uncapped Liability_0",
+   "split": "dev"
+  },
+  {
+   "case": "case-0141",
+   "dataset_id": "BizzingoInc_20120322_8-K_EX-10.17_7504499_EX-10.17_Endorsement Agreement__Unlimited/All-You-Can-Eat-License",
+   "split": "dev"
+  },
+  {
+   "case": "case-0142",
+   "dataset_id": "NETGEAR,INC_04_21_2003-EX-10.16-DISTRIBUTOR AGREEMENT__Warranty Duration_3",
+   "split": "dev"
+  },
+  {
+   "case": "case-0143",
+   "split": "dev",
+   "negative": true,
+   "title": "VEONEER,INC_02_21_2020-EX-10.11-JOINT VENTURE AGREEMENT",
+   "category": "Affiliate License-Licensor"
+  },
+  {
+   "case": "case-0144",
+   "split": "dev",
+   "negative": true,
+   "title": "InmodeLtd_20190729_F-1A_EX-10.9_11743243_EX-10.9_Manufacturing Agreement",
+   "category": "Agreement Date"
+  },
+  {
+   "case": "case-0145",
+   "split": "dev",
+   "negative": true,
+   "title": "AzulSa_20170303_F-1A_EX-10.3_9943903_EX-10.3_Maintenance Agreement2",
+   "category": "Cap On Liability"
+  },
+  {
+   "case": "case-0146",
+   "split": "dev",
+   "negative": true,
+   "title": "CHINARECYCLINGENERGYCORP_11_14_2013-EX-10.6-Cooperation Agreement",
+   "category": "Governing Law"
+  },
+  {
+   "case": "case-0147",
+   "split": "dev",
+   "negative": true,
+   "title": "VIRGINGALACTICHOLDINGS,INC_04_08_2020-EX-99.1-JOINT FILING STATEMENT",
+   "category": "Rofr/Rofo/Rofn"
+  },
+  {
+   "case": "case-0148",
+   "split": "dev",
+   "negative": true,
+   "title": "FLOTEKINDUSTRIESINCCN_05_09_2019-EX-10.1-SUPPLY AGREEMENT",
+   "category": "Termination For Convenience"
+  },
+  {
+   "case": "case-0149",
+   "split": "dev",
+   "negative": true,
+   "title": "ATMOSENERGYCORP_11_22_2002-EX-10.17-TRANSPORTATION SERVICE AGREEMENT",
+   "category": "Uncapped Liability"
+  },
+  {
+   "case": "case-0150",
+   "split": "dev",
+   "negative": true,
+   "title": "KUBIENT,INC_07_02_2020-EX-10.14-MASTER SERVICES AGREEMENT_Part1",
+   "category": "No-Solicit Of Customers"
+  }
+ ]
+}

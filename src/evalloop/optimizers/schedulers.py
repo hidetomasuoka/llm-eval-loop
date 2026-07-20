@@ -94,6 +94,5 @@ def select_eval_subset(
         return [case for i, case in enumerate(items) if i in selected_set]
 
     raise OptimizeError(
-        "optimize.params.eval_scheduler must be one of ['full', 'random', 'coverage'], "
-        f"got {strategy!r}"
+        f"optimize.params.eval_scheduler must be one of ['full', 'random', 'coverage'], got {strategy!r}"
     )

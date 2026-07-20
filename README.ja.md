@@ -115,6 +115,7 @@ uv run evalloop calibrate --run-id <run_id>                 # LLMジャッジと
 uv run evalloop optimize                                    # dspy（GEPA / MIPROv2 / COPRO / TAPO）でプロンプトを改善（train splitのみ使用）
 #   -> task.yaml の optimize.method で手法を選択（未設定=gepa）。最適化後、自動でrun/report/compare(直近のベースrunがあれば)まで実行される
 #   -> 自動holdout runの後、train vs holdout の汎化ゲート（ベースライン holdout との比較 pass/fail、表示のみ・exit codeは不変）をコンソールと optimize_log.json に記録
+#   -> 出荷ゲート: golden.jsonl に split=="dev" ケースがあれば（3-way split）、自動評価は DEV のみで実行され、test は最終確認1回のために温存される。直近の base dev run に McNemar 有意（delta > 0 かつ p < 0.05）で勝ったときだけ promoted=true。ベースラインは `evalloop run --split dev` を一度実行して作る。dev split が無い場合は従来どおり test 評価（警告付き）で promoted は n/a
 #   -> 実行前に概算コスト（train件数×手法別の反復目安×価格表の単価）を表示し、run.cost_warn_usd 超過なら確認プロンプト（--yes で抑止、CI向け）
 #   ※ いずれの手法も学習は answer_type ごとの決定的な代理メトリクス（label match / トークンF1 / JSON deep-equal）で行い、最終評価はタスク設定の採点器のまま（sample-inquiry は label_match、text タスクは llm-rubric。既知の制約参照）
 #   ※ どの失敗症状にどの最適化手法を当てるかは docs/APO_GUIDE.md（症状→粒度→手法の診断ガイド）を参照
@@ -152,7 +153,7 @@ uv run evalloop blog --runs <run_id>                        # ブログ用の図
 |---|---|
 | `evalloop doctor` | Node/promptfoo/Ollama/APIキーの疎通確認 |
 | `evalloop build [--allow-same-judge] [--yes] [--shuffle-demos N]` | golden.jsonl→promptfoo設定を生成、実行前コスト概算を表示。`--shuffle-demos N` は few-shot 順序感度用に `<task>_demoshuffle_{0..N-1}` variant を追加生成（`{{demos}}` 必須） |
-| `evalloop run [--variant NAME] [--repeat N] [--limit N] [--no-cache]` | promptfoo evalを実行してresults/runs/{run_id}/に記録 |
+| `evalloop run [--variant NAME] [--split dev\|test] [--repeat N] [--limit N] [--no-cache]` | promptfoo evalを実行してresults/runs/{run_id}/に記録。`--split dev` は dev split を評価（golden.jsonl に `split=="dev"` ケース + 再build が必要）。test split を消費せずに optimize の出荷ゲートの土台になる |
 | `evalloop view` | promptfooのローカルビューア（`promptfoo view`のパススルー） |
 | `evalloop report RUN_ID` | モデル×精度×コスト×レイテンシのMarkdownレポート |
 | `evalloop calibrate [--run-id ID]` | LLMジャッジとhuman_labels.jsonlの一致率を算出。`results/<task>/calibration.json` を書き、同一ジャッジの run meta にスタンプして以降の `run`/`report` が状態を引き継ぐ |
@@ -160,8 +161,8 @@ uv run evalloop blog --runs <run_id>                        # ブログ用の図
 | `evalloop cluster [--notes PATH]` | notes.csvからLLMが失敗タクソノミー案を生成 |
 | `evalloop pivot RUN_ID` | 失敗カテゴリ×モデルのクロス集計 |
 | `evalloop diagnose [--answers 1,2,3]` | 症状→粒度→手法の対話チェックリスト（APO適用可否と `optimize.method` 推奨。LLM不要） |
-| `evalloop optimize` | dspy（GEPA / MIPROv2 / COPRO / TAPO、task.yaml の `optimize.method` で選択）でプロンプト最適化、自動でrun/report/compare（手法選定は [docs/APO_GUIDE.md](docs/APO_GUIDE.md) 参照） |
-| `evalloop compare --runs A,B[,C...]` | 2runはbefore/after差分（コスト%・出力トークン・プロンプト長のトレードオフ注意付き）、3run以上はモデル×runマトリクス比較（マトリクスには optimize_log の探索コスト `search_cost` / 所要時間 `duration_s` 列も表示） |
+| `evalloop optimize` | dspy（GEPA / MIPROv2 / COPRO / TAPO、task.yaml の `optimize.method` で選択）でプロンプト最適化、自動でrun/report/compare（手法選定は [docs/APO_GUIDE.md](docs/APO_GUIDE.md) 参照）。dev split があるタスクでは自動評価は dev のみで行い、McNemar 出荷ゲートが `promoted` を判定（下の改善ループの注記参照） |
+| `evalloop compare --runs A,B[,C...]` | 2runはbefore/after差分（paired McNemar の `b/c`・`mcnemar_p` 列とコスト%・出力トークン・プロンプト長のトレードオフ注意付き）、3run以上はモデル×runマトリクス比較（マトリクスには optimize_log の探索コスト `search_cost` / 所要時間 `duration_s` 列も表示） |
 | `evalloop blog --runs A[,B[,C...]] [--slug NAME]` | 公開ガード通過後にブログ用一式を生成（2run以上は手法比較向けに条件依存性の免責を挿入。3run以上は compare と同じモデル×runマトリクスも tables.md に含める。精度×コストのパレート前線図 `fig04` も含む） |
 
 ## テスト / CI
@@ -257,8 +258,10 @@ run成果物の生出力（output.json / meta.json）にはローカル絶対パ
   （`meta.source: "self-made"`、一般的なSaaS問い合わせを模した創作文）と、ジャッジ校正
   デモ用の**合成フィクスチャ10件**（`output_raw` は架空のモデル出力）
 - `tasks/cuad100/`（データ非追跡） — [CUAD v1](https://www.atticusprojectai.org/cuad)
-  （The Atticus Project発行、**CC BY 4.0**）から抽出した100件のサブセット。取得元は
-  Hugging Faceの `chenghao/cuad_qa` ミラー。ファイル指紋と復元手順は PROVENANCE.md 参照
+  （The Atticus Project発行、**CC BY 4.0**）から抽出した150件のサブセット
+  （train 50 / dev 40 / test 60。「該当条項なし」が正解のネガティブ18件を含む）。
+  取得元は Hugging Faceの `chenghao/cuad_qa` ミラー。`tasks/cuad100/scripts/build_golden.py`
+  で決定的に再生成できる。ファイル指紋と選定手順は PROVENANCE.md 参照
 
 ## 既知の制約
 

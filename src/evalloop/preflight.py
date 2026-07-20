@@ -117,15 +117,12 @@ def run_preflight(
         unseen = sorted(label for label, norm in norm_by_label.items() if norm not in seen_counts)
         for label in unseen:
             result.errors.append(
-                f"task.yaml label {label!r} never appears in the train split; the optimizer "
-                "cannot learn to predict it"
+                f"task.yaml label {label!r} never appears in the train split; the optimizer cannot learn to predict it"
             )
 
         # a label seen only once
         singletons = sorted(
-            label
-            for label, norm in norm_by_label.items()
-            if 0 < seen_counts.get(norm, 0) < MIN_LABEL_OCCURRENCES
+            label for label, norm in norm_by_label.items() if 0 < seen_counts.get(norm, 0) < MIN_LABEL_OCCURRENCES
         )
         for label in singletons:
             result.errors.append(
@@ -154,9 +151,7 @@ def run_preflight(
 
     # --- warning: no holdout ----------------------------------------------------
     if test_count == 0:
-        result.warnings.append(
-            "test split (holdout) is empty; generalization cannot be verified on unseen data"
-        )
+        result.warnings.append("test split (holdout) is empty; generalization cannot be verified on unseen data")
 
     # --- warning: small train --------------------------------------------------
     if len(train_cases) < SMALL_TRAIN_WARN:

@@ -74,9 +74,7 @@ def _anthropic_api_enabled() -> bool:
 
 def _count_one_anthropic_prompt(model: str, api_key: str, text: str) -> int | None:
     """Count tokens for a single rendered prompt (one eval case = one request)."""
-    payload = json.dumps(
-        {"model": model, "messages": [{"role": "user", "content": text}]}
-    ).encode("utf-8")
+    payload = json.dumps({"model": model, "messages": [{"role": "user", "content": text}]}).encode("utf-8")
     request = urllib.request.Request(
         ANTHROPIC_COUNT_TOKENS_URL,
         data=payload,
@@ -111,9 +109,7 @@ def _count_with_anthropic_api(model: str, texts: list[str]) -> TokenCount | None
     workers = min(_API_MAX_WORKERS, len(sampled))
     try:
         with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = [
-                pool.submit(_count_one_anthropic_prompt, model, api_key, text) for text in sampled
-            ]
+            futures = [pool.submit(_count_one_anthropic_prompt, model, api_key, text) for text in sampled]
             for future in as_completed(futures):
                 counted = future.result()
                 if counted is None:

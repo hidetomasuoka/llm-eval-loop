@@ -216,10 +216,41 @@ def _span_set_score(output: str, expected: str) -> float:
     return min(1.0, score)
 
 
-def text_score_and_feedback(output, expected) -> tuple[float, str]:
+# The final llm-rubric fails summaries and paraphrases ("要約・独自解釈は fail"),
+# but token overlap alone still awards them points -- so a non-verbatim answer
+# gets its score capped here to keep the training gradient pointed at exact
+# quoting. 0.5 (not 0.0) so partial-credit ordering among non-verbatim answers
+# survives for GEPA's candidate ranking.
+VERBATIM_SCORE_CAP = 0.5
+
+# Below this span-set score the output is treated as a different clause
+# entirely (taxonomy WE: 誤った条項抽出) rather than a partial extraction
+# (PE: 部分抽出), and the feedback switches from "complete the span" to
+# "identify the right clause".
+WE_OVERLAP_THRESHOLD = 0.2
+
+
+def _verbatim_normalize(text: str) -> str:
+    """Whitespace-collapsed lowercase for substring comparison; tolerant of
+    line-wrap and casing differences but nothing else."""
+    return re.sub(r"\s+", " ", text.lower()).strip()
+
+
+def _non_verbatim_spans(output: str, source: str) -> list[str]:
+    """Output spans that are NOT contiguous substrings of the source document
+    after normalization -- i.e. paraphrased, summarized, or stitched text."""
+    norm_source = _verbatim_normalize(source)
+    return [span for span in _split_spans(output) if span and _verbatim_normalize(span) not in norm_source]
+
+
+def text_score_and_feedback(output, expected, source=None) -> tuple[float, str]:
     """Continuous score in [0, 1] (GEPA accepts float scores; the gradient of
     a partial-overlap F1 gives the optimizer more signal than thresholding
     to 0/1 would).
+
+    ``source`` is the case's original document text. When provided, output
+    spans that are not verbatim substrings of it cap the score at
+    VERBATIM_SCORE_CAP; when None (older callers), the check is skipped.
     """
     out_text = output if isinstance(output, str) else ""
     exp_text = expected if isinstance(expected, str) else ""
@@ -244,8 +275,29 @@ def text_score_and_feedback(output, expected) -> tuple[float, str]:
         )
 
     score = _span_set_score(out_text, exp_text)
+
+    if isinstance(source, str) and source:
+        non_verbatim = _non_verbatim_spans(out_text, source)
+        if non_verbatim:
+            capped = min(score, VERBATIM_SCORE_CAP)
+            return capped, (
+                f"output contains text that is NOT a verbatim quote of the source document "
+                f'(e.g. "{non_verbatim[0][:120]}"). The final judge fails summaries, paraphrases, '
+                f"and reworded clauses even when the content is right. Rewrite the instructions so "
+                f"the model copies the clause text from the document character-for-character."
+            )
+
     if score >= 1.0:
         return 1.0, "output covers all gold span(s) at recall-weighted score 1.00."
+    if score < WE_OVERLAP_THRESHOLD:
+        return score, (
+            f"output barely overlaps the gold span(s) (recall-weighted score {score:.2f}) -- "
+            f"it reads as a DIFFERENT clause than the one asked for, not a partial extraction. "
+            f'gold: "{exp_text[:160]}" / output: "{out_text[:160]}". '
+            "Rewrite the instructions so the model identifies the clause by the legal concept of "
+            "the requested category, not by matching heading words -- adjacent or similarly-titled "
+            "clauses are the main failure mode."
+        )
     return score, (
         f"output covers the gold span(s) at recall-weighted score {score:.2f} "
         f"(recall is weighted 0.8, precision 0.2 -- missing gold text hurts more than extra text). "
@@ -297,18 +349,19 @@ def json_score_and_feedback(output, expected) -> tuple[float, str]:
 
 
 def _score_fn_for(cfg):
-    """Return the (output, expected) -> (score, feedback) training metric for
-    the task's answer_type. This is the GEPA training proxy, NOT the final
-    evaluation -- promptfoo still grades text tasks with llm-rubric (see the
-    module docstring).
+    """Return the (output, expected, source=None) -> (score, feedback) training
+    metric for the task's answer_type. ``source`` is the case's input document;
+    only the text metric uses it (verbatim check). This is the GEPA training
+    proxy, NOT the final evaluation -- promptfoo still grades text tasks with
+    llm-rubric (see the module docstring).
     """
     if cfg.task.answer_type == "label":
         labels = cfg.task.labels
-        return lambda output, expected: label_score_and_feedback(output, expected, labels)
+        return lambda output, expected, source=None: label_score_and_feedback(output, expected, labels)
     if cfg.task.answer_type == "text":
         return text_score_and_feedback
     if cfg.task.answer_type == "json":
-        return json_score_and_feedback
+        return lambda output, expected, source=None: json_score_and_feedback(output, expected)
     # unreachable while TaskConfig validates answer_type, but fail loudly if
     # a new type is added there without a metric here
     raise OptimizeError(f"no GEPA training metric for answer_type {cfg.task.answer_type!r}")

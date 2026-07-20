@@ -61,9 +61,7 @@ def test_miprov2_train_score_uses_train_part_only(monkeypatch):
     monkeypatch.setattr(
         optimize_mod,
         "run_miprov2",
-        lambda *a, **k: types.SimpleNamespace(
-            signature=types.SimpleNamespace(instructions="opt")
-        ),
+        lambda *a, **k: types.SimpleNamespace(signature=types.SimpleNamespace(instructions="opt")),
     )
 
     cfg = types.SimpleNamespace(

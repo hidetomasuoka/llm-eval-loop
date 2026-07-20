@@ -186,8 +186,7 @@ def test_failures_tolerates_missing_golden(analyze_env):
 
 def test_cluster_writes_draft_never_touches_taxonomy_yaml(analyze_env, monkeypatch):
     analyze_env.notes.write_text(
-        "case_id,model,input_head,output_head,expected,note\n"
-        "case-0002,haiku45,foo,bar,契約照会,label swap\n",
+        "case_id,model,input_head,output_head,expected,note\ncase-0002,haiku45,foo,bar,契約照会,label swap\n",
         encoding="utf-8",
     )
     analyze_env.taxonomy.write_text("categories: []\nassignments: {}\n", encoding="utf-8")
@@ -200,9 +199,21 @@ def test_cluster_writes_draft_never_touches_taxonomy_yaml(analyze_env, monkeypat
     def fake_eval(config_path, output_path, **kwargs):
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(
-            json.dumps({"results": {"results": [{"vars": {}, "provider": {"id": "j", "label": "cluster_judge"},
-                                                    "response": {"output": json.dumps(fake_taxonomy, ensure_ascii=False)},
-                                                    "gradingResult": {"pass": True, "score": 1}, "success": True}]}}),
+            json.dumps(
+                {
+                    "results": {
+                        "results": [
+                            {
+                                "vars": {},
+                                "provider": {"id": "j", "label": "cluster_judge"},
+                                "response": {"output": json.dumps(fake_taxonomy, ensure_ascii=False)},
+                                "gradingResult": {"pass": True, "score": 1},
+                                "success": True,
+                            }
+                        ]
+                    }
+                }
+            ),
             encoding="utf-8",
         )
 
@@ -239,9 +250,21 @@ def test_cluster_invalid_json_output_raises(analyze_env, monkeypatch):
     def fake_eval(config_path, output_path, **kwargs):
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(
-            json.dumps({"results": {"results": [{"vars": {}, "provider": {"id": "j", "label": "cluster_judge"},
-                                                    "response": {"output": "not json"},
-                                                    "gradingResult": {"pass": False, "score": 0}, "success": False}]}}),
+            json.dumps(
+                {
+                    "results": {
+                        "results": [
+                            {
+                                "vars": {},
+                                "provider": {"id": "j", "label": "cluster_judge"},
+                                "response": {"output": "not json"},
+                                "gradingResult": {"pass": False, "score": 0},
+                                "success": False,
+                            }
+                        ]
+                    }
+                }
+            ),
             encoding="utf-8",
         )
 
@@ -277,9 +300,21 @@ def test_cluster_omits_temperature_when_judge_lacks_sampling_support(analyze_env
         captured["config"] = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(
-            json.dumps({"results": {"results": [{"vars": {}, "provider": {"id": "j", "label": "cluster_judge"},
-                                                    "response": {"output": json.dumps(fake_taxonomy, ensure_ascii=False)},
-                                                    "gradingResult": {"pass": True, "score": 1}, "success": True}]}}),
+            json.dumps(
+                {
+                    "results": {
+                        "results": [
+                            {
+                                "vars": {},
+                                "provider": {"id": "j", "label": "cluster_judge"},
+                                "response": {"output": json.dumps(fake_taxonomy, ensure_ascii=False)},
+                                "gradingResult": {"pass": True, "score": 1},
+                                "success": True,
+                            }
+                        ]
+                    }
+                }
+            ),
             encoding="utf-8",
         )
 

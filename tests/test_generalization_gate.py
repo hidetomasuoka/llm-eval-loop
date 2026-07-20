@@ -29,9 +29,7 @@ def _row(case_id, alias, passed, cost=0.0):
     }
 
 
-def _seed_base_run(
-    paths: TaskPaths, run_id: str, alias: str, pass_flags: list[bool], *, task_name: str
-) -> None:
+def _seed_base_run(paths: TaskPaths, run_id: str, alias: str, pass_flags: list[bool], *, task_name: str) -> None:
     paths.results_dir.mkdir(parents=True, exist_ok=True)
     rows = [_row(f"case-{i + 1:04d}", alias, passed) for i, passed in enumerate(pass_flags)]
     _write_output(paths.runs_dir, run_id, rows)

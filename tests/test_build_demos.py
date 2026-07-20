@@ -34,14 +34,11 @@ def test_format_demos_is_pure_and_stable():
 def test_expand_demos_in_template_shared_by_build_and_optimize(tmp_path):
     demos_path = tmp_path / "demos.jsonl"
     demos_path.write_text(
-        json.dumps({"id": "case-0001", "input": "demo in", "output": "契約照会"}, ensure_ascii=False)
-        + "\n",
+        json.dumps({"id": "case-0001", "input": "demo in", "output": "契約照会"}, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
     template = f"Examples:\n{DEMOS_PLACEHOLDER}Q:\n{{{{input}}}}\n"
-    resolved, n = expand_demos_in_template(
-        template, demos_path, test_ids={"case-0099"}, test_inputs={"holdout"}
-    )
+    resolved, n = expand_demos_in_template(template, demos_path, test_ids={"case-0099"}, test_inputs={"holdout"})
     assert n == 1
     assert DEMOS_PLACEHOLDER not in resolved
     assert "Input: demo in\nOutput: 契約照会" in resolved
@@ -89,8 +86,7 @@ def test_build_embeds_demos_and_writes_resolved_prompt(isolated_root):
         prompt="Examples:\n{{demos}}Q:\n{{input}}\n",
     )
     paths.demos.write_text(
-        json.dumps({"id": "case-0001", "input": "demo in", "output": "契約照会"}, ensure_ascii=False)
-        + "\n",
+        json.dumps({"id": "case-0001", "input": "demo in", "output": "契約照会"}, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
     build_mod.build(cfg, paths, yes=True)
@@ -220,15 +216,14 @@ def test_optimize_embeds_demos_into_training_template(isolated_root, monkeypatch
         prompt="Examples:\n{{demos}}Classify:\n{{input}}\n",
     )
     paths.demos.write_text(
-        json.dumps({"id": "case-0001", "input": "demo in", "output": "契約照会"}, ensure_ascii=False)
-        + "\n",
+        json.dumps({"id": "case-0001", "input": "demo in", "output": "契約照会"}, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
     build_mod.build(cfg, paths, yes=True)
 
     seen = {}
 
-    def fake_gepa(student, trainset, metric, reflection_lm, auto, seed=0):
+    def fake_gepa(student, trainset, metric, reflection_lm, auto, seed=0, valset=None):
         seen["instructions"] = student.signature.instructions
         return types.SimpleNamespace(signature=types.SimpleNamespace(instructions="optimized"))
 

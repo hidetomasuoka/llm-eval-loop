@@ -36,8 +36,20 @@ def _make_config(
         ),
         models=models
         or [
-            ModelConfig(provider="ollama:chat:qwen2.5:7b", alias="qwen7b", tier="local", price_in_per_mtok=0, price_out_per_mtok=0),
-            ModelConfig(provider="anthropic:messages:claude-haiku-4-5-20251001", alias="haiku45", tier="small", price_in_per_mtok=1, price_out_per_mtok=5),
+            ModelConfig(
+                provider="ollama:chat:qwen2.5:7b",
+                alias="qwen7b",
+                tier="local",
+                price_in_per_mtok=0,
+                price_out_per_mtok=0,
+            ),
+            ModelConfig(
+                provider="anthropic:messages:claude-haiku-4-5-20251001",
+                alias="haiku45",
+                tier="small",
+                price_in_per_mtok=1,
+                price_out_per_mtok=5,
+            ),
         ],
         run=RunConfig(repeat=1, temperature=0.0, max_tokens=1024, cost_warn_usd=3.0),
         judge=JudgeConfig(provider=judge_provider, threshold=0.8, agreement_threshold=0.85, rubric_file=rubric_file),
@@ -107,7 +119,11 @@ def test_iron_rule_2_same_judge_raises_by_default(isolated_root):
     cfg = _make_config(
         answer_type="text",
         judge_provider=same_provider,
-        models=[ModelConfig(provider=same_provider, alias="sonnet46", tier="mid", price_in_per_mtok=3, price_out_per_mtok=15)],
+        models=[
+            ModelConfig(
+                provider=same_provider, alias="sonnet46", tier="mid", price_in_per_mtok=3, price_out_per_mtok=15
+            )
+        ],
     )
     paths = TaskPaths(root=isolated_root, task="t1")
     try:
@@ -123,7 +139,11 @@ def test_iron_rule_2_same_judge_allowed_with_override(isolated_root):
     cfg = _make_config(
         answer_type="text",
         judge_provider=same_provider,
-        models=[ModelConfig(provider=same_provider, alias="sonnet46", tier="mid", price_in_per_mtok=3, price_out_per_mtok=15)],
+        models=[
+            ModelConfig(
+                provider=same_provider, alias="sonnet46", tier="mid", price_in_per_mtok=3, price_out_per_mtok=15
+            )
+        ],
         rubric_file=str(rubric_path),
     )
     paths = TaskPaths(root=isolated_root, task="t1")
@@ -149,9 +169,29 @@ def test_provider_config_omits_temperature_when_sampling_unsupported(isolated_ro
     # claude-opus-4-8 / claude-fable-5 はtemperature指定をHTTP 400で拒否する
     cfg = _make_config(
         models=[
-            ModelConfig(provider="anthropic:messages:claude-haiku-4-5-20251001", alias="haiku45", tier="small", price_in_per_mtok=1, price_out_per_mtok=5),
-            ModelConfig(provider="anthropic:messages:claude-opus-4-8", alias="opus48", tier="large", price_in_per_mtok=5, price_out_per_mtok=25, supports_sampling_params=False),
-            ModelConfig(provider="anthropic:messages:claude-fable-5", alias="fable5", tier="frontier", price_in_per_mtok=10, price_out_per_mtok=50, supports_sampling_params=False),
+            ModelConfig(
+                provider="anthropic:messages:claude-haiku-4-5-20251001",
+                alias="haiku45",
+                tier="small",
+                price_in_per_mtok=1,
+                price_out_per_mtok=5,
+            ),
+            ModelConfig(
+                provider="anthropic:messages:claude-opus-4-8",
+                alias="opus48",
+                tier="large",
+                price_in_per_mtok=5,
+                price_out_per_mtok=25,
+                supports_sampling_params=False,
+            ),
+            ModelConfig(
+                provider="anthropic:messages:claude-fable-5",
+                alias="fable5",
+                tier="frontier",
+                price_in_per_mtok=10,
+                price_out_per_mtok=50,
+                supports_sampling_params=False,
+            ),
         ]
     )
     paths = TaskPaths(root=isolated_root, task="t1")
@@ -188,8 +228,28 @@ def test_assert_config_never_references_train_passes_for_test_file():
 
 
 def test_estimate_cost_zero_for_free_local_model():
-    cfg = _make_config(models=[ModelConfig(provider="ollama:chat:qwen2.5:7b", alias="qwen7b", tier="local", price_in_per_mtok=0, price_out_per_mtok=0)])
-    cases = [GoldenCase(id="case-0001", input="hello", expected="契約照会", split="test", category="基本", difficulty="easy", source="self-made")]
+    cfg = _make_config(
+        models=[
+            ModelConfig(
+                provider="ollama:chat:qwen2.5:7b",
+                alias="qwen7b",
+                tier="local",
+                price_in_per_mtok=0,
+                price_out_per_mtok=0,
+            )
+        ]
+    )
+    cases = [
+        GoldenCase(
+            id="case-0001",
+            input="hello",
+            expected="契約照会",
+            split="test",
+            category="基本",
+            difficulty="easy",
+            source="self-made",
+        )
+    ]
     estimate = build_mod.estimate_cost(cfg, cases, prompt_template="{{input}}")
     assert estimate.per_model_usd["qwen7b"] == 0.0
     assert estimate.total_usd == 0.0
@@ -197,11 +257,27 @@ def test_estimate_cost_zero_for_free_local_model():
 
 def test_estimate_cost_scales_with_case_count_and_repeat():
     cfg = _make_config(
-        models=[ModelConfig(provider="anthropic:messages:claude-haiku-4-5-20251001", alias="haiku45", tier="small", price_in_per_mtok=1, price_out_per_mtok=5)]
+        models=[
+            ModelConfig(
+                provider="anthropic:messages:claude-haiku-4-5-20251001",
+                alias="haiku45",
+                tier="small",
+                price_in_per_mtok=1,
+                price_out_per_mtok=5,
+            )
+        ]
     )
     cfg.run.repeat = 2
     cases = [
-        GoldenCase(id=f"case-{i:04d}", input="x" * 100, expected="契約照会", split="test", category="基本", difficulty="easy", source="self-made")
+        GoldenCase(
+            id=f"case-{i:04d}",
+            input="x" * 100,
+            expected="契約照会",
+            split="test",
+            category="基本",
+            difficulty="easy",
+            source="self-made",
+        )
         for i in range(5)
     ]
     estimate = build_mod.estimate_cost(cfg, cases, prompt_template="{{input}}")

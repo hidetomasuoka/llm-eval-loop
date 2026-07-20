@@ -34,10 +34,9 @@ jobs:
       - name: Install dependencies
         run: uv sync --extra dev
       - name: Lint (ruff check)
-        # TODO: `uv run ruff format --check .` もここに追加する。ただし現状は
-        # 13ファイルがリポジトリ全体の再フォーマット対象になり、並行開発中の
-        # ブランチと衝突するため、それらのマージ後に別PRで導入する。
         run: uv run ruff check .
+      - name: Format (ruff format --check)
+        run: uv run ruff format --check .
       - name: Run tests
         # test_label_normalization.pyのJS側テストはランナー同梱のNodeで実行される
         # （node不在の環境ではskipifで自動スキップ）

@@ -7,6 +7,7 @@ import yaml
 from evalloop import build as build_mod
 from evalloop import optimize as optimize_mod
 from evalloop import run as run_mod
+from evalloop.optimizers import metrics as metrics_mod
 from evalloop.paths import REPO_ROOT, TaskPaths
 from evalloop.schemas import GoldenCase, load_task
 from tests.conftest import scaffold_task
@@ -22,7 +23,10 @@ from tests.conftest import scaffold_task
 
 
 def test_provider_mapping_anthropic():
-    assert optimize_mod.promptfoo_provider_to_dspy_lm("anthropic:messages:claude-sonnet-4-6") == "anthropic/claude-sonnet-4-6"
+    assert (
+        optimize_mod.promptfoo_provider_to_dspy_lm("anthropic:messages:claude-sonnet-4-6")
+        == "anthropic/claude-sonnet-4-6"
+    )
 
 
 def test_provider_mapping_ollama():
@@ -279,9 +283,7 @@ def test_text_metric_over_extraction_scores_higher_than_under_extraction():
     # over-extraction (gold + extra) should beat under-extraction (one word)
     # because the rubric tolerates mild over-extraction but fails truncation.
     under, _ = optimize_mod.text_score_and_feedback("Agreement", GOLD_SPAN)
-    over, _ = optimize_mod.text_score_and_feedback(
-        f"{GOLD_SPAN} and some surrounding context", GOLD_SPAN
-    )
+    over, _ = optimize_mod.text_score_and_feedback(f"{GOLD_SPAN} and some surrounding context", GOLD_SPAN)
     assert over > under
 
 
@@ -289,10 +291,72 @@ def test_text_metric_full_extraction_with_extra_keeps_high_score():
     # gold fully covered + mild extra context -- recall is 1.0 so the score
     # should stay close to 1.0 (the rubric tolerates this; the old F1 metric
     # would have pulled it down via precision).
-    score, _ = optimize_mod.text_score_and_feedback(
-        f"{GOLD_SPAN} Additional surrounding sentences.", GOLD_SPAN
-    )
+    score, _ = optimize_mod.text_score_and_feedback(f"{GOLD_SPAN} Additional surrounding sentences.", GOLD_SPAN)
     assert score >= 0.8
+
+
+# --- verbatim check + WE/PE feedback split (improvement plan #3) ------------
+
+SOURCE_DOC = f"Preamble text. {GOLD_SPAN} Further clauses about termination and fees follow here."
+
+
+def test_text_metric_verbatim_quote_from_source_is_not_capped():
+    score, _ = optimize_mod.text_score_and_feedback(GOLD_SPAN, GOLD_SPAN, SOURCE_DOC)
+    assert score == 1.0
+
+
+def test_text_metric_paraphrase_is_capped_with_verbatim_feedback():
+    # token-level overlap is perfect (same words, reordered) but the text is
+    # not a contiguous quote of the source -> capped at VERBATIM_SCORE_CAP
+    paraphrase = "the laws of the State of New York shall govern this Agreement"
+    uncapped, _ = optimize_mod.text_score_and_feedback(paraphrase, GOLD_SPAN)
+    capped, feedback = optimize_mod.text_score_and_feedback(paraphrase, GOLD_SPAN, SOURCE_DOC)
+    assert uncapped > metrics_mod.VERBATIM_SCORE_CAP  # the cap actually bites
+    assert capped == metrics_mod.VERBATIM_SCORE_CAP
+    assert "verbatim" in feedback
+
+
+def test_text_metric_verbatim_check_tolerates_case_and_line_wrap():
+    rewrapped = GOLD_SPAN.upper().replace(" governed ".upper(), "\n  GOVERNED ")
+    score, feedback = optimize_mod.text_score_and_feedback(rewrapped, GOLD_SPAN, SOURCE_DOC)
+    assert score == 1.0
+    assert "verbatim" not in feedback
+
+
+def test_text_metric_without_source_skips_verbatim_check():
+    paraphrase = "the laws of the State of New York shall govern this Agreement"
+    score, feedback = optimize_mod.text_score_and_feedback(paraphrase, GOLD_SPAN)
+    assert score > metrics_mod.VERBATIM_SCORE_CAP
+    assert "verbatim quote" not in feedback
+
+
+def test_text_metric_near_zero_overlap_gets_wrong_clause_feedback():
+    # a different clause quoted verbatim from the source: WE, not PE
+    wrong_clause = "Further clauses about termination and fees follow here."
+    score, feedback = optimize_mod.text_score_and_feedback(wrong_clause, GOLD_SPAN, SOURCE_DOC)
+    assert score < metrics_mod.WE_OVERLAP_THRESHOLD
+    assert "DIFFERENT clause" in feedback
+    assert "legal concept" in feedback
+
+
+def test_text_metric_partial_extraction_keeps_complete_clause_feedback():
+    partial = "governed by the laws of the State of New York."
+    score, feedback = optimize_mod.text_score_and_feedback(partial, GOLD_SPAN, SOURCE_DOC)
+    assert metrics_mod.WE_OVERLAP_THRESHOLD <= score < 1.0
+    assert "COMPLETE clause" in feedback
+
+
+def test_score_fn_for_uniform_signature_accepts_source(isolated_root):
+    # every answer_type's score fn must tolerate the third positional source
+    # argument (the optimize metric closure always passes gold.input)
+    for answer_type, output, expected in [
+        ("label", "契約照会", "契約照会"),
+        ("json", '{"a": 1}', {"a": 1}),
+        ("text", "some clause", "some clause"),
+    ]:
+        cfg, _paths = scaffold_task(isolated_root, name=f"t-{answer_type}", answer_type=answer_type)
+        score, _ = optimize_mod._score_fn_for(cfg)(output, expected, "source doc some clause")
+        assert score == 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -347,14 +411,66 @@ def test_find_latest_base_run_picks_most_recent_successful_base(isolated_root):
     paths = TaskPaths(root=isolated_root, task="t1")
     paths.results_dir.mkdir(parents=True)
     entries = [
-        {"run_id": "old", "created_at": "2026-01-01T00:00:00Z", "task_name": "t", "variant": None, "promptfoo_exit_code": 0},
-        {"run_id": "variant-run", "created_at": "2026-01-02T00:00:00Z", "task_name": "t", "variant": "x", "promptfoo_exit_code": 0},
-        {"run_id": "failed", "created_at": "2026-01-03T00:00:00Z", "task_name": "t", "variant": None, "promptfoo_exit_code": 1},
-        {"run_id": "newest-base", "created_at": "2026-01-04T00:00:00Z", "task_name": "t", "variant": None, "promptfoo_exit_code": 0},
+        {
+            "run_id": "old",
+            "created_at": "2026-01-01T00:00:00Z",
+            "task_name": "t",
+            "variant": None,
+            "promptfoo_exit_code": 0,
+        },
+        {
+            "run_id": "variant-run",
+            "created_at": "2026-01-02T00:00:00Z",
+            "task_name": "t",
+            "variant": "x",
+            "promptfoo_exit_code": 0,
+        },
+        {
+            "run_id": "failed",
+            "created_at": "2026-01-03T00:00:00Z",
+            "task_name": "t",
+            "variant": None,
+            "promptfoo_exit_code": 1,
+        },
+        {
+            "run_id": "newest-base",
+            "created_at": "2026-01-04T00:00:00Z",
+            "task_name": "t",
+            "variant": None,
+            "promptfoo_exit_code": 0,
+        },
     ]
     paths.index.write_text("\n".join(json.dumps(e) for e in entries) + "\n", encoding="utf-8")
 
     assert optimize_mod._find_latest_base_run("t", paths) == "newest-base"
+
+
+def test_find_latest_base_run_accepts_exit_code_100(isolated_root):
+    # promptfoo exits 100 whenever any assert fails, which is the normal state
+    # of a real baseline run -- it must still qualify as a gate baseline.
+    paths = TaskPaths(root=isolated_root, task="t1")
+    paths.results_dir.mkdir(parents=True)
+    entries = [
+        {
+            "run_id": "base-with-failures",
+            "created_at": "2026-01-01T00:00:00Z",
+            "task_name": "t",
+            "variant": None,
+            "promptfoo_exit_code": 100,
+            "split": "dev",
+        },
+        {
+            "run_id": "crashed",
+            "created_at": "2026-01-02T00:00:00Z",
+            "task_name": "t",
+            "variant": None,
+            "promptfoo_exit_code": 1,
+            "split": "dev",
+        },
+    ]
+    paths.index.write_text("\n".join(json.dumps(e) for e in entries) + "\n", encoding="utf-8")
+
+    assert optimize_mod._find_latest_base_run("t", paths, split="dev") == "base-with-failures"
 
 
 def test_find_latest_base_run_returns_none_when_missing(isolated_root):
@@ -392,8 +508,16 @@ def _row(case_id, alias, passed, cost=0.001, *, completion_tokens=None):
 def test_compare_computes_deltas(isolated_root):
     paths = TaskPaths(root=isolated_root, task="t1")
 
-    _write_output(paths.runs_dir, "before", [_row("case-0001", "qwen7b", False, cost=0.0), _row("case-0002", "qwen7b", False, cost=0.0)])
-    _write_output(paths.runs_dir, "after", [_row("case-0001", "qwen7b", True, cost=0.0), _row("case-0002", "qwen7b", True, cost=0.0)])
+    _write_output(
+        paths.runs_dir,
+        "before",
+        [_row("case-0001", "qwen7b", False, cost=0.0), _row("case-0002", "qwen7b", False, cost=0.0)],
+    )
+    _write_output(
+        paths.runs_dir,
+        "after",
+        [_row("case-0001", "qwen7b", True, cost=0.0), _row("case-0002", "qwen7b", True, cost=0.0)],
+    )
 
     path = optimize_mod.compare(["before", "after"], paths)
     content = path.read_text(encoding="utf-8")
@@ -693,6 +817,14 @@ def _text_type_golden_rows():
         "Either party may terminate upon thirty days written notice.",
         "該当条項なし",
     ]
+
+    def _excerpt(i, span):
+        # extraction-task realism: the gold span appears verbatim inside the
+        # source excerpt (except the 該当条項なし sentinel), so echoing the gold
+        # answer passes the verbatim check added in improvement plan #3
+        clause = "" if span == "該当条項なし" else f" {span}"
+        return f"CONTRACT EXCERPT {i}:{clause} Other boilerplate follows."
+
     rows = []
     # 12 train cases clear the APO-09 preflight minimum (text tasks have no
     # per-label check, only the size checks)
@@ -700,7 +832,7 @@ def _text_type_golden_rows():
         rows.append(
             {
                 "id": f"case-{i + 1:04d}",
-                "input": f"CONTRACT EXCERPT {i + 1} ...",
+                "input": _excerpt(i + 1, spans[i % len(spans)]),
                 "expected": spans[i % len(spans)],
                 "split": "train",
                 "meta": {"category": "governing-law", "source": "self-made"},
@@ -710,7 +842,7 @@ def _text_type_golden_rows():
         rows.append(
             {
                 "id": f"case-{i + 100:04d}",
-                "input": f"CONTRACT EXCERPT {i + 100} ...",
+                "input": _excerpt(i + 100, spans[i % len(spans)]),
                 "expected": spans[i % len(spans)],
                 "split": "test",
                 "meta": {"category": "governing-law", "source": "self-made"},
@@ -735,11 +867,10 @@ def test_optimize_end_to_end_with_text_task(isolated_root, monkeypatch):
 
     captured = {}
 
-    def fake_gepa(student, trainset, metric, reflection_lm, auto, seed=0):
+    def fake_gepa(student, trainset, metric, reflection_lm, auto, seed=0, valset=None):
         # exercise the real metric wiring with one plausible rollout per case
-        captured["scores"] = [
-            metric(gold, types.SimpleNamespace(output=gold.expected)).score for gold in trainset
-        ]
+        captured["scores"] = [metric(gold, types.SimpleNamespace(output=gold.expected)).score for gold in trainset]
+        captured["valset"] = valset
         return types.SimpleNamespace(signature=types.SimpleNamespace(instructions="optimized text instructions"))
 
     monkeypatch.setattr(optimize_mod, "run_gepa", fake_gepa)
@@ -774,8 +905,48 @@ def test_optimize_end_to_end_with_text_task(isolated_root, monkeypatch):
     assert outcome.task_path.exists()
     assert "optimized text instructions" in outcome.task_path.read_text(encoding="utf-8")
     # a rollout that echoes the gold answer must score 1.0 through the real
-    # metric wiring (incl. the 該当条項なし sentinel case)
-    assert captured["scores"] == [1.0] * 12
+    # metric wiring (incl. the 該当条項なし sentinel case). GEPA trains on
+    # train_part only: 12 cases minus the 20% valset carve-out (plan #6).
+    assert captured["scores"] == [1.0] * 10
+    assert len(captured["valset"]) == 2
+    # the split is train-internal: valset cases still come from split=='train'
+    train_ids = {f"case-{i + 1:04d}" for i in range(12)}
+    assert {ex.case_id for ex in captured["valset"]} <= train_ids
+    log = json.loads((outcome.task_path.parent / "optimize_log.json").read_text(encoding="utf-8"))
+    assert log["train_size"] == 10
+    assert log["val_size"] == 2
+    assert log["val_ratio"] == pytest.approx(0.2)
+
+
+def test_gepa_runs_without_valset_when_trainset_is_tiny(isolated_root, monkeypatch, capsys):
+    """<2 train cases cannot be split; GEPA falls back to valset=None with a warning."""
+    import dspy
+
+    from evalloop.optimizers.gepa import GepaOptimizer
+
+    cfg, _paths = scaffold_task(isolated_root)
+    seen = {}
+
+    def fake_gepa(student, trainset, metric, reflection_lm, auto, seed=0, valset=None):
+        seen["trainset"], seen["valset"] = trainset, valset
+        return types.SimpleNamespace(signature=types.SimpleNamespace(instructions="opt"))
+
+    monkeypatch.setattr(optimize_mod, "run_gepa", fake_gepa)
+    trainset = [dspy.Example(input="a", expected="契約照会", case_id="case-0001").with_inputs("input")]
+    result = GepaOptimizer().optimize(
+        base_instructions="instr",
+        trainset=trainset,
+        metric=lambda gold, pred, **kw: None,
+        task_lm=None,
+        reflection_lm=None,
+        cfg=cfg,
+    )
+    assert seen["valset"] is None
+    assert len(seen["trainset"]) == 1
+    assert result.extra_log["train_size"] == 1
+    assert result.extra_log["val_size"] == 0
+    assert "val_ratio" not in result.extra_log
+    assert "without a valset" in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------------------

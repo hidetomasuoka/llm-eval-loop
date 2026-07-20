@@ -54,9 +54,7 @@ def _load_holdout_from_build(paths: TaskPaths) -> tuple[set[str], set[str]]:
     YAML holdout promptfoo actually evaluates (DESIGN §5.6).
     """
     if not paths.tests_test.exists():
-        raise SensitivityError(
-            f"{paths.tests_test} not found; run `evalloop build` before --shuffle-demos"
-        )
+        raise SensitivityError(f"{paths.tests_test} not found; run `evalloop build` before --shuffle-demos")
     entries = yaml.safe_load(paths.tests_test.read_text(encoding="utf-8")) or []
     ids: set[str] = set()
     inputs: set[str] = set()
@@ -96,9 +94,7 @@ def _clear_stale_demoshuffle_artifacts(paths: TaskPaths, n: int) -> None:
 
 def _variant_config_for_prompt(prompt_path: Path, paths: TaskPaths, *, seed: int) -> dict:
     if not paths.promptfoo_config.exists():
-        raise SensitivityError(
-            f"{paths.promptfoo_config} not found; run `evalloop build` before --shuffle-demos"
-        )
+        raise SensitivityError(f"{paths.promptfoo_config} not found; run `evalloop build` before --shuffle-demos")
     base_config = yaml.safe_load(paths.promptfoo_config.read_text(encoding="utf-8"))
     variant_config = _reroot_file_refs(base_config, prefix="../")
     rel = os.path.relpath(prompt_path, start=paths.variants_dir).replace(os.sep, "/")
@@ -123,9 +119,7 @@ def build_demoshuffle_variants(config: Config, paths: TaskPaths, n: int) -> list
             "this task has no demos placeholder"
         )
     if not paths.demos.exists():
-        raise SensitivityError(
-            f"--shuffle-demos requires {paths.demos}; demos.jsonl is missing for this task"
-        )
+        raise SensitivityError(f"--shuffle-demos requires {paths.demos}; demos.jsonl is missing for this task")
 
     cases = load_golden_jsonl(paths.golden)
     golden_test_cases = [c for c in cases if c.split == "test"]
@@ -143,9 +137,7 @@ def build_demoshuffle_variants(config: Config, paths: TaskPaths, n: int) -> list
         raise SensitivityError(str(e)) from e
 
     if len(demos) < 2:
-        raise SensitivityError(
-            f"--shuffle-demos needs at least 2 demos to permute order; found {len(demos)}"
-        )
+        raise SensitivityError(f"--shuffle-demos needs at least 2 demos to permute order; found {len(demos)}")
 
     paths.build_dir.mkdir(parents=True, exist_ok=True)
     paths.variants_dir.mkdir(parents=True, exist_ok=True)

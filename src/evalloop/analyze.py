@@ -197,11 +197,11 @@ def cluster(config: Config, paths: TaskPaths, notes_path: str | Path | None = No
     if "categories" not in taxonomy or "assignments" not in taxonomy:
         raise AnalyzeError(f"cluster LLM output missing 'categories'/'assignments' keys: {taxonomy}")
 
-    paths.taxonomy_draft.write_text(
-        yaml.safe_dump(taxonomy, allow_unicode=True, sort_keys=False), encoding="utf-8"
+    paths.taxonomy_draft.write_text(yaml.safe_dump(taxonomy, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    print(
+        f"[cluster] wrote {paths.taxonomy_draft} ({len(taxonomy['categories'])} categories, "
+        f"{len(taxonomy['assignments'])} assignments)"
     )
-    print(f"[cluster] wrote {paths.taxonomy_draft} ({len(taxonomy['categories'])} categories, "
-          f"{len(taxonomy['assignments'])} assignments)")
     print(f"[cluster] this NEVER overwrites {paths.taxonomy} -- merge by hand, then `evalloop pivot` reads that file")
     return paths.taxonomy_draft
 
@@ -221,9 +221,7 @@ class PivotCell:
 def load_taxonomy(path: str | Path) -> dict:
     path = Path(path)
     if not path.exists():
-        raise AnalyzeError(
-            f"{path} not found. Run `evalloop cluster` then hand-merge the taxonomy draft into {path}"
-        )
+        raise AnalyzeError(f"{path} not found. Run `evalloop cluster` then hand-merge the taxonomy draft into {path}")
     with path.open(encoding="utf-8") as f:
         taxonomy = yaml.safe_load(f) or {}
     taxonomy.setdefault("categories", [])

@@ -135,9 +135,7 @@ def apply_calibration_to_runs(paths: TaskPaths, calibration: dict) -> int:
             continue
         if not isinstance(meta, dict) or not uses_llm_rubric_judge(meta):
             continue
-        run_provider = (meta.get("grader") or {}).get("provider") or (meta.get("judge") or {}).get(
-            "provider"
-        )
+        run_provider = (meta.get("grader") or {}).get("provider") or (meta.get("judge") or {}).get("provider")
         if run_provider != provider:
             continue
         if apply_calibration_to_meta(meta, calibration):
@@ -259,11 +257,7 @@ def _judge_verdicts_fresh(
 
     verdicts: dict[tuple[str, str], bool] = {}
     for r in parsed.results:
-        row_vars = (
-            r.raw.get("vars")
-            or (r.raw.get("testCase") or {}).get("vars")
-            or {}
-        )
+        row_vars = r.raw.get("vars") or (r.raw.get("testCase") or {}).get("vars") or {}
         case_id = row_vars.get("case_id") or r.case_id
         # each echo-replay row corresponds to exactly one human label; the
         # model_label var (e.g. "haiku45") identifies which one -- the echo
@@ -346,15 +340,23 @@ def calibrate(config: Config, paths: TaskPaths, run_id: str | None = None) -> Ca
 
     if not cases:
         result = CalibrationResult(
-            agreement_rate=None, n_compared=0, n_skipped=skipped, threshold=cfg.judge.agreement_threshold,
-            status="no_data", cases=[],
+            agreement_rate=None,
+            n_compared=0,
+            n_skipped=skipped,
+            threshold=cfg.judge.agreement_threshold,
+            status="no_data",
+            cases=[],
         )
     else:
         rate = statistics.mean(1.0 if c.agrees else 0.0 for c in cases)
         status = "calibrated" if rate >= cfg.judge.agreement_threshold else "low_agreement"
         result = CalibrationResult(
-            agreement_rate=rate, n_compared=len(cases), n_skipped=skipped,
-            threshold=cfg.judge.agreement_threshold, status=status, cases=cases,
+            agreement_rate=rate,
+            n_compared=len(cases),
+            n_skipped=skipped,
+            threshold=cfg.judge.agreement_threshold,
+            status=status,
+            cases=cases,
         )
 
     print(f"[calibrate] compared {result.n_compared} case(s), skipped {result.n_skipped}")
@@ -385,10 +387,7 @@ def calibrate(config: Config, paths: TaskPaths, run_id: str | None = None) -> Ca
                 )
             apply_calibration_to_meta(meta, snapshot)
             meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
-            print(
-                f"[calibrate] updated {meta_path} "
-                f"judge.calibration_status={meta['judge']['calibration_status']}"
-            )
+            print(f"[calibrate] updated {meta_path} judge.calibration_status={meta['judge']['calibration_status']}")
 
     apply_calibration_to_runs(paths, snapshot)
     return result
