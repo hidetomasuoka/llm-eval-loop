@@ -197,6 +197,25 @@ def knowledge_list(root: str = _ROOT) -> None:
         _die(e)
 
 
+@knowledge_app.command("import")
+def knowledge_import(
+    paths: list[Path] = typer.Argument(..., exists=True, readable=True),
+    knowledge_id: str = typer.Option(..., "--id"),
+    root: str = _ROOT,
+    description: str = typer.Option("", "--description"),
+    append: bool = typer.Option(False, "--append"),
+) -> None:
+    from evalloop.studio.knowledge import import_knowledge_from_files
+
+    store = _store(root)
+    try:
+        meta = import_knowledge_from_files(store, knowledge_id, paths, description=description, append=append)
+    except (StudioError, ValueError) as e:
+        _die(e)
+        return
+    _print_json(meta)
+
+
 @knowledge_app.command("search")
 def knowledge_search(
     knowledge_id: str = typer.Argument(...),
@@ -291,6 +310,18 @@ def process_show(process_id: str = typer.Argument(...), root: str = _ROOT) -> No
         _die(e)
 
 
+@process_app.command("graph")
+def process_graph(process_id: str = typer.Argument(...), root: str = _ROOT) -> None:
+    from evalloop.studio.processes import load_process, process_mermaid
+
+    store = _store(root)
+    try:
+        spec = load_process(store, process_id)
+        console.print(process_mermaid(spec))
+    except StudioError as e:
+        _die(e)
+
+
 @process_app.command("run")
 def process_run(
     process_id: str = typer.Argument(...),
@@ -347,6 +378,24 @@ def app_run(
     _print_json({"run_id": result.get("run_id"), "app_id": result.get("app_id"), "outputs": result.get("outputs")})
 
 
+@apps_app.command("chat")
+def app_chat(
+    app_id: str = typer.Argument(...),
+    text: str = typer.Argument(...),
+    root: str = _ROOT,
+    session_id: str = typer.Option(None, "--session"),
+) -> None:
+    from evalloop.studio.apps import chat_app
+
+    store = _store(root)
+    try:
+        result = chat_app(store, app_id, text, session_id=session_id)
+    except StudioError as e:
+        _die(e)
+        return
+    _print_json({"session_id": result["session_id"], "reply": result["reply"], "outputs": result.get("outputs")})
+
+
 @train_app.command("start")
 def train_start(
     dataset_id: str = typer.Argument(...),
@@ -391,3 +440,33 @@ def train_leaderboard(job_id: str = typer.Argument(...), root: str = _ROOT) -> N
             }
         )
     _table("leaderboard", rows, ["model", "score", "accuracy", "macro_f1", "mae", "rmse"])
+
+
+@train_app.command("compare")
+def train_compare(jobs: str = typer.Argument(..., help="Comma-separated job ids"), root: str = _ROOT) -> None:
+    from evalloop.studio.automl import compare_jobs
+
+    store = _store(root)
+    job_ids = [part.strip() for part in jobs.split(",") if part.strip()]
+    try:
+        _print_json(compare_jobs(store, job_ids))
+    except StudioError as e:
+        _die(e)
+
+
+@train_app.command("score")
+def train_score(
+    model_id: str = typer.Argument(...),
+    dataset_id: str = typer.Option(..., "--dataset"),
+    root: str = _ROOT,
+    limit: int = typer.Option(None, "--limit"),
+) -> None:
+    from evalloop.studio.automl import batch_score
+
+    store = _store(root)
+    try:
+        result = batch_score(store, model_id, dataset_id, limit=limit)
+    except StudioError as e:
+        _die(e)
+        return
+    _print_json({k: v for k, v in result.items() if k != "predictions"} | {"n_predictions": len(result.get("predictions") or [])})

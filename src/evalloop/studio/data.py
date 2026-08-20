@@ -150,7 +150,33 @@ def profile_rows(columns: list[str], rows: list[dict[str, Any]]) -> dict[str, An
         "n_rows": len(rows),
         "n_columns": len(columns),
         "columns": col_profiles,
+        "quality": dataset_quality(columns, sample, target=_guess_target(columns)),
     }
+
+
+def dataset_quality(columns: list[str], rows: list[dict[str, Any]], target: str | None = None) -> dict[str, Any]:
+    """DataRobot-like data quality flags (leakage, constants, missingness)."""
+    flags: list[dict[str, Any]] = []
+    n = len(rows) or 1
+    target_vals = [_norm_key(row.get(target)) for row in rows] if target and target in columns else None
+    for col in columns:
+        if col == target:
+            continue
+        values = [row.get(col) for row in rows]
+        present = [v for v in values if v is not None and v != ""]
+        missing_rate = 1.0 - (len(present) / n)
+        if missing_rate >= 0.4:
+            flags.append({"code": "high_missing", "column": col, "missing_rate": round(missing_rate, 4)})
+        nunique = len({_norm_key(v) for v in present})
+        if present and nunique == 1:
+            flags.append({"code": "constant", "column": col, "value": _norm_key(present[0])})
+        if target_vals and present and len(present) == len(rows):
+            feat_vals = [_norm_key(v) for v in values]
+            if feat_vals == target_vals:
+                flags.append({"code": "target_leakage", "column": col, "detail": "identical to target"})
+            elif nunique == len({t for t in target_vals}) == len(rows):
+                flags.append({"code": "id_like", "column": col, "detail": "unique per row; may leak identity"})
+    return {"n_flags": len(flags), "flags": flags}
 
 
 def split_rows(

@@ -53,17 +53,21 @@ evalloop studio data from-task TASK [--id NAME]
 evalloop studio data list | show ID
 
 evalloop studio knowledge list | search ID QUERY
+evalloop studio knowledge import FILE.md --id NAME [--append]
 
 evalloop studio model list [--kind trained]
 evalloop studio model from-registry
 evalloop studio model predict ID --json '{"input":"..."}'
 
-evalloop studio process list | show ID | run ID --input TEXT
+evalloop studio process list | show ID | graph ID | run ID --input TEXT
 evalloop studio process run ID --dataset inquiry --limit 10
 
 evalloop studio app list | run ID --input TEXT
+evalloop studio app chat APP_ID "メッセージ" [--session ID]
 evalloop studio train start DATASET --target COL
 evalloop studio train leaderboard JOB_ID
+evalloop studio train compare JOB_A,JOB_B
+evalloop studio train score MODEL --dataset NAME
 ```
 
 どのコマンドも `--root DIR` でワークスペースを差し替えられる（テストは隔離ディレクトリを使う）。
@@ -96,7 +100,7 @@ steps:
     template: "[{{label}}] {{reply}}"
 ```
 
-ステップ種別: `prompt` `set` `transform` `retrieve` `classify` `predict` `llm` `tool` `branch` `switch` `map` `expr`。
+ステップ種別: `prompt` `set` `transform` `retrieve` `classify` `predict` `llm` `tool` `branch` `switch` `map` `expr` `parse` `memory` `subprocess` `agent`。
 
 `expr` は AST 許可リスト（算術・比較・添字・`len`/`min`/`max` 等）のみ。`import` や属性アクセスは拒否する。
 
@@ -107,6 +111,21 @@ steps:
 （純 Python。sklearn なし）。
 
 分類指標: accuracy / macro-F1。回帰: MAE / RMSE / R²。
+holdout に加えて train 上の層化 k-fold（既定 3）、混同行列、特徴重要度、データ品質フラグ
+（欠損・定数列・ターゲットリーク）を `jobs/<id>/diagnostics.json` に残す。
+`train compare` はジョブ間のアルゴリズム別スコア、`train score` はデプロイ済みモデルのバッチ推論。
+
+## 会話 / アプリ API
+
+`evalloop studio app chat inquiry-bot "ログインできません"` はセッションを作り、
+2回目以降 `--session ID` で履歴を `history` / `history_text` としてプロセスへ渡す。
+
+HTTP:
+
+- `POST /api/apps/<id>/chat`  `{"message":"...","session_id":"..."}`
+- `POST /v1/chat/completions`  OpenAI 互換（`model` はアプリ id）
+- `GET /api/processes/<id>/graph`  Mermaid DAG
+- `GET /api/jobs/<id>`  リーダーボード + 診断
 
 ## HTTP
 

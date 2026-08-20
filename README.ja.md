@@ -174,6 +174,7 @@ uv run evalloop blog --runs <run_id>                        # ブログ用の図
 ```bash
 uv run evalloop studio seed
 uv run evalloop studio app run inquiry-bot --input "ログインできません。パスワードが通りません。"
+uv run evalloop studio app chat inquiry-bot "ログインできません"
 uv run evalloop studio train leaderboard job-churn-seed
 uv run evalloop studio serve    # http://127.0.0.1:8787 （ローカルのみ）
 ```

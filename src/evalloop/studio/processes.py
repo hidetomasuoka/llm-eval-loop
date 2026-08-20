@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 import yaml
@@ -26,6 +27,10 @@ KNOWN_STEP_KINDS = {
     "switch",
     "map",
     "expr",
+    "parse",
+    "memory",
+    "subprocess",
+    "agent",
 }
 
 BUILTIN_TOOLS = {
@@ -91,6 +96,18 @@ def _validate_step(step: Any, where: str) -> None:
             raise StudioError(f"{where}: map requires a non-empty steps list")
         for j, nested_step in enumerate(nested):
             _validate_step(nested_step, f"{where}.steps[{j}]")
+    if kind == "subprocess":
+        if not step.get("process"):
+            raise StudioError(f"{where}: subprocess requires process")
+    if kind == "parse":
+        fmt = str(step.get("format") or "json")
+        if fmt not in {"json", "regex"}:
+            raise StudioError(f"{where}: parse.format must be json or regex")
+        if fmt == "regex" and not step.get("pattern"):
+            raise StudioError(f"{where}: parse format=regex requires pattern")
+    if kind == "agent":
+        if not (step.get("tools") or step.get("knowledge") or step.get("model")):
+            raise StudioError(f"{where}: agent requires tools, knowledge, or model")
 
 
 def save_process(store: StudioStore, spec: dict[str, Any]) -> dict[str, Any]:
@@ -125,11 +142,15 @@ def run_process(
     inputs: dict[str, Any] | None = None,
     *,
     record: bool = True,
+    _stack: tuple[str, ...] = (),
 ) -> dict[str, Any]:
+    if process_id in _stack:
+        raise StudioError(f"subprocess cycle: {' -> '.join([*_stack, process_id])}")
     spec = load_process(store, process_id)
     state: dict[str, Any] = dict(inputs or {})
     trace: list[dict[str, Any]] = []
-    _run_steps(store, spec["steps"], state, trace)
+    stack = (*_stack, process_id)
+    _run_steps(store, spec["steps"], state, trace, stack)
     outputs: dict[str, Any] = {}
     declared = spec.get("outputs") or []
     if declared:
@@ -169,9 +190,10 @@ def _run_steps(
     steps: list[dict[str, Any]],
     state: dict[str, Any],
     trace: list[dict[str, Any]],
+    stack: tuple[str, ...] = (),
 ) -> None:
     for step in steps:
-        value = _run_step(store, step, state, trace)
+        value = _run_step(store, step, state, trace, stack)
         output_key = step.get("output") or step["id"]
         state[output_key] = value
         state[step["id"]] = value
@@ -191,6 +213,7 @@ def _run_step(
     step: dict[str, Any],
     state: dict[str, Any],
     trace: list[dict[str, Any]],
+    stack: tuple[str, ...] = (),
 ) -> Any:
     kind = step["kind"]
     if kind == "prompt":
@@ -248,7 +271,7 @@ def _run_step(
         on = render(str(step.get("on") or ""), state)
         cases = step.get("cases") or {}
         nested = cases.get(on) or cases.get(str(on)) or cases.get("default") or []
-        _run_steps(store, nested, state, trace)
+        _run_steps(store, nested, state, trace, stack)
         output_key = step.get("output") or step["id"]
         return state.get(output_key, on)
     if kind == "map":
@@ -268,7 +291,7 @@ def _run_step(
         for item in sequence:
             child_state = dict(state)
             child_state[alias] = item
-            _run_steps(store, step["steps"], child_state, trace)
+            _run_steps(store, step["steps"], child_state, trace, stack)
             collected.append(child_state.get(collect_from))
         return collected
     if kind == "expr":
@@ -276,6 +299,27 @@ def _run_step(
         if not expr:
             raise StudioError(f"step {step['id']!r}: expr requires expr")
         return safe_eval(str(expr), state)
+    if kind == "parse":
+        return _parse(step, state)
+    if kind == "memory":
+        history = state.get("history") or []
+        return _format_history(history)
+    if kind == "subprocess":
+        child_id = str(step["process"])
+        mapping = step.get("inputs") or {}
+        child_inputs: dict[str, Any] = {}
+        if isinstance(mapping, dict) and mapping:
+            for key, template in mapping.items():
+                child_inputs[key] = render(str(template), state) if isinstance(template, str) else template
+        else:
+            child_inputs = {k: v for k, v in state.items() if not str(k).startswith("_")}
+        nested = run_process(store, child_id, child_inputs, record=False, _stack=stack)
+        pick = step.get("pick")
+        if pick:
+            return nested["outputs"].get(pick)
+        return nested["outputs"]
+    if kind == "agent":
+        return _agent(store, step, state)
     raise StudioError(f"unhandled step kind {kind!r}")
 
 
@@ -331,6 +375,105 @@ def _llm(step: dict[str, Any], state: dict[str, Any]) -> str:
         f"llm provider {provider!r} is not a local studio provider. "
         "Use echo/template/passthrough here; hosted models go through `evalloop run` (promptfoo)."
     )
+
+
+def _parse(step: dict[str, Any], state: dict[str, Any]) -> Any:
+    field = str(step.get("field") or "input")
+    raw = lookup(state, field, default=state.get(field, ""))
+    fmt = str(step.get("format") or "json")
+    if fmt == "json":
+        if isinstance(raw, (dict, list)):
+            return raw
+        try:
+            return json.loads(str(raw))
+        except json.JSONDecodeError as e:
+            raise StudioError(f"step {step['id']!r}: JSON parse failed: {e}") from e
+    match = re.search(str(step["pattern"]), str(raw))
+    if not match:
+        return None
+    if match.groupdict():
+        return match.groupdict()
+    if match.groups():
+        return list(match.groups())
+    return match.group(0)
+
+
+def _format_history(history: Any) -> str:
+    if not isinstance(history, list) or not history:
+        return ""
+    lines = []
+    for item in history:
+        if isinstance(item, dict):
+            role = item.get("role") or "user"
+            content = item.get("content") or item.get("text") or ""
+            lines.append(f"{role}: {content}")
+        else:
+            lines.append(str(item))
+    return "\n".join(lines)
+
+
+def _agent(store: StudioStore, step: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
+    from evalloop.studio import automl as automl_mod
+    from evalloop.studio.knowledge import search
+    from evalloop.studio.models import require_trained
+
+    query = render(str(step.get("query") or "{{input}}"), state)
+    tools = [str(t) for t in (step.get("tools") or ["retrieve"])]
+    routes = step.get("routes") or {}
+    label = None
+    model_id = step.get("model")
+    if model_id:
+        require_trained(store, model_id)
+        label = automl_mod.predict_row(store, model_id, {step.get("feature") or "input": query})["prediction"]
+        action = routes.get(label) or routes.get(str(label)) or (label if label in tools else (step.get("default_tool") or tools[0]))
+    else:
+        action = tools[0]
+    result: Any = None
+    if action == "retrieve":
+        knowledge_id = step.get("knowledge")
+        if not knowledge_id:
+            raise StudioError(f"step {step['id']!r}: agent retrieve requires knowledge")
+        result = search(store, knowledge_id, query, k=int(step.get("k") or 3))
+    elif action in BUILTIN_TOOLS:
+        result = BUILTIN_TOOLS[action]({"value": query}, state)
+    elif action in {"finish", "done"}:
+        result = None
+    else:
+        raise StudioError(f"step {step['id']!r}: unknown agent action {action!r}")
+    return {"label": label, "action": action, "query": query, "result": result}
+
+
+def process_mermaid(spec: dict[str, Any]) -> str:
+    """Render a process as a Mermaid flowchart (LangChain/Dify-style DAG view)."""
+    lines = ["flowchart TD"]
+    steps = spec.get("steps") or []
+    if not steps:
+        lines.append("  empty[empty process]")
+        return "\n".join(lines)
+    prev = None
+    for step in steps:
+        node_id = str(step["id"]).replace("-", "_")
+        label = f"{step['id']} / {step['kind']}"
+        lines.append(f'  {node_id}["{label}"]')
+        if prev:
+            lines.append(f"  {prev} --> {node_id}")
+        if step["kind"] == "switch":
+            for case, nested in (step.get("cases") or {}).items():
+                case_slug = re.sub(r"[^a-zA-Z0-9]+", "_", str(case)).strip("_") or "case"
+                case_id = f"{node_id}_{case_slug}"
+                lines.append(f'  {case_id}["{case}"]')
+                lines.append(f"  {node_id} --> {case_id}")
+                nested_prev = case_id
+                for nested_step in nested:
+                    nid = f"{node_id}_{str(nested_step['id']).replace('-', '_')}"
+                    lines.append(f'  {nid}["{nested_step["id"]} / {nested_step["kind"]}"]')
+                    lines.append(f"  {nested_prev} --> {nid}")
+                    nested_prev = nid
+        if step["kind"] == "subprocess":
+            lines.append(f'  {node_id}_p["process {step.get("process")}"]')
+            lines.append(f"  {node_id} --> {node_id}_p")
+        prev = node_id
+    return "\n".join(lines)
 
 
 def run_process_on_dataset(

@@ -10,6 +10,7 @@ Layout (all gitignored at the repo default ``studio/``)::
     <root>/apps/<id>.yaml
     <root>/jobs/<id>/{meta.yaml,leaderboard.json}
     <root>/runs/<id>.json
+    <root>/sessions/<id>.json
 """
 
 from __future__ import annotations
@@ -26,7 +27,17 @@ from evalloop.studio.errors import StudioError
 from evalloop.studio.ids import utcnow, validate_id
 
 CATALOG_VERSION = 1
-ENTITY_KINDS = ("datasets", "knowledge", "models", "processes", "apps", "jobs", "runs")
+ENTITY_KINDS = ("datasets", "knowledge", "models", "processes", "apps", "jobs", "runs", "sessions")
+SINGULAR = {
+    "datasets": "dataset",
+    "knowledge": "knowledge",
+    "models": "model",
+    "processes": "process",
+    "apps": "app",
+    "jobs": "job",
+    "runs": "run",
+    "sessions": "session",
+}
 
 
 def default_studio_root() -> Path:
@@ -96,6 +107,9 @@ class StudioPaths:
     def run_file(self, run_id: str) -> Path:
         return self.root / "runs" / f"{run_id}.json"
 
+    def session_file(self, session_id: str) -> Path:
+        return self.root / "sessions" / f"{session_id}.json"
+
 
 class StudioStore:
     """Create-or-load a studio workspace and keep catalog.json in sync."""
@@ -131,7 +145,7 @@ class StudioStore:
     def put(self, kind: str, entity_id: str, meta: dict[str, Any]) -> dict[str, Any]:
         if kind not in ENTITY_KINDS:
             raise StudioError(f"unknown catalog kind {kind!r}")
-        validate_id(entity_id, kind.rstrip("s"))
+        validate_id(entity_id, SINGULAR.get(kind, kind))
         catalog = self.init()
         record = dict(meta)
         record["id"] = entity_id
@@ -145,7 +159,7 @@ class StudioStore:
         catalog = self.load_catalog()
         bucket = catalog.get(kind) or {}
         if entity_id not in bucket:
-            raise StudioError(f"{kind.rstrip('s')} {entity_id!r} not found")
+            raise StudioError(f"{SINGULAR.get(kind, kind)} {entity_id!r} not found")
         return dict(bucket[entity_id])
 
     def list(self, kind: str) -> list[dict[str, Any]]:
@@ -157,7 +171,7 @@ class StudioStore:
         catalog = self.load_catalog()
         bucket = catalog.get(kind) or {}
         if entity_id not in bucket:
-            raise StudioError(f"{kind.rstrip('s')} {entity_id!r} not found")
+            raise StudioError(f"{SINGULAR.get(kind, kind)} {entity_id!r} not found")
         del bucket[entity_id]
         catalog[kind] = bucket
         self.save_catalog(catalog)

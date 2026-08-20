@@ -13,9 +13,9 @@ from typing import Any
 
 from evalloop.paths import REPO_ROOT
 from evalloop.studio.apps import save_app
-from evalloop.studio.errors import StudioError
 from evalloop.studio.automl import load_trained_model, register_trained_model, train_job
 from evalloop.studio.data import import_dataset, import_from_task
+from evalloop.studio.errors import StudioError
 from evalloop.studio.knowledge import import_knowledge
 from evalloop.studio.models import import_from_registry
 from evalloop.studio.processes import save_process
@@ -140,6 +140,20 @@ def seed(store: StudioStore, repo_root: Path | None = None) -> dict[str, Any]:
             },
         )
         summary["imported"].extend(["process:inquiry-triage", "app:inquiry-bot"])
+        save_process(store, _inquiry_desk_process())
+        save_app(
+            store,
+            {
+                "id": "inquiry-desk",
+                "name": "問い合わせデスク",
+                "description": "LangChain-like subprocess: triage chain then stamp a ticket id",
+                "process": "inquiry-desk",
+                "knowledge": "inquiry-faq",
+                "models": {"classifier": "inquiry-clf"},
+                "inputs": [{"name": "input", "type": "string"}],
+            },
+        )
+        summary["imported"].extend(["process:inquiry-desk", "app:inquiry-desk"])
 
     churn_job = train_job(store, "churn-toy", "churn", job_id="job-churn-seed", seed=0)
     _alias_winner(store, "churn-clf", churn_job["winner_model_id"], "Stable alias for the churn AutoML winner")
@@ -215,7 +229,7 @@ def _inquiry_process() -> dict[str, Any]:
                 "id": "answer",
                 "kind": "llm",
                 "provider": "template",
-                "template": "[{{label}}] {{reply}}\n入力: {{input}}\n参考: {{context}}",
+                "template": "[{{label}}] {{reply}}\n入力: {{input}}\n参考: {{context}}\n{{history_text}}",
                 "output": "answer",
             },
         ],
@@ -260,6 +274,34 @@ def _churn_process() -> dict[str, Any]:
                 "cases": {"yes": "high", "no": "low"},
                 "default": "unknown",
                 "output": "risk",
+            },
+        ],
+    }
+
+
+def _inquiry_desk_process() -> dict[str, Any]:
+    return {
+        "id": "inquiry-desk",
+        "name": "問い合わせデスク",
+        "description": "Subprocess the triage chain, then attach a ticket timestamp",
+        "inputs": [{"name": "input", "type": "string"}],
+        "outputs": ["label", "answer", "ticket"],
+        "steps": [
+            {
+                "id": "inner",
+                "kind": "subprocess",
+                "process": "inquiry-triage",
+                "inputs": {"input": "{{input}}", "history_text": "{{history_text}}"},
+                "output": "inner",
+            },
+            {"id": "label", "kind": "expr", "expr": "inner['label']", "output": "label"},
+            {"id": "ticket", "kind": "tool", "name": "utcnow", "output": "ticket"},
+            {
+                "id": "answer",
+                "kind": "llm",
+                "provider": "template",
+                "template": "{{inner.answer}}\nticket={{ticket}}",
+                "output": "answer",
             },
         ],
     }

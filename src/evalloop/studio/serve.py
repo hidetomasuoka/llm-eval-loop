@@ -7,12 +7,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-from evalloop.studio.apps import run_app
-from evalloop.studio.automl import predict_row
+from evalloop.studio.apps import chat_app, load_app, openai_chat_completion, run_app
+from evalloop.studio.automl import load_leaderboard, predict_row
 from evalloop.studio.data import load_dataset, load_profile
 from evalloop.studio.errors import StudioError
 from evalloop.studio.knowledge import search
-from evalloop.studio.processes import load_process, run_process
+from evalloop.studio.processes import load_process, process_mermaid, run_process
 from evalloop.studio.store import StudioStore
 
 DASHBOARD_HTML = """<!DOCTYPE html>
@@ -91,9 +91,10 @@ pre {
   <section id="view">読み込み中…</section>
 </main>
 <script>
-const views = ["概要","データ","ナレッジ","モデル","プロセス","アプリ","学習ジョブ","実行"];
-let catalog = {datasets:{}, knowledge:{}, models:{}, processes:{}, apps:{}, jobs:{}, runs:{}};
+const views = ["概要","会話","データ","ナレッジ","モデル","プロセス","アプリ","学習ジョブ","実行"];
+let catalog = {datasets:{}, knowledge:{}, models:{}, processes:{}, apps:{}, jobs:{}, runs:{}, sessions:{}};
 let current = "概要";
+let sessionId = "";
 
 async function load() {
   catalog = await (await fetch("/api/catalog")).json();
@@ -137,12 +138,13 @@ function render() {
     bindRun();
     return;
   }
+  if (current === "会話") { v.innerHTML = chatPanel(); bindChat(); return; }
   if (current === "データ") v.innerHTML = cards("datasets", e => `${e.n_rows || 0} 行 · origin ${e.origin || ""}`);
   if (current === "ナレッジ") v.innerHTML = cards("knowledge", e => `${e.n_docs || 0} docs`);
   if (current === "モデル") v.innerHTML = table(entries("models"), ["id","kind","algorithm","problem","deployed","description"]);
-  if (current === "プロセス") v.innerHTML = cards("processes", e => `${e.n_steps || 0} steps`);
+  if (current === "プロセス") { v.innerHTML = processPanel(); bindProcess(); return; }
   if (current === "アプリ") v.innerHTML = cards("apps", e => `process ${e.process || ""}`);
-  if (current === "学習ジョブ") v.innerHTML = table(entries("jobs"), ["id","dataset_id","target","problem","winner","n_train","n_test"]);
+  if (current === "学習ジョブ") { v.innerHTML = jobsPanel(); bindJobs(); return; }
   if (current === "実行") v.innerHTML = table(entries("runs"), ["id","kind","process_id","dataset_id","accuracy"]);
 }
 
@@ -170,6 +172,66 @@ function bindRun() {
     const body = await res.json();
     document.getElementById("out").textContent = JSON.stringify(body, null, 2);
     catalog = await (await fetch("/api/catalog")).json();
+  };
+}
+function chatPanel() {
+  const apps = entries("apps");
+  const opts = apps.map(a => `<option value="${a.id}">${a.id}</option>`).join("");
+  return `<h2>会話</h2>
+    <p>Dify 相当のセッション付きチャット。履歴はプロセスへ <code>history_text</code> として渡します。</p>
+    <select id="chatApp">${opts}</select>
+    <input id="chatMsg" placeholder="メッセージ"/>
+    <button class="run" id="chatBtn">送信</button>
+    <pre id="chatLog">session: (new)</pre>`;
+}
+function bindChat() {
+  const btn = document.getElementById("chatBtn");
+  if (!btn) return;
+  btn.onclick = async () => {
+    const id = document.getElementById("chatApp").value;
+    const message = document.getElementById("chatMsg").value;
+    const res = await fetch("/api/apps/" + id + "/chat", {
+      method: "POST", headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({message, session_id: sessionId || undefined})
+    });
+    const body = await res.json();
+    sessionId = body.session_id || sessionId;
+    const lines = (body.messages || []).map(m => m.role + ": " + m.content).join("\\n");
+    document.getElementById("chatLog").textContent = "session " + sessionId + "\\n" + lines;
+    catalog = await (await fetch("/api/catalog")).json();
+  };
+}
+function processPanel() {
+  const opts = entries("processes").map(p => `<option value="${p.id}">${p.id}</option>`).join("");
+  return `${cards("processes", e => `${e.n_steps || 0} steps`)}
+    <h2>フロー</h2>
+    <select id="procId">${opts}</select>
+    <button class="run" id="graphBtn">DAG を表示</button>
+    <pre id="graphOut"></pre>`;
+}
+function bindProcess() {
+  const btn = document.getElementById("graphBtn");
+  if (!btn) return;
+  btn.onclick = async () => {
+    const id = document.getElementById("procId").value;
+    const body = await (await fetch("/api/processes/" + id + "/graph")).json();
+    document.getElementById("graphOut").textContent = body.mermaid || JSON.stringify(body, null, 2);
+  };
+}
+function jobsPanel() {
+  return `${table(entries("jobs"), ["id","dataset_id","target","problem","winner","n_train","n_test"])}
+    <h2>リーダーボード</h2>
+    <select id="jobId">${entries("jobs").map(j => `<option value="${j.id}">${j.id}</option>`).join("")}</select>
+    <button class="run" id="boardBtn">表示</button>
+    <pre id="boardOut"></pre>`;
+}
+function bindJobs() {
+  const btn = document.getElementById("boardBtn");
+  if (!btn) return;
+  btn.onclick = async () => {
+    const id = document.getElementById("jobId").value;
+    const body = await (await fetch("/api/jobs/" + id)).json();
+    document.getElementById("boardOut").textContent = JSON.stringify(body.leaderboard || body, null, 2);
   };
 }
 load().catch(err => { document.getElementById("view").textContent = String(err); });
@@ -255,9 +317,33 @@ def _dispatch(
         return _json_ok(store.list("runs"))
     if method == "GET" and parts == ["api", "knowledge"]:
         return _json_ok(store.list("knowledge"))
+    if method == "GET" and parts == ["api", "sessions"]:
+        return _json_ok(store.list("sessions"))
+    if method == "GET" and len(parts) == 4 and parts[:2] == ["api", "processes"] and parts[3] == "graph":
+        spec = load_process(store, parts[2])
+        return _json_ok({"id": parts[2], "mermaid": process_mermaid(spec)})
+    if method == "GET" and len(parts) == 3 and parts[:2] == ["api", "jobs"]:
+        job = store.get("jobs", parts[2])
+        board = load_leaderboard(store, parts[2])
+        return _json_ok({**job, "leaderboard": board})
+    if method == "GET" and len(parts) == 3 and parts[:2] == ["api", "apps"]:
+        return _json_ok(load_app(store, parts[2]))
     if method == "POST" and len(parts) == 4 and parts[:2] == ["api", "apps"] and parts[3] == "run":
         payload = _read_json(body)
         return _json_ok(run_app(store, parts[2], payload.get("inputs") or payload))
+    if method == "POST" and len(parts) == 4 and parts[:2] == ["api", "apps"] and parts[3] == "chat":
+        payload = _read_json(body)
+        return _json_ok(
+            chat_app(
+                store,
+                parts[2],
+                str(payload.get("message") or payload.get("input") or ""),
+                session_id=payload.get("session_id"),
+                extra_inputs=payload.get("inputs") if isinstance(payload.get("inputs"), dict) else None,
+            )
+        )
+    if method == "POST" and path == "/v1/chat/completions":
+        return _json_ok(openai_chat_completion(store, _read_json(body)))
     if method == "POST" and len(parts) == 4 and parts[:2] == ["api", "processes"] and parts[3] == "run":
         payload = _read_json(body)
         return _json_ok(run_process(store, parts[2], payload.get("inputs") or payload))

@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import json
 import math
-from collections import Counter
+import random
+from collections import Counter, defaultdict
 from typing import Any
 
 from evalloop.studio.data import infer_column_type, load_dataset, split_rows
@@ -490,10 +491,108 @@ def regression_metrics(y_true: list[Any], y_pred: list[Any]) -> dict[str, Any]:
     return {"mae": round(mae, 4), "rmse": round(math.sqrt(mse), 4), "r2": round(r2, 4), "n": n}
 
 
+def confusion_matrix(y_true: list[Any], y_pred: list[Any]) -> dict[str, Any]:
+    t = [_key(v) for v in y_true]
+    p = [_key(v) for v in y_pred]
+    labels = sorted(set(t) | set(p))
+    index = {label: i for i, label in enumerate(labels)}
+    matrix = [[0] * len(labels) for _ in labels]
+    for a, b in zip(t, p, strict=True):
+        matrix[index[a]][index[b]] += 1
+    return {"labels": labels, "matrix": matrix}
+
+
+def feature_importance(artifact: dict[str, Any], top_n: int = 12) -> list[dict[str, Any]]:
+    algo = artifact.get("algorithm")
+    scored: list[tuple[str, float]] = []
+    if algo == "decision_tree":
+        counts: dict[str, float] = {}
+        _tree_feature_counts(artifact["tree"], counts)
+        total = sum(counts.values()) or 1.0
+        scored = [(name, n / total) for name, n in counts.items()]
+    elif algo == "logreg":
+        names = artifact.get("feature_names") or []
+        weights = artifact.get("weights") or []
+        n_classes = max(len(weights), 1)
+        for j, name in enumerate(names):
+            mag = sum(abs(row[j]) for row in weights) / n_classes
+            scored.append((name, mag))
+    elif algo == "linreg":
+        names = artifact.get("feature_names") or []
+        weights = artifact.get("weights") or []
+        scored = [(name, abs(w)) for name, w in zip(names, weights, strict=True)]
+    scored.sort(key=lambda item: item[1], reverse=True)
+    return [{"feature": name, "importance": round(value, 6)} for name, value in scored[:top_n]]
+
+
+def _tree_feature_counts(node: dict[str, Any], counts: dict[str, float]) -> None:
+    if node.get("leaf"):
+        return
+    feature = str(node.get("feature") or "")
+    if feature:
+        counts[feature] = counts.get(feature, 0.0) + 1.0
+    if "left" in node:
+        _tree_feature_counts(node["left"], counts)
+    if "right" in node:
+        _tree_feature_counts(node["right"], counts)
+
+
+def stratified_kfold_indices(rows: list[dict[str, Any]], target: str, k: int, seed: int) -> list[tuple[list[int], list[int]]]:
+    if k < 2:
+        return []
+    by_label: dict[str, list[int]] = defaultdict(list)
+    for i, row in enumerate(rows):
+        by_label[_key(row.get(target))].append(i)
+    rng = random.Random(seed)
+    min_class = min((len(v) for v in by_label.values()), default=0)
+    k = min(k, len(rows), max(min_class, 2))
+    if k < 2:
+        return []
+    folds: list[list[int]] = [[] for _ in range(k)]
+    for indexes in by_label.values():
+        rng.shuffle(indexes)
+        for i, idx in enumerate(indexes):
+            folds[i % k].append(idx)
+    folds = [fold for fold in folds if fold]
+    splits = []
+    for i, test_idx in enumerate(folds):
+        test_set = set(test_idx)
+        train_idx = [idx for j, fold in enumerate(folds) if j != i for idx in fold]
+        if train_idx and test_idx:
+            splits.append((train_idx, sorted(test_set)))
+    return splits
+
+
 def _score_row(problem: str, metrics: dict[str, Any]) -> float:
     if problem == "classification":
         return float(metrics["accuracy"])
     return -float(metrics["mae"])
+
+
+def _fit_candidates(
+    x_train: list[dict[str, float]],
+    y_train: list[Any],
+    problem: str,
+) -> list[tuple[str, dict[str, Any]]]:
+    candidates: list[tuple[str, dict[str, Any]]] = [("majority", _majority_fit(y_train, problem))]
+    if problem == "classification":
+        candidates.extend(
+            [
+                ("naive_bayes", _nb_fit(x_train, y_train)),
+                ("decision_tree", _tree_fit(x_train, y_train, problem)),
+                ("logreg", _logreg_fit(x_train, y_train)),
+                ("knn", _knn_fit(x_train, y_train, problem, k=3)),
+            ]
+        )
+    else:
+        candidates.extend(
+            [
+                ("decision_tree", _tree_fit(x_train, y_train, problem)),
+                ("linreg", _linreg_fit(x_train, y_train)),
+                ("knn", _knn_fit(x_train, y_train, problem, k=3)),
+            ]
+        )
+    return candidates
 
 
 def train_job(
@@ -505,6 +604,7 @@ def train_job(
     test_ratio: float = 0.25,
     seed: int = 0,
     feature_columns: list[str] | None = None,
+    cv_folds: int = 3,
 ) -> dict[str, Any]:
     ds_meta, rows = load_dataset(store, dataset_id)
     columns, types, rows, _y_all, problem = prepare_frame(rows, target, feature_columns)
@@ -532,24 +632,7 @@ def train_job(
     y_train = [row.get(target) for row in train_rows]
     y_test = [row.get(target) for row in test_rows]
 
-    candidates: list[tuple[str, dict[str, Any]]] = [("majority", _majority_fit(y_train, problem))]
-    if problem == "classification":
-        candidates.extend(
-            [
-                ("naive_bayes", _nb_fit(x_train, y_train)),
-                ("decision_tree", _tree_fit(x_train, y_train, problem)),
-                ("logreg", _logreg_fit(x_train, y_train)),
-                ("knn", _knn_fit(x_train, y_train, problem, k=3)),
-            ]
-        )
-    else:
-        candidates.extend(
-            [
-                ("decision_tree", _tree_fit(x_train, y_train, problem)),
-                ("linreg", _linreg_fit(x_train, y_train)),
-                ("knn", _knn_fit(x_train, y_train, problem, k=3)),
-            ]
-        )
+    candidates = _fit_candidates(x_train, y_train, problem)
 
     leaderboard = []
     fitted: dict[str, dict[str, Any]] = {}
@@ -567,8 +650,40 @@ def train_job(
             "holdout": metrics,
             "train": train_metrics,
             "score": _score_row(problem, metrics),
+            "importance": feature_importance(artifact),
         }
+        if problem == "classification":
+            row["confusion"] = confusion_matrix(y_test, preds)
         leaderboard.append(row)
+    cv_splits = stratified_kfold_indices(train_rows, target, cv_folds, seed)
+    if cv_splits:
+        cv_scores: dict[str, list[float]] = {name: [] for name, _ in candidates}
+        for train_idx, val_idx in cv_splits:
+            fold_train = [train_rows[i] for i in train_idx]
+            fold_val = [train_rows[i] for i in val_idx]
+            fold_vocab = _text_vocab(fold_train, columns, types)
+            fold_cats = _cat_levels(fold_train, columns, types)
+            fold_nums = _num_stats(fold_train, columns, types)
+            x_ft = [encode_row(row, columns, types, fold_vocab, fold_cats, fold_nums) for row in fold_train]
+            x_fv = [encode_row(row, columns, types, fold_vocab, fold_cats, fold_nums) for row in fold_val]
+            y_ft = [row.get(target) for row in fold_train]
+            y_fv = [row.get(target) for row in fold_val]
+            for name, artifact in _fit_candidates(x_ft, y_ft, problem):
+                fold_preds = [predict_encoded(artifact, feats)[0] for feats in x_fv]
+                fold_metrics = (
+                    classification_metrics(y_fv, fold_preds)
+                    if problem == "classification"
+                    else regression_metrics(y_fv, fold_preds)
+                )
+                cv_scores[name].append(_score_row(problem, fold_metrics))
+        for row in leaderboard:
+            scores = cv_scores.get(row["model"]) or []
+            if scores:
+                row["cv_mean"] = round(sum(scores) / len(scores), 4)
+                row["cv_folds"] = len(scores)
+    from evalloop.studio.data import dataset_quality
+
+    quality = dataset_quality(list(dict.fromkeys([*columns, target])), rows, target=target)
     leaderboard.sort(key=lambda r: r["score"], reverse=True)
     winner_name = leaderboard[0]["model"]
     job_id = validate_id((job_id or new_run_id("job")).lower()[:40], "job")
@@ -593,10 +708,17 @@ def train_job(
         "n_test": len(test_rows),
         "winner": winner_name,
         "winner_model_id": winner_model_id,
+        "quality": quality,
+        "cv_folds": len(cv_splits),
         "leaderboard": leaderboard,
     }
     atomic_write_yaml(job_dir / "meta.yaml", meta)
-    store.put("jobs", job_id, {k: v for k, v in meta.items() if k != "leaderboard"})
+    atomic_write_json(job_dir / "diagnostics.json", {"quality": quality, "leaderboard": leaderboard})
+    store.put(
+        "jobs",
+        job_id,
+        {k: v for k, v in meta.items() if k not in {"leaderboard", "quality"}},
+    )
     register_trained_model(
         store,
         winner_model_id,
@@ -699,3 +821,60 @@ def predict_dataset(store: StudioStore, model_id: str, dataset_id: str, limit: i
             result["correct"] = _key(result["prediction"]) == _key(row[target])
         out.append(result)
     return out
+
+
+def load_leaderboard(store: StudioStore, job_id: str) -> list[dict[str, Any]]:
+    store.get("jobs", job_id)
+    path = store.paths.job_dir(job_id) / "leaderboard.json"
+    if not path.exists():
+        raise StudioError(f"job {job_id!r} is missing leaderboard.json")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def compare_jobs(store: StudioStore, job_ids: list[str]) -> dict[str, Any]:
+    if len(job_ids) < 2:
+        raise StudioError("compare_jobs needs at least two job ids")
+    columns = []
+    by_model: dict[str, dict[str, Any]] = {}
+    for job_id in job_ids:
+        job = store.get("jobs", job_id)
+        board = load_leaderboard(store, job_id)
+        columns.append({"job_id": job_id, "dataset_id": job.get("dataset_id"), "winner": job.get("winner")})
+        for row in board:
+            slot = by_model.setdefault(row["model"], {"model": row["model"]})
+            slot[job_id] = {
+                "score": row.get("score"),
+                "holdout": row.get("holdout"),
+                "cv_mean": row.get("cv_mean"),
+            }
+    return {"jobs": columns, "by_model": list(by_model.values())}
+
+
+def batch_score(store: StudioStore, model_id: str, dataset_id: str, limit: int | None = None) -> dict[str, Any]:
+    rows = predict_dataset(store, model_id, dataset_id, limit=limit)
+    scored = [r for r in rows if "correct" in r]
+    n_ok = sum(1 for r in scored if r.get("correct"))
+    summary = {
+        "model_id": model_id,
+        "dataset_id": dataset_id,
+        "n": len(rows),
+        "n_scored": len(scored),
+        "n_correct": n_ok,
+        "accuracy": round(n_ok / len(scored), 4) if scored else None,
+        "predictions": rows,
+    }
+    run_id = new_run_id("score").lower()[:40]
+    summary["run_id"] = run_id
+    atomic_write_json(store.paths.run_file(run_id), summary)
+    store.put(
+        "runs",
+        run_id,
+        {
+            "kind": "batch_score",
+            "model_id": model_id,
+            "dataset_id": dataset_id,
+            "n": len(rows),
+            "accuracy": summary["accuracy"],
+        },
+    )
+    return summary

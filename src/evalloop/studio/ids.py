@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import uuid
 from datetime import datetime, timezone
 
 from evalloop.studio.errors import StudioError
@@ -17,6 +18,13 @@ def utcnow() -> str:
 def new_run_id(prefix: str = "run") -> str:
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     return f"{prefix}-{stamp}"
+
+
+def new_entity_id(prefix: str = "id") -> str:
+    """Timestamp + short suffix so two calls in the same second do not collide."""
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    suffix = uuid.uuid4().hex[:4]
+    return f"{prefix}-{stamp}-{suffix}"[:40]
 
 
 def validate_id(name: str, kind: str = "id") -> str:

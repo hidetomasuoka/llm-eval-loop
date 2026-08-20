@@ -124,6 +124,7 @@ def test_seed_inquiry_bot_classifies_incident(isolated_root):
     store = StudioStore(isolated_root / "studio")
     summary = seed(store, repo_root=REPO_ROOT)
     assert "app:inquiry-bot" in summary["imported"]
+    assert "app:inquiry-desk" in summary["imported"]
     assert "app:churn-watch" in summary["imported"]
     result = run_app(
         store,
@@ -177,6 +178,142 @@ def test_http_health_and_app_run(isolated_root):
     assert payload["outputs"]["label"] == "機能要望"
     status, _, body = handle_request(store, "GET", "/api/nope")
     assert status == 404
+
+
+def test_chat_session_and_openai_compat(isolated_root):
+    import json
+
+    from evalloop.studio.apps import chat_app, openai_chat_completion
+
+    store = StudioStore(isolated_root / "studio")
+    seed(store, repo_root=REPO_ROOT)
+    first = chat_app(store, "inquiry-bot", "システムにログインできません。パスワードを何度入力してもエラーになります。")
+    assert first["outputs"]["label"] == "障害報告"
+    assert first["session_id"]
+    second = chat_app(store, "inquiry-bot", "契約書の解約条項を教えてください。", session_id=first["session_id"])
+    assert second["session_id"] == first["session_id"]
+    assert len(second["messages"]) == 4
+    assert "システムにログインできません" in second["outputs"]["answer"]
+    payload = openai_chat_completion(
+        store,
+        {"model": "inquiry-bot", "messages": [{"role": "user", "content": "ダークモードに対応してほしいです。"}]},
+    )
+    assert payload["object"] == "chat.completion"
+    assert "機能要望" in payload["choices"][0]["message"]["content"]
+    status, _, body = handle_request(
+        store,
+        "POST",
+        "/v1/chat/completions",
+        json.dumps({"model": "inquiry-bot", "messages": [{"role": "user", "content": "資料請求したいです。"}]}).encode(),
+    )
+    assert status == 200
+    assert json.loads(body.decode())["choices"][0]["message"]["content"]
+
+
+def test_subprocess_desk_and_cycle(isolated_root):
+    store = StudioStore(isolated_root / "studio")
+    seed(store, repo_root=REPO_ROOT)
+    from evalloop.studio.apps import run_app
+
+    result = run_app(store, "inquiry-desk", {"input": "システムにログインできません。パスワードを何度入力してもエラーになります。"})
+    assert result["outputs"]["label"] == "障害報告"
+    assert "ticket=" in result["outputs"]["answer"]
+    save_process(
+        store,
+        {"id": "loop-a", "steps": [{"id": "go", "kind": "subprocess", "process": "loop-b", "output": "x"}]},
+    )
+    save_process(
+        store,
+        {"id": "loop-b", "steps": [{"id": "go", "kind": "subprocess", "process": "loop-a", "output": "x"}]},
+    )
+    with pytest.raises(StudioError, match="cycle"):
+        run_process(store, "loop-a", {}, record=False)
+
+
+def test_parse_memory_agent_and_graph(isolated_root):
+    from evalloop.studio.processes import load_process, process_mermaid
+
+    store = StudioStore(isolated_root / "studio")
+    seed(store, repo_root=REPO_ROOT)
+    save_process(
+        store,
+        {
+            "id": "parse-mem",
+            "outputs": ["parsed", "hist", "acted"],
+            "steps": [
+                {"id": "parsed", "kind": "parse", "field": "blob", "format": "json", "output": "parsed"},
+                {"id": "hist", "kind": "memory", "output": "hist"},
+                {
+                    "id": "acted",
+                    "kind": "agent",
+                    "model": "inquiry-clf",
+                    "knowledge": "inquiry-faq",
+                    "feature": "input",
+                    "query": "{{input}}",
+                    "routes": {"障害報告": "retrieve", "契約照会": "retrieve", "機能要望": "retrieve", "その他": "finish"},
+                    "tools": ["retrieve"],
+                    "output": "acted",
+                },
+            ],
+        },
+    )
+    result = run_process(
+        store,
+        "parse-mem",
+        {
+            "blob": '{"ok": true, "n": 1}',
+            "input": "システムにログインできません。パスワードを何度入力してもエラーになります。",
+            "history": [{"role": "user", "content": "前の話"}],
+        },
+        record=False,
+    )
+    assert result["outputs"]["parsed"] == {"ok": True, "n": 1}
+    assert "user: 前の話" in result["outputs"]["hist"]
+    assert result["outputs"]["acted"]["action"] == "retrieve"
+    assert result["outputs"]["acted"]["result"]
+    mermaid = process_mermaid(load_process(store, "inquiry-triage"))
+    assert "flowchart TD" in mermaid
+    assert "label" in mermaid
+    save_process(
+        store,
+        {
+            "id": "re-parse",
+            "outputs": ["hit"],
+            "steps": [{"id": "hit", "kind": "parse", "field": "input", "format": "regex", "pattern": r"id=(?P<id>\w+)", "output": "hit"}],
+        },
+    )
+    parsed = run_process(store, "re-parse", {"input": "id=abc123"}, record=False)
+    assert parsed["outputs"]["hit"]["id"] == "abc123"
+
+
+def test_knowledge_file_import_and_automl_diagnostics(isolated_root):
+    from evalloop.studio.automl import batch_score, compare_jobs, load_leaderboard
+    from evalloop.studio.knowledge import import_knowledge_from_files, search
+
+    store = StudioStore(isolated_root / "studio")
+    seed(store, repo_root=REPO_ROOT)
+    md = isolated_root / "faq.md"
+    md.write_text("# FAQ\n\n## ログイン\nログインできないときは障害です。\n", encoding="utf-8")
+    import_knowledge_from_files(store, "file-faq", [md], description="from file")
+    hits = search(store, "file-faq", "ログインできない", k=1)
+    assert hits and "障害" in hits[0]["text"]
+    board = load_leaderboard(store, "job-churn-seed")
+    assert board[0]["confusion"]["matrix"]
+    assert "cv_mean" in board[0] or board[0]["model"] == "majority"
+    compared = compare_jobs(store, ["job-inquiry-seed", "job-churn-seed"])
+    assert len(compared["jobs"]) == 2
+    scored = batch_score(store, "churn-clf", "churn-toy")
+    assert scored["n"] == 24
+    assert scored["accuracy"] is not None
+    status, _, body = handle_request(store, "GET", "/api/jobs/job-churn-seed")
+    assert status == 200
+    import json
+
+    payload = json.loads(body.decode())
+    assert payload["leaderboard"]
+    status, _, body = handle_request(store, "GET", "/api/processes/inquiry-triage/graph")
+    assert status == 200
+    assert "flowchart TD" in json.loads(body.decode())["mermaid"]
 
 
 def test_cli_init_status_seed_and_app_run(isolated_root):

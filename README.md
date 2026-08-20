@@ -133,6 +133,7 @@ On top of the eval loop, manage datasets, knowledge bases, AutoML models, chains
 ```bash
 uv run evalloop studio seed
 uv run evalloop studio app run inquiry-bot --input "ログインできません。パスワードが通りません。"
+uv run evalloop studio app chat inquiry-bot "ログインできません"
 uv run evalloop studio train leaderboard job-churn-seed
 uv run evalloop studio serve    # http://127.0.0.1:8787 (local only)
 ```

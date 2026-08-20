@@ -50,16 +50,9 @@ def cosine(a: dict[str, float], b: dict[str, float]) -> float:
     return _dot(a, b) / (_norm(a) * _norm(b))
 
 
-def import_knowledge(
-    store: StudioStore,
-    knowledge_id: str,
-    documents: list[dict[str, Any]],
-    *,
-    description: str = "",
-) -> dict[str, Any]:
-    validate_id(knowledge_id, "knowledge")
+def _normalize_docs(documents: list[dict[str, Any] | str], knowledge_id: str, start: int = 1) -> list[dict[str, Any]]:
     docs: list[dict[str, Any]] = []
-    for i, doc in enumerate(documents, start=1):
+    for i, doc in enumerate(documents, start=start):
         if isinstance(doc, str):
             docs.append({"id": f"doc-{i:04d}", "title": "", "text": doc})
             continue
@@ -74,6 +67,10 @@ def import_knowledge(
                 "meta": doc.get("meta") or {},
             }
         )
+    return docs
+
+
+def _write_docs(store: StudioStore, knowledge_id: str, docs: list[dict[str, Any]], description: str) -> dict[str, Any]:
     knowledge_dir = store.paths.knowledge_dir(knowledge_id)
     knowledge_dir.mkdir(parents=True, exist_ok=True)
     docs_path = knowledge_dir / "docs.jsonl"
@@ -87,6 +84,80 @@ def import_knowledge(
         knowledge_id,
         {"kind": "knowledge", "description": description, "n_docs": len(docs)},
     )
+
+
+def import_knowledge(
+    store: StudioStore,
+    knowledge_id: str,
+    documents: list[dict[str, Any] | str],
+    *,
+    description: str = "",
+) -> dict[str, Any]:
+    validate_id(knowledge_id, "knowledge")
+    docs = _normalize_docs(documents, knowledge_id)
+    return _write_docs(store, knowledge_id, docs, description)
+
+
+def append_documents(
+    store: StudioStore,
+    knowledge_id: str,
+    documents: list[dict[str, Any] | str],
+) -> dict[str, Any]:
+    existing = load_documents(store, knowledge_id)
+    meta = store.get("knowledge", knowledge_id)
+    extra = _normalize_docs(documents, knowledge_id, start=len(existing) + 1)
+    return _write_docs(store, knowledge_id, existing + extra, str(meta.get("description") or ""))
+
+
+def _split_markdown(text: str, fallback_title: str) -> list[dict[str, Any]]:
+    chunks: list[dict[str, Any]] = []
+    current_title = fallback_title
+    current: list[str] = []
+    for line in text.splitlines():
+        if line.startswith("## "):
+            body = "\n".join(current).strip()
+            if body:
+                chunks.append({"title": current_title, "text": body})
+            current_title = line[3:].strip() or fallback_title
+            current = []
+        else:
+            current.append(line)
+    body = "\n".join(current).strip()
+    if body:
+        chunks.append({"title": current_title, "text": body})
+    if not chunks and text.strip():
+        chunks.append({"title": fallback_title, "text": text.strip()})
+    return chunks
+
+
+def import_knowledge_from_files(
+    store: StudioStore,
+    knowledge_id: str,
+    paths: list[Path],
+    *,
+    description: str = "",
+    append: bool = False,
+) -> dict[str, Any]:
+    documents: list[dict[str, Any]] = []
+    for path in paths:
+        path = Path(path)
+        if not path.exists():
+            raise StudioError(f"knowledge file not found: {path}")
+        suffix = path.suffix.lower()
+        raw = path.read_text(encoding="utf-8")
+        if suffix == ".jsonl":
+            for line in raw.splitlines():
+                line = line.strip()
+                if line:
+                    row = json.loads(line)
+                    documents.append(row if isinstance(row, dict) else {"text": str(row)})
+        elif suffix in {".md", ".txt", ".markdown"}:
+            documents.extend(_split_markdown(raw, path.stem))
+        else:
+            raise StudioError(f"{path}: unsupported knowledge format (use .md / .txt / .jsonl)")
+    if append and (store.paths.knowledge_dir(knowledge_id) / "docs.jsonl").exists():
+        return append_documents(store, knowledge_id, documents)
+    return import_knowledge(store, knowledge_id, documents, description=description or f"Imported from {len(paths)} file(s)")
 
 
 def load_documents(store: StudioStore, knowledge_id: str) -> list[dict[str, Any]]:

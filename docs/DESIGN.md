@@ -430,7 +430,9 @@ uv run evalloop doctor           # 最初に必ず疎通確認
 - **ナレッジ**: ドキュメント + 純 Python の TF-IDF retrieve（Dify knowledge）
 - **モデル**: `config.yaml` の LLM registry をカタログ化する（**呼ばない**）＋ AutoML 成果物
 - **プロセス**: YAML チェーン（prompt / retrieve / classify / branch / switch / map / tool / expr / llm）
-- **アプリ**: プロセスを束ねて CLI とループバック HTTP で実行
+- **アプリ**: プロセスを束ねて CLI とループバック HTTP で実行。会話セッションと
+  OpenAI 互換 `/v1/chat/completions`（model = アプリ id）
+- **学習診断**: 層化 k-fold、混同行列、特徴重要度、データ品質フラグ、ジョブ比較、バッチ推論
 - **成果物**: `studio/`（gitignore）。`evalloop studio seed` でデモ一式を再生成
 
 studio 固有の鉄の掟:
