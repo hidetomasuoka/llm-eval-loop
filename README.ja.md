@@ -163,6 +163,24 @@ uv run evalloop blog --runs <run_id>                        # ブログ用の図
 | `evalloop optimize` | dspy（GEPA / MIPROv2 / COPRO / TAPO、task.yaml の `optimize.method` で選択）でプロンプト最適化、自動でrun/report/compare（手法選定は [docs/APO_GUIDE.md](docs/APO_GUIDE.md) 参照） |
 | `evalloop compare --runs A,B[,C...]` | 2runはbefore/after差分（コスト%・出力トークン・プロンプト長のトレードオフ注意付き）、3run以上はモデル×runマトリクス比較（マトリクスには optimize_log の探索コスト `search_cost` / 所要時間 `duration_s` 列も表示） |
 | `evalloop blog --runs A[,B[,C...]] [--slug NAME]` | 公開ガード通過後にブログ用一式を生成（2run以上は手法比較向けに条件依存性の免責を挿入。3run以上は compare と同じモデル×runマトリクスも tables.md に含める。精度×コストのパレート前線図 `fig04` も含む） |
+| `evalloop studio ...` | プロセス・データ・モデルのローカル管理面（Dify / LangChain / DataRobot 相当）。詳細は [docs/STUDIO.md](docs/STUDIO.md) |
+
+## studio（プロセス / データ / モデル）
+
+評価ループに加えて、データセット・ナレッジ・AutoMLモデル・チェーン（プロセス）・アプリを
+同じリポジトリで管理できる。ホストされた LLM はこれまで通り promptfoo 経由。studio 内の
+生成ステップは template/echo のみなので、API キーなしでデモが動く。
+
+```bash
+uv run evalloop studio seed
+uv run evalloop studio app run inquiry-bot --input "ログインできません。パスワードが通りません。"
+uv run evalloop studio app chat inquiry-bot "ログインできません"
+uv run evalloop studio train leaderboard job-churn-seed
+uv run evalloop studio serve    # http://127.0.0.1:8787 （ローカルのみ）
+```
+
+`seed` は `sample-inquiry` と合成の解約テーブルで学習し、問い合わせ仕分けボットと
+解約リスクアプリを登録する。成果物は gitignore の `studio/`。
 
 ## テスト / CI
 
@@ -240,6 +258,7 @@ fresh clone後はクイックスタートの手順どおり `uv run evalloop bui
 | `evalloop failures` / `cluster` | `tasks/<task>/notes.csv`, `tasks/<task>/taxonomy.draft.yaml` |
 | `evalloop optimize` | `promptfoo/<task>/variants/` と `tasks/<task>/optimized/<alias>/{method}-{ts}-{slug}/`、および `tasks/<task>/optimized/index.jsonl`（実験成果物として任意にコミット可） |
 | `evalloop blog` | `blog/<task>/` |
+| `evalloop studio seed` / `train` / `serve` | `studio/`（データセット・学習済みモデル・プロセス実行。gitignore） |
 
 run成果物の生出力（output.json / meta.json）にはローカル絶対パスやプロバイダのエラー
 ペイロードが含まれうるため、公開リポジトリにはコミットしない。タスクの**データ**

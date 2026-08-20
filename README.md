@@ -124,6 +124,21 @@ Then run everything with `--task <name>`. Model definitions (provider IDs, price
 | `evalloop optimize` | Prompt optimization with dspy (GEPA / MIPROv2 / COPRO / TAPO, chosen via `optimize.method` in task.yaml), then automatic run/report/compare (method selection guide: [docs/APO_GUIDE.md](docs/APO_GUIDE.md)) |
 | `evalloop compare --runs A,B[,C...]` | Compare 2 runs (before/after deltas + cost%/tokens/prompt-length tradeoff note) or 3+ runs (model×run matrix; matrix also shows optimize `search_cost` / `duration_s` from optimize_log) |
 | `evalloop blog --runs A[,B[,C...]] [--slug NAME]` | Publish-guarded blog export (2+ runs insert the conditionality disclaimer; 3+ also embed the compare model×run matrix in tables.md; includes Pareto cost×accuracy fig04) |
+| `evalloop studio ...` | Local process / data / model control plane (Dify / LangChain / DataRobot analog). See [docs/STUDIO.md](docs/STUDIO.md) |
+
+## studio (processes, data, models)
+
+On top of the eval loop, manage datasets, knowledge bases, AutoML models, chains (processes), and apps in-repo. Hosted LLMs still go through promptfoo. Studio generation steps are template/echo only, so the demo runs without API keys.
+
+```bash
+uv run evalloop studio seed
+uv run evalloop studio app run inquiry-bot --input "ログインできません。パスワードが通りません。"
+uv run evalloop studio app chat inquiry-bot "ログインできません"
+uv run evalloop studio train leaderboard job-churn-seed
+uv run evalloop studio serve    # http://127.0.0.1:8787 (local only)
+```
+
+`seed` trains on `sample-inquiry` plus a synthetic churn table and registers an inquiry-routing bot and a churn-risk app. Artifacts land in gitignored `studio/`.
 
 ## Tests / CI
 
@@ -175,6 +190,7 @@ Everything the `evalloop` commands generate is gitignored and lives in per-task 
 | `evalloop failures` / `cluster` | `tasks/<task>/notes.csv`, `tasks/<task>/taxonomy.draft.yaml` |
 | `evalloop optimize` | `promptfoo/<task>/variants/` and `tasks/<task>/optimized/<alias>/{method}-{ts}-{slug}/` plus `tasks/<task>/optimized/index.jsonl` (may optionally be committed as experiment artifacts) |
 | `evalloop blog` | `blog/<task>/` |
+| `evalloop studio seed` / `train` / `serve` | `studio/` (datasets, trained models, process runs; gitignored) |
 
 Raw run outputs (output.json / meta.json) can contain local absolute paths and provider error payloads, so they are never committed to the public repository. Task **data** (`golden.jsonl`, `human_labels.jsonl`, `notes.csv`, `taxonomy*.yaml`) is also gitignored by default per the data policy above; only the task's "code" (`task.yaml`, `prompts/`, `PROVENANCE.md`) and the global `config.yaml` are tracked.
 

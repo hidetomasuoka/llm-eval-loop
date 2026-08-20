@@ -24,19 +24,22 @@ from evalloop import paths as paths_mod
 from evalloop import report as report_mod
 from evalloop import run as run_mod
 from evalloop.schemas import Config, SchemaError, load_task, parse_promptfoo_output, restrict_models
+from evalloop.studio.cli import studio_app
 
 app = typer.Typer(
     add_completion=False,
     help=(
         "llm-eval-loop: promptfoo runs+grades multi-model evals; evalloop owns dataset "
         "safety, judge calibration, failure analysis, GEPA optimization, blog export. "
-        "Tasks are self-contained workspaces under tasks/<name>/ (select with --task).\n\n"
+        "Tasks are self-contained workspaces under tasks/<name>/ (select with --task). "
+        "`evalloop studio` manages processes, data, and models (Dify/LangChain/DataRobot analog).\n\n"
         "NOTE: `promptfoo share` (cloud upload) is never used by this project - use "
         "`evalloop view` to browse local results instead."
     ),
 )
 task_app = typer.Typer(help="Manage task workspaces under tasks/")
 app.add_typer(task_app, name="task")
+app.add_typer(studio_app, name="studio")
 console = Console()
 
 _TASK_OPTION = typer.Option(

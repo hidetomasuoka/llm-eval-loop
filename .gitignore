@@ -65,3 +65,7 @@ results/
 
 # ブログ用エクスポート出力（公開ガード通過後の一式。記事側で利用する）
 blog/
+
+# studio runtime workspace (`evalloop studio init` / `seed`).
+# デモデータは seed で再生成する。学習済みモデルと import したデータセットはローカルのみ。
+/studio/
