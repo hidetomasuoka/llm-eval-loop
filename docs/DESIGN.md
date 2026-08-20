@@ -419,3 +419,25 @@ uv run evalloop doctor           # 最初に必ず疎通確認
 - 乱数を使う箇所はseed固定（`optimize.py`のGEPA呼び出しは`seed=0`固定）
 - 本タスク（sample）差し替え時に触るのは `config.yaml` / `data/golden.jsonl` / `prompts/base/*.txt` の3点だけで済む構造にしている
 - 将来Langfuse等へ移行する場合に備え、output.jsonのパースは `schemas.py` に閉じ込めている
+
+## 15. studio（プロセス / データ / モデル管理）
+
+評価ハーネスの上に、Dify・LangChain・DataRobot 相当のローカル管理面を載せる。
+使い方の正は [STUDIO.md](STUDIO.md)。実装は `src/evalloop/studio/`、CLI は
+`evalloop studio ...`。
+
+- **データ**: CSV/JSONL の import、カラム型推定、profile、`tasks/<name>/golden.jsonl` の取り込み
+- **ナレッジ**: ドキュメント + 純 Python の TF-IDF retrieve（Dify knowledge）
+- **モデル**: `config.yaml` の LLM registry をカタログ化する（**呼ばない**）＋ AutoML 成果物
+- **プロセス**: YAML チェーン（prompt / retrieve / classify / branch / switch / map / tool / expr / llm）
+- **アプリ**: プロセスを束ねて CLI とループバック HTTP で実行
+- **成果物**: `studio/`（gitignore）。`evalloop studio seed` でデモ一式を再生成
+
+studio 固有の鉄の掟:
+
+1. LLM ステップの provider は `echo` / `template` / `passthrough` のみ。ホストされた
+   モデルは `evalloop run`（promptfoo）に任せる。Python が provider SDK を直接叩かない、
+   という本ドキュメント本体の鉄の掟を studio でも破らない
+2. テストは `isolated_root` にだけ書き、リポジトリの `studio/` を汚さない
+3. ローカル `serve` はアップロードしない（`promptfoo share` 禁止と同じ方針）
+
