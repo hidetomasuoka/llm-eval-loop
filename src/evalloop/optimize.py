@@ -68,6 +68,10 @@ from evalloop.optimizers.miprov2 import (
     MiproV2Optimizer,
     run_miprov2,  # noqa: F401 -- monkeypatch target by convention; MiproV2Optimizer calls it through this module
 )
+from evalloop.optimizers.promst import (
+    PromstOptimizer,
+    run_promst,  # noqa: F401 -- monkeypatch target by convention; PromstOptimizer calls it through this module
+)
 from evalloop.optimizers.schedulers import select_eval_subset
 from evalloop.optimizers.tapo import (
     TapoOptimizer,
@@ -182,6 +186,8 @@ def _rollout_factor(cfg: Config) -> int:
         population_size = int(cfg.optimize.params.get("population_size", 4))
         generations = int(cfg.optimize.params.get("generations", 3))
         return max(1, population_size * generations)
+    if cfg.optimize.method == "promst":
+        return max(1, int(cfg.optimize.params.get("max_iterations", 4)))
     return _AUTO_ROLLOUT_FACTORS.get(cfg.optimize.auto, _AUTO_ROLLOUT_FACTORS["medium"])
 
 
@@ -269,8 +275,14 @@ def estimate_optimize_cost(
     reflection prompts remain a documented order-of-magnitude assumption.
     """
     factor = _rollout_factor(cfg)
-    rollout_count = factor * len(train_cases)
-    reflection_call_count = factor  # ~one instruction proposal per optimizer round
+    if cfg.optimize.method == "promst":
+        # Candidate fitness is a local instruction-conditioned rollout; only
+        # reflection_lm calls are billed against a hosted provider.
+        rollout_count = 0
+        reflection_call_count = factor
+    else:
+        rollout_count = factor * len(train_cases)
+        reflection_call_count = factor  # ~one instruction proposal per optimizer round
 
     target = cfg.model_by_alias(cfg.optimize.target_alias)
     rendered_prompts = render_case_prompts(prompt_template, [c.input for c in train_cases])
@@ -779,6 +791,7 @@ def optimize(
         MiproV2Optimizer.name: MiproV2Optimizer,
         CoproOptimizer.name: CoproOptimizer,
         TapoOptimizer.name: TapoOptimizer,
+        PromstOptimizer.name: PromstOptimizer,
     }
     optimizer: PromptOptimizer = optimizer_classes[cfg.optimize.method]()
     started = time.monotonic()
@@ -1054,7 +1067,7 @@ def _method_for_variant(variant: str | None, paths: TaskPaths) -> str | None:
             return str(entry["method"])
     # variant naming: {alias}_{method}_{timestamp}_{slug}
     parts = variant.split("_")
-    if len(parts) >= 2 and parts[1] in {"gepa", "miprov2", "copro", "tapo"}:
+    if len(parts) >= 2 and parts[1] in {"gepa", "miprov2", "copro", "tapo", "promst"}:
         return parts[1]
     return None
 

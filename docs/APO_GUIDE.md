@@ -1,8 +1,8 @@
 # APO 適用ガイド（症状 → 粒度 → 手法 の診断）
 
-> **この文書について**: `evalloop optimize` は現状 **GEPA 一択** だが、APO（Automatic Prompt Optimization）手法は「失敗症状 × 最適化粒度」で選ぶべきものである。本ガイドは、どの症状にどの粒度のどの手法を当てるかの判断基準を整備し、今後のオプティマイザ拡張（[APO-03] 以降）の設計根拠とする。
+> **この文書について**: `evalloop optimize` は症状 × 最適化粒度で手法を選ぶ（`optimize.method`: `gepa` / `miprov2` / `copro` / `tapo` / `promst`）。本ガイドは、どの症状にどの粒度のどの手法を当てるかの判断基準。
 >
-> **位置づけ**: 本ガイドは [docs/DESIGN.md](DESIGN.md) の「鉄の掟（第11章）」に従う。本文中で鉄の掟と矛盾する記述はないことが前提。コード変更を伴わない docs のみの追加。
+> **位置づけ**: 本ガイドは [docs/DESIGN.md](DESIGN.md) の「鉄の掟（第11章）」に従う。本文中で鉄の掟と矛盾する記述はないことが前提。
 
 ---
 
@@ -19,9 +19,11 @@ APO に着手する前に、以下の3段階で「本当にAPOが必要か・ど
 | 検索未ヒット（RAG が正文を取ってこない） | APO保留 | 検索パラメータ・embedding・チャンク境界を見直す |
 | チャンク境界崩れ（正解スパンが複数チャンクに分断） | APO保留 | チャンクサイズ・オーバーラップ・再チャンク化 |
 | パース欠損（構造化出力のJSON崩れ・フィールド欠落） | APO保留 | 本ガイド第3章「JSON安定化の優先順位」に従う |
-| ツール誤選択（Agent が別ツールを呼ぶ） | APO保留 | ツール説明文・ルーティング設計を見直す |
-| ワークフロー破綻（多段推論の途中で道筋が外れる） | APO保留 | ワークフロー設計・状態管理を見直す |
-| **指示が曖昧・分類・抽出がぶれる** | **APO適用候補** | 本ガイド第2章で粒度を選ぶ |
+| ツール未実装 / ツールAPI障害 | APO保留 | ツール実装・権限・エラーハンドリングを直す |
+| ツール説明文・ルーティング指示が曖昧で誤選択する | **APO適用候補（7e）** | PROMST（`optimize.method: promst`）。軌跡の最初の失敗ステップから指示を直す |
+| ワークフローの状態機械・グラフ実装がバグ | APO保留 | 状態管理・遷移条件を直す |
+| 多段手順の指示が曖昧で軌跡が外れる | **APO適用候補（7e）** | PROMST。golden の `{tools, answer}` 軌跡で評価する |
+| **指示が曖昧・分類・抽出がぶれる** | **APO適用候補（7a）** | 本ガイド第2章で粒度を選ぶ |
 
 ### ② 最適化粒度の選定
 
@@ -50,7 +52,7 @@ train/holdout が取れない（評価セットが小さすぎる・ラベルが
 | 例の入れ替え・順序で性能がぶれる | **7b. Exemplar** | MIPROv2, EASE, PromptWizard | **MIPROv2 対応済**（既定はinstructionのみ。`params.max_bootstrapped_demos` / `params.max_labeled_demos` を指定するとfew-shot demo探索も有効） |
 | 長いsystem promptの局所修正で別セクションが壊れる | **7c. 長文構造** | SCULPT | 対象外 |
 | コスト・長さ制約が厳しい | **7d. 多目的** | InstOptima, EMO-Prompts | レポート可視化のみ計画 |
-| Agent軌跡が破綻 | **7e. Agent/Multi-step** | PROMST | 対象外 |
+| Agent軌跡が破綻 | **7e. Agent/Multi-step** | PROMST | **PROMST 対応済**（`optimize.method: promst`、`answer_type: agent`） |
 
 ### 各粒度の補足
 
@@ -62,7 +64,13 @@ train/holdout が取れない（評価セットが小さすぎる・ラベルが
   - **MIPROv2**（`optimize.method: miprov2`）: ベイズ最適化でinstruction空間を探索。既定は後方互換のため instruction のみだが、`params.max_bootstrapped_demos` / `params.max_labeled_demos` を正の整数にすると few-shot demo 探索も有効化できる（プロンプトに `{{demos}}` 必須。結果は `optimized/.../demos.jsonl` に保存され variant へ再展開）。`params.val_ratio` / `seed` で検証比・乱数シードを調整
 - **7c. 長文構造粒度**: system prompt が複数セクションから成り、一部を直すと別セクションが壊れる症状。SCULPT はセクション単位の局所編集を保持する。本プロジェクトのプロンプトは短いため対象外。
 - **7d. 多目的粒度**: 精度以外にコスト・出力長・レイテンシを同時に最適化。InstOptima/EMO-Prompts はパレートフロントを複数目的で追跡する。evalloop は現状レポート可視化のみ計画（最適化自体は未対応）。
-- **7e. Agent/Multi-step粒度**: Agent の多段推論軌跡全体を最適化。PROMST は軌跡の失敗点から改善する。本プロジェクトは単発QA前提のため対象外。
+- **7e. Agent/Multi-step粒度**: Agent の多段ツール軌跡を最適化する。evalloop は **PROMST**（`optimize.method: promst`）をスクラッチ適応している。
+  - **タスク**: `answer_type: agent`。golden の `expected` は `{"tools": ["kb.search", ...], "answer": "..."}`。最終評価は promptfoo の JSON deep-equality（`json_field_match.js`）
+  - **学習代理指標**: 最初の失敗ステップまでの tool prefix（0.7）＋回答一致（0.3）。最終評価の完全一致とは意図的に別物
+  - **候補評価**: ホスト LLM を候補ごとに呼ばない。指示文からルーティング規則を読む決定的ポリシーで軌跡をロールアウトする（鉄の掟: プロセス内高速 metric）
+  - **PROMST ループ**: 失敗軌跡の first-failing-step を reflection LM に渡し、指示を書き換え、train スコアが上がったときだけ採用（`params.max_iterations` / `params.seed`）
+  - サンプル: `tasks/sample-agent/`（問い合わせを FAQ検索 / チケット起票へルーティングする合成軌跡）
+  - ツール未実装やグラフ実装のバグは引き続き APO 対象外（第1章）。直すのは**指示に書いたツール選択・手順**である
 
 ---
 
@@ -83,7 +91,7 @@ APO を適用・評価する際の運用上の前提。
 
 1. **評価セットと分割の前提**: train/holdout 分割が取れる評価セットが必須。鉄の掟 #1（`assert_split_disjoint`）に従い、train と test の ID 交差は即異常終了。
 2. **適用しやすい症状**: 指示が曖昧・分類がぶれる・抽出が安定しない（Instruction 粒度）。例の順序で性能がぶれる（Exemplar 粒度）。これらは APO の効きやすい症状。
-3. **後回しにすべき症状**: 検索未ヒット・チャンク境界崩れ・パース欠損・ツール誤選択・ワークフロー破綻。プロンプト以外が主因の場合は APO より先に根本原因を直す。
+3. **後回しにすべき症状**: 検索未ヒット・チャンク境界崩れ・パース欠損・ツール未実装・状態機械のコードバグ。プロンプト以外が主因の場合は APO より先に根本原因を直す。ツール説明文や多段ルーティング指示が主因なら 7e PROMST。
 4. **holdout側での改善確認**: train でのスコア上昇だけでは「汎化した」と言えない。holdout（test split）で改善が確認できて初めて採用。GEPA の valset スコアと test での最終評価は別物（代理指標と最終評価の divergence は測定対象）。
 5. **1 prompt × 1 provider原則**: 1回の最適化は1プロンプト・1プロバイダで行う。複数プロバイダを同時に最適化すると、プロバイダ間の挙動差がどの指示変更によるものか分離できなくなる。
 6. **本番失敗パターンを評価セットに含める**: 本番で失敗したケースは評価セットに追加し、回帰テスト可能な形にする。APO は評価セットの上に成り立つため、評価セットが本番を代表していないと改善が本番に効かない。
@@ -114,7 +122,7 @@ Soft Prompt（Prefix-Tuning 等）や PEFT（LoRA 等）は本プロジェクト
 ## 参考
 
 - [docs/DESIGN.md](DESIGN.md) — 設計ドキュメント・鉄の掟（第11章）
-- `src/evalloop/optimizers/` — 最適化手法パッケージ（`gepa.py` / `miprov2.py` / `copro.py` / `tapo.py`、共通契約は `base.py`、代理指標は `metrics.py`）
+- `src/evalloop/optimizers/` — 最適化手法パッケージ（`gepa.py` / `miprov2.py` / `copro.py` / `tapo.py` / `promst.py`、共通契約は `base.py`、代理指標は `metrics.py`、エージェント軌跡は `agent.py`）
 - `src/evalloop/optimize.py` — オーケストレーション（手法選択 → variant生成 → run/report/compare）
 - Issue #60 — 本ガイドの作成指示
 - Issue #67 — 3手法対応ドキュメント更新（本改訂）

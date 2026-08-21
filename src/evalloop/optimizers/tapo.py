@@ -56,6 +56,8 @@ def select_metrics_for_answer_type(answer_type: str) -> list[str]:
         return ["json_deep_equal", "valid_json"]
     if answer_type == "text":
         return ["token_f1", "length_ratio"]
+    if answer_type == "agent":
+        return ["trajectory_prefix", "answer_match"]
     raise OptimizeError(f"tapo: unsupported answer_type {answer_type!r}")
 
 
@@ -64,7 +66,7 @@ def _secondary_score(output: str, expected, answer_type: str) -> float:
     if answer_type == "label":
         lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
         return 1.0 if len(lines) <= 1 and len(text) < 80 else 0.3
-    if answer_type == "json":
+    if answer_type in {"json", "agent"}:
         try:
             json.loads(text)
             return 1.0

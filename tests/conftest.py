@@ -59,6 +59,51 @@ def disable_external_token_counting(monkeypatch):
     monkeypatch.setenv("EVALLOOP_TOKEN_COUNT_API", "off")
 
 
+def default_agent_golden_rows(n_train=4, n_test=4):
+    specs = [
+        (
+            "システムにログインできません。パスワードを何度入力してもエラーになります。",
+            {"tools": ["kb.search", "ticket.create"], "answer": "インシデントを起票しました。"},
+        ),
+        (
+            "契約書の解約条項について教えてください。",
+            {"tools": ["kb.search"], "answer": "契約FAQを案内しました。"},
+        ),
+        (
+            "検索結果に絞り込みフィルタを追加してほしいです。",
+            {"tools": [], "answer": "要望を記録しました。"},
+        ),
+        (
+            "御社の営業時間を教えてください。",
+            {"tools": [], "answer": "担当へ引き継ぎます。"},
+        ),
+    ]
+    rows = []
+    for i in range(n_train):
+        text, expected = specs[i % len(specs)]
+        rows.append(
+            {
+                "id": f"case-{i + 1:04d}",
+                "input": text if i < len(specs) else f"{text}（{i}）",
+                "expected": expected,
+                "split": "train",
+                "meta": {"category": "基本", "source": "self-made"},
+            }
+        )
+    for i in range(n_test):
+        text, expected = specs[i % len(specs)]
+        rows.append(
+            {
+                "id": f"case-{i + 101:04d}",
+                "input": f"{text} test-{i}",
+                "expected": expected,
+                "split": "test",
+                "meta": {"category": "基本", "source": "self-made"},
+            }
+        )
+    return rows
+
+
 def default_golden_rows(labels=None, n_train=4, n_test=4):
     labels = labels or DEFAULT_LABELS
     rows = []
@@ -109,7 +154,9 @@ def scaffold_task(
     if labels is None:
         labels = list(DEFAULT_LABELS) if answer_type == "label" else []
     if golden_rows is None:
-        golden_rows = default_golden_rows(labels or None)
+        golden_rows = (
+            default_agent_golden_rows() if answer_type == "agent" else default_golden_rows(labels or None)
+        )
 
     global_raw = {
         "default_task": default_task if default_task is not None else name,
@@ -129,9 +176,17 @@ def scaffold_task(
         "judge": {"provider": judge_provider, "threshold": 0.8, "agreement_threshold": 0.85},
         "optimize": {"target_alias": optimize_target, "reflection_provider": reflection_provider, "auto": "light"},
     }
-    if answer_type == "json":
+    if answer_type in {"json", "agent"}:
         schema_rel = "schema.json"
-        (task_dir / schema_rel).write_text('{"type": "object"}', encoding="utf-8")
+        if answer_type == "agent":
+            (task_dir / schema_rel).write_text(
+                '{"type":"object","required":["tools","answer"],'
+                '"properties":{"tools":{"type":"array","items":{"type":"string"}},'
+                '"answer":{"type":"string"}}}',
+                encoding="utf-8",
+            )
+        else:
+            (task_dir / schema_rel).write_text('{"type": "object"}', encoding="utf-8")
         task_raw["task"]["json_schema_file"] = schema_rel
     if models is not None:
         task_raw["models"] = models

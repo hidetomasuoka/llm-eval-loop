@@ -22,7 +22,7 @@ import yaml
 from evalloop import paths as paths_mod
 
 VALID_SPLITS = {"train", "test"}
-VALID_ANSWER_TYPES = {"label", "json", "text"}
+VALID_ANSWER_TYPES = {"label", "json", "text", "agent"}
 
 
 class SchemaError(ValueError):
@@ -49,8 +49,10 @@ class TaskConfig:
             )
         if self.answer_type == "label" and not self.labels:
             raise SchemaError("task.answer_type=label requires a non-empty task.labels list")
-        if self.answer_type == "json" and not self.json_schema_file:
-            raise SchemaError("task.answer_type=json requires task.json_schema_file")
+        if self.answer_type in {"json", "agent"} and not self.json_schema_file:
+            raise SchemaError(
+                f"task.answer_type={self.answer_type} requires task.json_schema_file"
+            )
 
 
 @dataclass
@@ -83,7 +85,7 @@ class JudgeConfig:
 
 
 # [APO-04] known prompt-optimization methods
-KNOWN_OPTIMIZE_METHODS = {"gepa", "miprov2", "copro", "tapo"}
+KNOWN_OPTIMIZE_METHODS = {"gepa", "miprov2", "copro", "tapo", "promst"}
 
 
 @dataclass
@@ -91,7 +93,7 @@ class OptimizeConfig:
     target_alias: str
     reflection_provider: str
     auto: str = "light"
-    # [APO-04] method selection: gepa | miprov2 | copro | tapo (extended stepwise)
+    # [APO-04] method selection: gepa | miprov2 | copro | tapo | promst
     method: str = "gepa"
     # method-specific parameter bag, passed through to the chosen optimizer
     params: dict = field(default_factory=dict)

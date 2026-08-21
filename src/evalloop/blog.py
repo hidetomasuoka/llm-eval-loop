@@ -452,7 +452,7 @@ def _effective_grader(meta: dict) -> dict:
         return meta["grader"]
     if meta.get("answer_type") == "text":
         return {"type": "llm-rubric", **(meta.get("judge") or {})}
-    grader_type = "json-field-match" if meta.get("answer_type") == "json" else "label-match"
+    grader_type = "json-field-match" if meta.get("answer_type") in {"json", "agent"} else "label-match"
     return {"type": grader_type, "calibration_status": "not_applicable"}
 
 

@@ -177,6 +177,13 @@ def run_preflight(
             "(2) schema redesign before prompt optimization "
             "(see docs/APO_GUIDE.md). Prompt optimization is for content-accuracy gains."
         )
+    if cfg.task.answer_type == "agent":
+        result.warnings.append(
+            "answer_type=agent: training uses a first-failing-step trajectory proxy "
+            "(tool prefix + answer); final eval is JSON deep-equality. "
+            "Prefer optimize.method: promst when tool order / workflow instructions "
+            "are the failure mode (see docs/APO_GUIDE.md 7e)."
+        )
 
     # --- force: demote errors to warnings --------------------------------------
     if force and result.errors:

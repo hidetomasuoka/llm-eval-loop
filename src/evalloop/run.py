@@ -283,6 +283,7 @@ def run(
         "text": "llm-rubric",
         "label": "label-match",
         "json": "json-field-match",
+        "agent": "json-field-match",
     }[config.task.answer_type]
     agreement_rate = None
     if grader_type == "llm-rubric":

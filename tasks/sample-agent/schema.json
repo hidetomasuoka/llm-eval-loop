@@ -1,0 +1,12 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["tools", "answer"],
+  "properties": {
+    "tools": {
+      "type": "array",
+      "items": {"type": "string", "enum": ["kb.search", "ticket.create"]}
+    },
+    "answer": {"type": "string"}
+  }
+}

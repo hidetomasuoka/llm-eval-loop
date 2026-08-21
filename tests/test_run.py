@@ -32,7 +32,7 @@ def _make_config(answer_type="label"):
             answer_type=answer_type,
             prompt_file="tasks/sample-inquiry/prompts/task.txt",
             labels=["契約照会", "障害報告", "機能要望", "その他"],
-            json_schema_file="tasks/t1/schema.json" if answer_type == "json" else None,
+            json_schema_file="tasks/t1/schema.json" if answer_type in {"json", "agent"} else None,
         ),
         models=[
             ModelConfig(provider="anthropic:messages:claude-haiku-4-5-20251001", alias="haiku45", tier="small"),
@@ -140,6 +140,7 @@ def test_run_base_meta_records_effective_prompt_and_config_hash(isolated_root, m
     [
         ("label", "label-match", "not_applicable"),
         ("json", "json-field-match", "not_applicable"),
+        ("agent", "json-field-match", "not_applicable"),
         ("text", "llm-rubric", "uncalibrated"),
     ],
 )

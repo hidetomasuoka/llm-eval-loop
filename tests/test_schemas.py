@@ -86,12 +86,11 @@ def test_duplicate_alias_rejected(tmp_path):
 
 
 def test_load_task_parses_real_sample_task():
-    # tasks/sample-inquiry/ is the only task whose data is tracked in git
-    # (fresh clone / CI). Keep the checks generic rather than tied to content.
+    # tasks/sample-inquiry/ is a git-tracked demo task (fresh clone / CI).
     cfg, paths = load_task("sample-inquiry")
     assert cfg.task.name == "sample-inquiry"
     assert paths.task == "sample-inquiry"
-    assert cfg.task.answer_type in {"label", "json", "text"}
+    assert cfg.task.answer_type in {"label", "json", "text", "agent"}
     if cfg.task.answer_type == "label":
         assert cfg.task.labels
     aliases = [m.alias for m in cfg.models]
@@ -104,6 +103,14 @@ def test_load_task_parses_real_sample_task():
     assert Path(cfg.task.prompt_file) == paths.prompt_file
     assert Path(cfg.judge.rubric_file) == paths.rubric_file
     assert paths.prompt_file.exists()
+
+
+def test_load_task_parses_sample_agent():
+    cfg, paths = load_task("sample-agent")
+    assert cfg.task.answer_type == "agent"
+    assert cfg.optimize.method == "promst"
+    assert paths.golden.exists()
+    assert cfg.task.json_schema_file.endswith("schema.json")
 
 
 def test_load_task_missing_top_level_key_raises(tmp_path):

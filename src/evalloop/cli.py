@@ -101,7 +101,7 @@ def _load_task_or_exit(task: str | None, models: str | None = None):
 @task_app.command("init")
 def task_init(
     name: str = typer.Argument(..., help="New task name (lowercase alphanumerics and hyphens)"),
-    answer_type: str = typer.Option("label", "--answer-type", help="label / json / text"),
+    answer_type: str = typer.Option("label", "--answer-type", help="label / json / text / agent"),
 ) -> None:
     """Scaffold tasks/<name>/ (task.yaml + prompts/ + PROVENANCE.md). golden.jsonl is up to you -- it stays out of git."""
     try:

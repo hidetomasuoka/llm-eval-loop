@@ -59,6 +59,7 @@ def test_select_metrics_for_answer_type():
     assert select_metrics_for_answer_type("label") == ["label_match", "single_line_brevity"]
     assert select_metrics_for_answer_type("json") == ["json_deep_equal", "valid_json"]
     assert select_metrics_for_answer_type("text") == ["token_f1", "length_ratio"]
+    assert select_metrics_for_answer_type("agent") == ["trajectory_prefix", "answer_match"]
     with pytest.raises(OptimizeError, match="unsupported"):
         select_metrics_for_answer_type("other")
 

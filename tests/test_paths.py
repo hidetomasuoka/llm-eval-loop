@@ -56,6 +56,15 @@ def test_init_invalid_name_raises(isolated_root):
         paths_mod.init_task_workspace("Bad Name!", root=isolated_root)
 
 
+def test_init_agent_task_scaffolds_schema(isolated_root):
+    tp = paths_mod.init_task_workspace("t-agent", root=isolated_root, answer_type="agent")
+    assert (tp.task_dir / "schema.json").exists()
+    raw = yaml.safe_load(tp.task_config.read_text(encoding="utf-8"))
+    assert raw["task"]["answer_type"] == "agent"
+    assert raw["task"]["json_schema_file"] == "schema.json"
+    assert "kb.search" in tp.prompt_file.read_text(encoding="utf-8")
+
+
 def test_init_unknown_answer_type_raises(isolated_root):
     with pytest.raises(ValueError):
         paths_mod.init_task_workspace("t-x", root=isolated_root, answer_type="regex")

@@ -1,0 +1,33 @@
+# =============================================================================
+# サンプルタスク: サポートエージェント軌跡（合成データ）
+#
+# answer_type=agent。expected は {tools, answer}。最終評価は JSON deep-equality、
+# 学習（PROMST）は first-failing-step の軌跡代理指標。
+# golden.jsonl は自作合成（meta.source: self-made）のため git 追跡にオプトイン。
+# =============================================================================
+
+task:
+  answer_type: agent
+  labels: []
+  json_schema_file: schema.json
+
+judge:
+  # 最終評価は is-json + json_field_match.js。ジャッジLLMは呼ばれない。
+  provider: anthropic:messages:claude-sonnet-4-6
+  threshold: 0.8
+  agreement_threshold: 0.85
+
+optimize:
+  target_alias: qwen7b
+  reflection_provider: anthropic/claude-opus-4-8
+  auto: light
+  method: promst
+  params:
+    max_iterations: 4
+    seed: 0
+
+blog:
+  jpy_per_usd: 150
+  slug_prefix: llm-eval
+  allowed_sources:
+    - "self-made"
