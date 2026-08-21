@@ -7,8 +7,9 @@ hosted-model judge from Python).
 
 This module is a **scratch** adaptation onto the PromptOptimizer contract:
 
-1. Roll out each train case with the instruction-conditioned local policy
-   (``optimizers.agent.rollout_from_instruction``) — not a hosted LLM.
+1. Roll out each train case through the in-process agent loop
+   (``evalloop.agent.run_agent``): the instruction supplies the tool plan,
+   local tools actually execute, and the trace records observations.
 2. Locate the first failing step (wrong / extra / missing tool, or answer).
 3. Ask ``reflection_lm`` to rewrite the instruction targeting that step.
 4. Keep the rewrite only if the TRAIN proxy score improves.
@@ -26,8 +27,7 @@ import dspy
 
 from evalloop.optimizers.agent import (
     first_failing_step,
-    parse_agent_trajectory,
-    rollout_from_instruction,
+    run_agent,
     trajectory_json,
 )
 from evalloop.optimizers.base import OptimizeError, OptimizeResult
@@ -45,8 +45,8 @@ class _AgentProgram:
 
     def __call__(self, **kwargs):
         user_input = kwargs.get("input") or ""
-        traj = rollout_from_instruction(self.signature.instructions, user_input)
-        return dspy.Prediction(output=trajectory_json(traj))
+        traj = run_agent(self.signature.instructions, user_input)
+        return dspy.Prediction(output=trajectory_json(traj.as_eval()))
 
 
 def _evaluate(instructions: str, trainset: list, metric: Callable) -> float:
@@ -61,21 +61,22 @@ def _evaluate(instructions: str, trainset: list, metric: Callable) -> float:
 
 
 def _collect_failures(instructions: str, trainset: list, metric: Callable) -> list[dict]:
-    program = _AgentProgram(instructions)
     failures: list[dict] = []
     for gold in trainset:
-        pred = program(input=gold.input)
+        rolled = run_agent(instructions, gold.input)
+        pred = dspy.Prediction(output=trajectory_json(rolled.as_eval()))
         score = float(metric(gold, pred))
         if score >= 1.0 - 1e-9:
             continue
-        traj = parse_agent_trajectory(getattr(pred, "output", "") or "")
         expected = getattr(gold, "expected", None)
+        traj = rolled.as_eval()
         failures.append(
             {
                 "case_id": getattr(gold, "case_id", None) or getattr(gold, "id", None),
                 "input": gold.input,
                 "expected": expected,
                 "predicted": traj,
+                "steps": rolled.as_steps(),
                 "score": round(score, 6),
                 "first_fail": first_failing_step(traj, expected),
             }
@@ -92,6 +93,7 @@ def _reflect_instruction(prompt_model, instruction: str, failure: dict) -> str:
         f"User input:\n{failure.get('input')}\n\n"
         f"Expected trajectory:\n{json.dumps(failure.get('expected'), ensure_ascii=False)}\n"
         f"Predicted trajectory:\n{json.dumps(failure.get('predicted'), ensure_ascii=False)}\n"
+        f"Tool observations:\n{json.dumps(failure.get('steps'), ensure_ascii=False)}\n"
         f"First failing step: {json.dumps(fail, ensure_ascii=False)}\n\n"
         f"Current instruction:\n```\n{instruction}\n```\n"
     )
@@ -144,6 +146,7 @@ def run_promst(
                 "candidate_score": round(cand_score, 6),
                 "accepted": accepted,
                 "first_fail": failures[0]["first_fail"],
+                "n_steps": len(failures[0].get("steps") or []),
             }
         )
         if accepted:

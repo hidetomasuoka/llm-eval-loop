@@ -259,6 +259,7 @@ blog:
 | `cluster [--notes data/notes.csv]` | notes.csv | data/taxonomy.draft.yaml | LLM(promptfoo経由)でタクソノミー案生成（既存taxonomy.yamlは上書きしない） |
 | `pivot RUN_ID` | output.json + taxonomy.yaml | reports/pivot_{run_id}.md | 失敗カテゴリ×モデルのクロス集計（unassigned行あり） |
 | `optimize` | golden(train) | tasks/.../optimized/..., promptfoo/variants/... | GEPA / MIPROv2 / COPRO / TAPO / PROMST → 最適化プロンプト保存 → variant → 自動run/report/compare |
+| `agent rollout` | task instruction + 入力文 | 標準出力 JSON | プロセス内エージェントループ（ローカルツール実行）。PROMST の学習対象と同じランタイム |
 | `compare --runs A,B` | 2つのrun | reports/compare_A_B.md | before/after比較（精度差・コスト差） |
 | `blog --runs A[,B] [--slug NAME]` | run(s) | blog/{date}_{slug}/ | セクション9の一式を生成 |
 
@@ -321,6 +322,10 @@ human_labels.jsonl の各ケースについて、`--run-id` があれば既存ru
    `answer_type=agent` は `optimize.method: promst` で軌跡の最初の失敗ステップから指示を直す
    （詳細は [docs/APO_GUIDE.md](APO_GUIDE.md) 7e）。GEPA / COPRO / TAPO も同じ代理指標で
    agent タスクを学習できるが、軌跡特化の既定は PROMST。
+
+### 8.6 agent runtime（PROMST の学習対象）
+
+`evalloop.agent` はホスト LLM なしのエージェントループである。ポリシー（既定は指示文からツール順を読む `InstructionRoutingPolicy`）が次アクションを決め、`AgentEnv` が `kb.search` / `ticket.create` を実行し、観測を履歴に積む。PROMST（`optimize.method: promst`）はこのループの軌跡を代理指標で採点する。同じループは `evalloop agent rollout --task sample-agent "..."` で単体実行できる。最終 holdout は従来どおり promptfoo が `{tools, answer}` の JSON deep-equal で採点する（学習ループと最終評価の divergence は測定対象）。
 
 ## 9. ブログ出力仕様（blog.py）★
 

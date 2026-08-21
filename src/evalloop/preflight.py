@@ -179,10 +179,11 @@ def run_preflight(
         )
     if cfg.task.answer_type == "agent":
         result.warnings.append(
-            "answer_type=agent: training uses a first-failing-step trajectory proxy "
-            "(tool prefix + answer); final eval is JSON deep-equality. "
+            "answer_type=agent: training rolls out an in-process agent loop "
+            "(local tools, first-failing-step proxy); final eval is JSON deep-equality. "
             "Prefer optimize.method: promst when tool order / workflow instructions "
-            "are the failure mode (see docs/APO_GUIDE.md 7e)."
+            "are the failure mode (see docs/APO_GUIDE.md 7e). "
+            "Inspect a trace with: evalloop agent rollout --task NAME \"...\""
         )
 
     # --- force: demote errors to warnings --------------------------------------

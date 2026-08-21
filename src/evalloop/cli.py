@@ -36,7 +36,9 @@ app = typer.Typer(
     ),
 )
 task_app = typer.Typer(help="Manage task workspaces under tasks/")
+agent_app = typer.Typer(help="Run the in-process agent loop that APO trains against")
 app.add_typer(task_app, name="task")
+app.add_typer(agent_app, name="agent")
 console = Console()
 
 _TASK_OPTION = typer.Option(
@@ -144,6 +146,44 @@ def task_list() -> None:
             dataset = "[yellow]missing (see PROVENANCE.md)[/yellow]"
         table.add_row(name, dataset, "*" if name == default_task else "")
     console.print(table)
+
+
+@agent_app.command("rollout")
+def agent_rollout(
+    user_input: str = typer.Argument(..., help="User utterance for the agent"),
+    task: str = _TASK_OPTION,
+    instruction_file: Path | None = typer.Option(
+        None,
+        "--instruction-file",
+        help="Override the task prompt's instruction section (otherwise prompts/task.txt)",
+    ),
+) -> None:
+    """Execute local tools step by step using the task instruction (no hosted LLM)."""
+    cfg, paths = _load_task_or_exit(task)
+    if cfg.task.answer_type != "agent":
+        console.print(
+            f"[bold red]agent rollout:[/bold red] task {paths.task!r} has "
+            f"answer_type={cfg.task.answer_type!r}; need answer_type=agent"
+        )
+        raise typer.Exit(1)
+    from evalloop.agent import run_agent
+    from evalloop.optimizers.metrics import extract_instructions_from_template
+
+    if instruction_file is not None:
+        instruction = instruction_file.read_text(encoding="utf-8")
+    else:
+        instruction = extract_instructions_from_template(paths.prompt_file.read_text(encoding="utf-8"))
+    traj = run_agent(instruction, user_input)
+    payload = {
+        "task": paths.task,
+        "input": user_input,
+        "tools": traj.tools,
+        "answer": traj.answer,
+        "steps": traj.as_steps(),
+        "finished": traj.finished,
+        "truncated": traj.truncated,
+    }
+    console.print_json(data=payload)
 
 
 @app.command()

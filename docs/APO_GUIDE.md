@@ -67,8 +67,8 @@ train/holdout が取れない（評価セットが小さすぎる・ラベルが
 - **7e. Agent/Multi-step粒度**: Agent の多段ツール軌跡を最適化する。evalloop は **PROMST**（`optimize.method: promst`）をスクラッチ適応している。
   - **タスク**: `answer_type: agent`。golden の `expected` は `{"tools": ["kb.search", ...], "answer": "..."}`。最終評価は promptfoo の JSON deep-equality（`json_field_match.js`）
   - **学習代理指標**: 最初の失敗ステップまでの tool prefix（0.7）＋回答一致（0.3）。最終評価の完全一致とは意図的に別物
-  - **候補評価**: ホスト LLM を候補ごとに呼ばない。指示文からルーティング規則を読む決定的ポリシーで軌跡をロールアウトする（鉄の掟: プロセス内高速 metric）
-  - **PROMST ループ**: 失敗軌跡の first-failing-step を reflection LM に渡し、指示を書き換え、train スコアが上がったときだけ採用（`params.max_iterations` / `params.seed`）
+  - **候補評価**: ホスト LLM を候補ごとに呼ばない。`evalloop.agent` のループが指示からツール計画を読み、**ローカルツールを実際に実行**して軌跡（tool + observation）を残す。`evalloop agent rollout` で同じループを単体実行できる
+  - **PROMST ループ**: 失敗軌跡の first-failing-step（とツール観測）を reflection LM に渡し、指示を書き換え、train スコアが上がったときだけ採用（`params.max_iterations` / `params.seed`）
   - サンプル: `tasks/sample-agent/`（問い合わせを FAQ検索 / チケット起票へルーティングする合成軌跡）
   - ツール未実装やグラフ実装のバグは引き続き APO 対象外（第1章）。直すのは**指示に書いたツール選択・手順**である
 
@@ -122,7 +122,8 @@ Soft Prompt（Prefix-Tuning 等）や PEFT（LoRA 等）は本プロジェクト
 ## 参考
 
 - [docs/DESIGN.md](DESIGN.md) — 設計ドキュメント・鉄の掟（第11章）
-- `src/evalloop/optimizers/` — 最適化手法パッケージ（`gepa.py` / `miprov2.py` / `copro.py` / `tapo.py` / `promst.py`、共通契約は `base.py`、代理指標は `metrics.py`、エージェント軌跡は `agent.py`）
+- `src/evalloop/agent/` — エージェントランタイム（ループ・ローカルツール・ポリシー）。PROMST の学習対象
+- `src/evalloop/optimizers/` — 最適化手法パッケージ（`gepa.py` / `miprov2.py` / `copro.py` / `tapo.py` / `promst.py`、共通契約は `base.py`、代理指標は `metrics.py`）
 - `src/evalloop/optimize.py` — オーケストレーション（手法選択 → variant生成 → run/report/compare）
 - Issue #60 — 本ガイドの作成指示
 - Issue #67 — 3手法対応ドキュメント更新（本改訂）

@@ -154,3 +154,4 @@ def test_run_promst_local_policy_improves_with_reflection_stub():
     assert optimized.signature.instructions.strip() == STRONG_INSTRUCTION.strip()
     assert optimized.promst_best_score == 1.0
     assert any(step.get("accepted") for step in optimized.promst_iterations)
+    assert any((step.get("n_steps") or 0) >= 1 for step in optimized.promst_iterations)
