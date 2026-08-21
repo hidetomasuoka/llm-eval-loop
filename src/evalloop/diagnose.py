@@ -62,17 +62,17 @@ SYMPTOM_CHOICES: tuple[SymptomChoice, ...] = (
         5,
         "Agent軌跡が破綻",
         "7e. Agent/Multi-step",
-        (),
-        out_of_scope=True,
+        ("promst",),
     ),
 )
 
 Q1_PROMPT = (
-    "Q1: 症状はプロンプト以外（検索未ヒット / パース欠損 / ツール誤選択 / "
-    "ワークフロー破綻等）が主因の可能性がありますか?"
+    "Q1: 症状はプロンプト以外（検索未ヒット / チャンク境界崩れ / パース欠損 / "
+    "ツール未実装）が主因の可能性がありますか?"
 )
 DEFER_NON_PROMPT_MESSAGE = (
-    "APO適用は保留。先にRAG / パース / ツール説明 / ワークフローを修正してください。"
+    "APO適用は保留。先にRAG / パース / ツール実装を修正してください。"
+    "ツール説明文や多段ルーティング指示が主因なら Q2 で Agent軌跡 を選んでください。"
     "（docs/APO_GUIDE.md 第1章参照）"
 )
 NEED_EVAL_SET_MESSAGE = (
@@ -97,6 +97,17 @@ METHOD_SNIPPETS: dict[str, str] = {
     max_bootstrapped_demos: 4
     max_labeled_demos: 4
     val_ratio: 0.2
+    seed: 0""",
+    "tapo": """optimize:
+  method: tapo
+  params:
+    population_size: 4
+    generations: 3
+    seed: 0""",
+    "promst": """optimize:
+  method: promst
+  params:
+    max_iterations: 4
     seed: 0""",
 }
 

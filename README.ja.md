@@ -112,11 +112,11 @@ uv run evalloop cluster                                    # LLMがカテゴリ�
 #   -> 内容を確認し、data/taxonomy.yaml として保存（draftは自動では上書きしない）
 uv run evalloop pivot <run_id>                              # 失敗カテゴリ×モデルのクロス集計
 uv run evalloop calibrate --run-id <run_id>                 # LLMジャッジと人手ラベルの一致率を確認
-uv run evalloop optimize                                    # dspy（GEPA / MIPROv2 / COPRO / TAPO）でプロンプトを改善（train splitのみ使用）
+uv run evalloop optimize                                    # dspy（GEPA / MIPROv2 / COPRO / TAPO / PROMST）でプロンプトを改善（train splitのみ使用）
 #   -> task.yaml の optimize.method で手法を選択（未設定=gepa）。最適化後、自動でrun/report/compare(直近のベースrunがあれば)まで実行される
 #   -> 自動holdout runの後、train vs holdout の汎化ゲート（ベースライン holdout との比較 pass/fail、表示のみ・exit codeは不変）をコンソールと optimize_log.json に記録
 #   -> 実行前に概算コスト（train件数×手法別の反復目安×価格表の単価）を表示し、run.cost_warn_usd 超過なら確認プロンプト（--yes で抑止、CI向け）
-#   ※ いずれの手法も学習は answer_type ごとの決定的な代理メトリクス（label match / トークンF1 / JSON deep-equal）で行い、最終評価はタスク設定の採点器のまま（sample-inquiry は label_match、text タスクは llm-rubric。既知の制約参照）
+#   ※ いずれの手法も学習は answer_type ごとの決定的な代理メトリクス（label match / トークンF1 / JSON deep-equal / agent 軌跡 prefix）で行い、最終評価はタスク設定の採点器のまま（sample-inquiry は label_match、sample-agent は json_field_match、text タスクは llm-rubric。既知の制約参照）
 #   ※ どの失敗症状にどの最適化手法を当てるかは docs/APO_GUIDE.md（症状→粒度→手法の診断ガイド）を参照
 uv run evalloop blog --runs <run_id>                        # ブログ用の図表・記事ドラフトをblog/に出力
 ```
@@ -160,7 +160,8 @@ uv run evalloop blog --runs <run_id>                        # ブログ用の図
 | `evalloop cluster [--notes PATH]` | notes.csvからLLMが失敗タクソノミー案を生成 |
 | `evalloop pivot RUN_ID` | 失敗カテゴリ×モデルのクロス集計 |
 | `evalloop diagnose [--answers 1,2,3]` | 症状→粒度→手法の対話チェックリスト（APO適用可否と `optimize.method` 推奨。LLM不要） |
-| `evalloop optimize` | dspy（GEPA / MIPROv2 / COPRO / TAPO、task.yaml の `optimize.method` で選択）でプロンプト最適化、自動でrun/report/compare（手法選定は [docs/APO_GUIDE.md](docs/APO_GUIDE.md) 参照） |
+| `evalloop agent rollout --task NAME TEXT` | PROMST が学習に使うプロセス内エージェントループを単体実行（ローカルツール、ホスト LLM なし） |
+| `evalloop optimize` | dspy（GEPA / MIPROv2 / COPRO / TAPO / PROMST、task.yaml の `optimize.method` で選択）でプロンプト最適化、自動でrun/report/compare（手法選定は [docs/APO_GUIDE.md](docs/APO_GUIDE.md) 参照） |
 | `evalloop compare --runs A,B[,C...]` | 2runはbefore/after差分（コスト%・出力トークン・プロンプト長のトレードオフ注意付き）、3run以上はモデル×runマトリクス比較（マトリクスには optimize_log の探索コスト `search_cost` / 所要時間 `duration_s` 列も表示） |
 | `evalloop blog --runs A[,B[,C...]] [--slug NAME]` | 公開ガード通過後にブログ用一式を生成（2run以上は手法比較向けに条件依存性の免責を挿入。3run以上は compare と同じモデル×runマトリクスも tables.md に含める。精度×コストのパレート前線図 `fig04` も含む） |
 
@@ -256,19 +257,25 @@ run成果物の生出力（output.json / meta.json）にはローカル絶対パ
 - `tasks/sample-inquiry/`（追跡・オプトイン） — 問い合わせ4分類の**自作ダミー24件**
   （`meta.source: "self-made"`、一般的なSaaS問い合わせを模した創作文）と、ジャッジ校正
   デモ用の**合成フィクスチャ10件**（`output_raw` は架空のモデル出力）
+- `tasks/sample-agent/`（追跡・オプトイン） — サポートエージェント軌跡の**自作ダミー16件**
+  （`answer_type: agent`、`{tools, answer}`。障害は kb.search→ticket.create、契約は検索のみ、要望・その他はツールなし）
 - `tasks/cuad100/`（データ非追跡） — [CUAD v1](https://www.atticusprojectai.org/cuad)
   （The Atticus Project発行、**CC BY 4.0**）から抽出した100件のサブセット。取得元は
   Hugging Faceの `chenghao/cuad_qa` ミラー。ファイル指紋と復元手順は PROVENANCE.md 参照
 
 ## 既知の制約
 
-- `evalloop optimize` は3つのanswer_typeすべてに対応し、4つの最適化手法
-  （`optimize.method` で `gepa` / `miprov2` / `copro` / `tapo` を選択、未設定=gepa）を切り替えられる。
+- `evalloop optimize` は4つの answer_type（`label` / `json` / `text` / `agent`）と5つの最適化手法
+  （`optimize.method` で `gepa` / `miprov2` / `copro` / `tapo` / `promst` を選択、未設定=gepa）を切り替えられる。
   いずれの手法も**学習メトリクスは決定的な代理指標であり、最終評価とは別物**:
   `label` はラベル一致ロジックの移植、`text`（現在アクティブなCUAD-100タスク等）は
-  正解スパンとのSQuAD方式トークンF1、`json` はdeep-equalityの移植を使う。
-  textタスクの最終評価（promptfoo側）は従来どおりllm-rubricジャッジのままなので、
-  学習メトリクスと最終採点は乖離しうる — その乖離の計測自体が最適化ケーススタディの対象である
+  正解スパンとのSQuAD方式トークンF1、`json` はdeep-equalityの移植、
+  `agent` は first-failing-step の軌跡 prefix（tools 0.7 + answer 0.3）を使う。
+  textタスクの最終評価（promptfoo側）は従来どおりllm-rubricジャッジのまま、
+  agent タスクの最終評価は `{tools, answer}` の JSON deep-equality なので、
+  学習メトリクスと最終採点は乖離しうる — その乖離の計測自体が最適化ケーススタディの対象である。
+  ツール順・ルーティング指示が主因の失敗は **PROMST**（`optimize.method: promst`、
+  [docs/APO_GUIDE.md](docs/APO_GUIDE.md) 7e、`tasks/sample-agent/`）
 - MIPROv2 で `params.max_bootstrapped_demos` / `max_labeled_demos` を正にすると few-shot
   demo 探索が有効になる（既定0=従来どおり instruction のみ）。プロンプトに `{{demos}}` が
   必要で、選ばれた demos は `optimized/<alias>/<variant>/demos.jsonl` に保存され variant へ
@@ -276,7 +283,7 @@ run成果物の生出力（output.json / meta.json）にはローカル絶対パ
 - few-shot の**順序感度**を見るときは `evalloop build --shuffle-demos N` で
   `<task>_demoshuffle_{seed}` variant を作り、各々を `evalloop run --variant ...` →
   `report` したあと `evalloop compare --runs A,B,C...` で分散を見る（run の自動ループはしない）
-- 上記「学習メトリクスが代理指標である制約」はGEPA・MIPROv2・COPROすべて、および
+- 上記「学習メトリクスが代理指標である制約」はGEPA・MIPROv2・COPRO・TAPO・PROMSTすべて、および
   将来追加される他のオプティマイザ（OPRO・APE・EASE等）にも共通する。プロセス内で
   高速に評価を回すには構造化判定（ラベル一致・トークンF1・deep-equal等）が必要で、
   LLMジャッジを毎候補ロールアウトで呼ぶことは鉄の掟（Pythonからモデルproviderを

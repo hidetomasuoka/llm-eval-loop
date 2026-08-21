@@ -37,6 +37,7 @@ def test_q1_yes_defers_non_prompt():
     [
         ([2, 1, 1], "gepa"),
         ([2, 2, 1], "miprov2"),
+        ([2, 5, 1], "promst"),
     ],
 )
 def test_supported_symptoms_recommend_method(answers, expected_method):
@@ -54,6 +55,7 @@ def test_supported_symptoms_recommend_method(answers, expected_method):
     [
         [2, 1, 2],
         [2, 2, 2],
+        [2, 5, 2],
     ],
 )
 def test_supported_symptoms_need_eval_set_first(answers):
@@ -68,7 +70,6 @@ def test_supported_symptoms_need_eval_set_first(answers):
     [
         ([2, 3], "7c. 長文構造"),
         ([2, 4], "7d. 多目的"),
-        ([2, 5], "7e. Agent/Multi-step"),
     ],
 )
 def test_out_of_scope_symptoms(answers, fragment):
@@ -84,6 +85,13 @@ def test_instruction_symptom_shows_copro_alternative():
     assert "7a. Instruction" in text
     assert "gepa / copro" in text
     assert "代替候補: copro" in text
+
+
+def test_agent_symptom_shows_promst_granularity():
+    _, text = _run([2, 5, 1])
+    assert "7e. Agent/Multi-step" in text
+    assert "promst" in text
+    assert "未対応" not in text
 
 
 def test_exemplar_symptom_shows_miprov2_granularity():

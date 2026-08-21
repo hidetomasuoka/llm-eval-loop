@@ -32,7 +32,7 @@ def _make_config(
             answer_type=answer_type,
             prompt_file="tasks/sample-inquiry/prompts/task.txt",
             labels=["契約照会", "障害報告", "機能要望", "その他"] if answer_type == "label" else [],
-            json_schema_file="schema.json" if answer_type == "json" else None,
+            json_schema_file="schema.json" if answer_type in {"json", "agent"} else None,
         ),
         models=models
         or [
@@ -73,6 +73,15 @@ def test_default_test_label_uses_label_match_js(isolated_root):
 
 def test_default_test_json_uses_is_json_and_field_match(isolated_root):
     cfg = _make_config(answer_type="json")
+    paths = TaskPaths(root=isolated_root, task="t1")
+    default_test = build_mod._build_default_test(cfg, allow_same_judge=False, paths=paths)
+    types = [a["type"] for a in default_test["assert"]]
+    assert types == ["is-json", "javascript"]
+    assert "json_field_match.js" in default_test["assert"][1]["value"]
+
+
+def test_default_test_agent_uses_json_field_match(isolated_root):
+    cfg = _make_config(answer_type="agent")
     paths = TaskPaths(root=isolated_root, task="t1")
     default_test = build_mod._build_default_test(cfg, allow_same_judge=False, paths=paths)
     types = [a["type"] for a in default_test["assert"]]

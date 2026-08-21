@@ -875,6 +875,18 @@ def test_estimate_optimize_cost_copro_factor_is_breadth_times_depth(isolated_roo
     assert optimize_mod.estimate_optimize_cost(cfg_default, train, "p").rollout_factor == 30
 
 
+def test_estimate_optimize_cost_promst_bills_reflection_only(isolated_root):
+    _cfg, paths = scaffold_task(isolated_root, answer_type="agent", labels=[])
+    cfg, _ = _set_optimize_method(paths, isolated_root, "promst", params={"max_iterations": 5})
+    train = [_train_case(i, "x" * 30) for i in range(4)]
+    est = optimize_mod.estimate_optimize_cost(cfg, train, "p")
+    assert est.method == "promst"
+    assert est.rollout_factor == 5
+    assert est.rollout_count == 0
+    assert est.reflection_call_count == 5
+    assert est.target_usd == 0.0
+
+
 def test_estimate_optimize_cost_reflection_price_unknown(isolated_root):
     # DEFAULT_GLOBAL_MODELS has no registry entry matching the reflection
     # provider string -> price unknown (None), counted as 0 in the total

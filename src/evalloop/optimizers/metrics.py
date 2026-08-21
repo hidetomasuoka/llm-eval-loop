@@ -15,6 +15,9 @@ a deterministic proxy metric per answer_type:
              not something this module hides
     json  -- port of asserts/json_field_match.js deep-equality (pinned by
              tests/fixtures/json_field_match_cases.json)
+    agent -- first-failing-step trajectory prefix (0.7 tools + 0.3 answer).
+             The FINAL evaluation stays promptfoo JSON deep-equality against
+             {tools, answer}; training proxy and final judge can diverge
 """
 
 from __future__ import annotations
@@ -277,6 +280,38 @@ def _json_deep_equal(a, b) -> bool:
     return type(a) is type(b) and a == b
 
 
+def agent_score_and_feedback(output, expected) -> tuple[float, str]:
+    """Partial-credit trajectory proxy for answer_type=agent.
+
+    Tools are scored by longest matching prefix over max(len(pred), len(gold)).
+    Answer is exact after light punctuation strip. Combined 0.7 / 0.3 so a
+    missing tool is the dominant failure (PROMST's first-failing-step signal).
+    """
+    from evalloop.optimizers.agent import first_failing_step, parse_agent_trajectory, tools_prefix_score
+
+    pred = parse_agent_trajectory(output)
+    gold = parse_agent_trajectory(expected)
+    fail = first_failing_step(pred, gold)
+    tools_s = tools_prefix_score(pred["tools"], gold["tools"])
+    gold_ans = (gold.get("answer") or "").strip().replace("。", "").replace(".", "")
+    pred_ans = (pred.get("answer") or "").strip().replace("。", "").replace(".", "")
+    ans_s = 1.0 if pred_ans == gold_ans else 0.0
+    score = 0.7 * tools_s + 0.3 * ans_s
+    if fail.get("kind") == "none":
+        return 1.0, "agent trajectory matches gold tools and answer."
+    if fail.get("kind") == "tool":
+        return score, (
+            f"first failing step is tool[{fail['index']}]: "
+            f"predicted {fail['predicted']!r} expected {fail['expected']!r}. "
+            "Rewrite the instruction so the agent calls the correct tools in order, "
+            "then answers."
+        )
+    return score, (
+        f"tools matched but answer differed: predicted {fail['predicted']!r} "
+        f"expected {fail['expected']!r}. Pin the final answer phrasing in the instruction."
+    )
+
+
 def json_score_and_feedback(output, expected) -> tuple[float, str]:
     try:
         parsed = json.loads(output) if isinstance(output, str) else output
@@ -309,6 +344,8 @@ def _score_fn_for(cfg):
         return text_score_and_feedback
     if cfg.task.answer_type == "json":
         return json_score_and_feedback
+    if cfg.task.answer_type == "agent":
+        return agent_score_and_feedback
     # unreachable while TaskConfig validates answer_type, but fail loudly if
     # a new type is added there without a metric here
     raise OptimizeError(f"no GEPA training metric for answer_type {cfg.task.answer_type!r}")

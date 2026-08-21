@@ -139,7 +139,7 @@ llm-eval-loop/
 |---|---|:---:|---|
 | id | str | ○ | 一意。`case-` プレフィックス |
 | input | str | ○ | プロンプトの `{{input}}` に入る |
-| expected | str \| dict | ○ | answer_typeに応じた期待値 |
+| expected | str \| dict | ○ | label/text は str。json/agent は dict（agent は `{tools, answer}`） |
 | split | "train" \| "test" | ○ | **後から変更しない** |
 | meta.category | str | ○ | ピボット軸になる事前分類 |
 | meta.difficulty | str | - | easy / normal / hard |
@@ -206,10 +206,10 @@ taxonomy.yaml は `categories`（id/name/definition のリスト）と `assignme
 ```yaml
 task:
   name: sample-inquiry-classification
-  answer_type: label            # label | json | text
+  answer_type: label            # label | json | text | agent
   prompt_file: prompts/base/task.txt
   labels: ["契約照会", "障害報告", "機能要望", "その他"]
-  json_schema_file: null        # answer_type=jsonのとき必須
+  json_schema_file: null        # answer_type=json / agent のとき必須
 models:                         # provider IDの表記は実装時にpromptfoo公式Docsで確認済み
   - provider: ollama:chat:qwen2.5:7b
     alias: qwen7b
@@ -258,7 +258,8 @@ blog:
 | `failures RUN_ID` | output.json | results/runs/{run_id}/failures.jsonl, data/notes.csv | 失敗抽出＋メモ用テンプレ生成（追記・冪等） |
 | `cluster [--notes data/notes.csv]` | notes.csv | data/taxonomy.draft.yaml | LLM(promptfoo経由)でタクソノミー案生成（既存taxonomy.yamlは上書きしない） |
 | `pivot RUN_ID` | output.json + taxonomy.yaml | reports/pivot_{run_id}.md | 失敗カテゴリ×モデルのクロス集計（unassigned行あり） |
-| `optimize` | golden(train) | prompts/optimized/..., promptfoo/variants/... | GEPA実行→最適化プロンプト保存→variant config生成→自動run/report/compare |
+| `optimize` | golden(train) | tasks/.../optimized/..., promptfoo/variants/... | GEPA / MIPROv2 / COPRO / TAPO / PROMST → 最適化プロンプト保存 → variant → 自動run/report/compare |
+| `agent rollout` | task instruction + 入力文 | 標準出力 JSON | プロセス内エージェントループ（ローカルツール実行）。PROMST の学習対象と同じランタイム |
 | `compare --runs A,B` | 2つのrun | reports/compare_A_B.md | before/after比較（精度差・コスト差） |
 | `blog --runs A[,B] [--slug NAME]` | run(s) | blog/{date}_{slug}/ | セクション9の一式を生成 |
 
@@ -270,6 +271,7 @@ blog:
 2. answer_typeに応じて `defaultTest.assert` を構成:
    - **label**: `javascript` assert（`asserts/label_match.js`）。出力を正規化（前後空白・全角半角・末尾句点除去）し、`context.vars.expected` と一致、またはラベルリスト中の1つだけが出力に含まれる場合にpass
    - **json**: `is-json`（json_schema_file指定）＋ `javascript`（`asserts/json_field_match.js`）でフィールド比較
+   - **agent**: json と同じ最終評価（`{tools, answer}` の deep-equal）。学習代理指標は軌跡 prefix（PROMST）
    - **text**: `llm-rubric`。`provider` に judge.provider を**必ず明示**（環境変数依存のデフォルトグレーダー禁止）、`threshold` 設定。
      rubricは**ファイルの中身を読み込んでインライン文字列として`value`に埋め込む**（`file://...`参照ではない）。
      実機検証で判明: promptfoo 0.121.17では`llm-rubric`の`value`が`file://`参照だと
@@ -315,9 +317,15 @@ human_labels.jsonl の各ケースについて、`--run-id` があれば既存ru
    `../`を1つ多く挿入して再root化している）を生成
 5. 自動で `run --variant` → `report` → `compare`（index.jsonlにある直近のベースrunがあれば
    最適化前後を比較。大型モデルも同じrunに含まれるため表に自然に含まれる）まで実行
-6. **現状 `answer_type=="label"` のみ対応**（metricがlabel_match.js相当のみ移植済みのため）。
-   json/textタイプでoptimizeを呼ぶと明示的にOptimizeErrorになる — 対応する場合は
-   json用・text用のmetricをoptimize.pyに追加すること
+6. **学習メトリクス**は answer_type ごとの決定的代理指標（label match / token F1 / JSON
+   deep-equal / agent の first-failing-step 軌跡）。最終評価は promptfoo。
+   `answer_type=agent` は `optimize.method: promst` で軌跡の最初の失敗ステップから指示を直す
+   （詳細は [docs/APO_GUIDE.md](APO_GUIDE.md) 7e）。GEPA / COPRO / TAPO も同じ代理指標で
+   agent タスクを学習できるが、軌跡特化の既定は PROMST。
+
+### 8.6 agent runtime（PROMST の学習対象）
+
+`evalloop.agent` はホスト LLM なしのエージェントループである。ポリシー（既定は指示文からツール順を読む `InstructionRoutingPolicy`）が次アクションを決め、`AgentEnv` が `kb.search` / `ticket.create` を実行し、観測を履歴に積む。PROMST（`optimize.method: promst`）はこのループの軌跡を代理指標で採点する。同じループは `evalloop agent rollout --task sample-agent "..."` で単体実行できる。最終 holdout は従来どおり promptfoo が `{tools, answer}` の JSON deep-equal で採点する（学習ループと最終評価の divergence は測定対象）。
 
 ## 9. ブログ出力仕様（blog.py）★
 

@@ -36,11 +36,12 @@ tasks/*/taxonomy.yaml
 tasks/*/taxonomy.draft.yaml
 tasks/*/failures.jsonl
 
-# 例外: 合成デモデータの sample-inquiry のみオプトイン追跡
+# 例外: 合成デモデータの sample-inquiry / sample-agent のみオプトイン追跡
 # （PROVENANCE.md にライセンス明記済みの公開・合成データに限る）
 !tasks/sample-inquiry/golden.jsonl
 !tasks/sample-inquiry/demos.jsonl
 !tasks/sample-inquiry/human_labels.jsonl
+!tasks/sample-agent/golden.jsonl
 
 # ---------------------------------------------------------------------------
 # evalloopの生成物（コミット禁止）

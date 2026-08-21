@@ -31,7 +31,7 @@ ASSERTS_DIR = Path(__file__).resolve().parent / "asserts"
 LABEL_MATCH_JS = ASSERTS_DIR / "label_match.js"
 JSON_FIELD_MATCH_JS = ASSERTS_DIR / "json_field_match.js"
 
-ESTIMATED_OUTPUT_TOKENS = {"label": 12, "json": 120, "text": 200}
+ESTIMATED_OUTPUT_TOKENS = {"label": 12, "json": 120, "text": 200, "agent": 160}
 
 
 class BuildError(RuntimeError):
@@ -113,7 +113,7 @@ def _build_default_test(config: Config, allow_same_judge: bool, paths: TaskPaths
             {"type": "javascript", "value": f"file://{to_promptfoo_relpath(LABEL_MATCH_JS, promptfoo_dir)}"}
         ]
 
-    elif answer_type == "json":
+    elif answer_type in {"json", "agent"}:
         is_json_assert: dict = {"type": "is-json"}
         if config.task.json_schema_file:
             schema_path = REPO_ROOT / config.task.json_schema_file
@@ -252,6 +252,21 @@ def build(
         if bad:
             raise BuildError(
                 f"golden.jsonl has case(s) with `expected` not in task.labels {config.task.labels}: {bad}"
+            )
+
+    if config.task.answer_type == "agent":
+        bad: list[str] = []
+        for case in cases:
+            exp = case.expected
+            if not isinstance(exp, dict) or not isinstance(exp.get("tools"), list) or "answer" not in exp:
+                bad.append(case.id)
+                continue
+            if not all(isinstance(t, str) for t in exp["tools"]):
+                bad.append(case.id)
+        if bad:
+            raise BuildError(
+                "golden.jsonl agent cases need expected={tools: [str], answer: ...}; "
+                f"bad ids: {bad}"
             )
 
     train_cases = [c for c in cases if c.split == "train"]

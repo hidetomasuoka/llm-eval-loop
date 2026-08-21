@@ -217,6 +217,32 @@ _TASK_PROMPT_TEMPLATE = """\
 {{input}}
 """
 
+_AGENT_PROMPT_TEMPLATE = """\
+あなたはサポートエージェントです。必要ならツールを呼び、最後に回答します。
+使えるツール: kb.search, ticket.create
+出力は次のJSONオブジェクトのみ（説明・コードフェンス禁止）:
+{"tools": ["kb.search"], "answer": "最終回答"}
+ツール不要なら "tools": [] にしてください。
+
+問い合わせ:
+{{input}}
+"""
+
+_AGENT_SCHEMA_TEMPLATE = """\
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["tools", "answer"],
+  "properties": {
+    "tools": {
+      "type": "array",
+      "items": {"type": "string", "enum": ["kb.search", "ticket.create"]}
+    },
+    "answer": {"type": "string"}
+  }
+}
+"""
+
 _RUBRIC_TEMPLATE = """\
 ここに llm-rubric ジャッジ用の採点基準を書く。
 {{input}} と {{expected}} のプレースホルダは promptfoo が実行時に置換する。
@@ -259,8 +285,8 @@ def init_task_workspace(name: str, root: Path = REPO_ROOT, answer_type: str = "l
     """
     validate_task_name(name)
     # keep in sync with schemas.VALID_ANSWER_TYPES (importing it here would be circular)
-    if answer_type not in {"label", "json", "text"}:
-        raise ValueError(f"unknown answer_type {answer_type!r} (expected label/json/text)")
+    if answer_type not in {"label", "json", "text", "agent"}:
+        raise ValueError(f"unknown answer_type {answer_type!r} (expected label/json/text/agent)")
     paths = TaskPaths(root=root, task=name)
     # duplicate = a task.yaml exists, not merely the directory: an empty dir or
     # a half-written scaffold isn't a task (list_tasks won't show it either),
@@ -274,11 +300,13 @@ def init_task_workspace(name: str, root: Path = REPO_ROOT, answer_type: str = "l
         if answer_type == "label"
         else "  labels: []\n"
     )
-    paths.task_config.write_text(
-        _TASK_YAML_TEMPLATE.format(name=name, answer_type=answer_type, labels_block=labels_block),
-        encoding="utf-8",
-    )
-    paths.prompt_file.write_text(_TASK_PROMPT_TEMPLATE, encoding="utf-8")
+    yaml_text = _TASK_YAML_TEMPLATE.format(name=name, answer_type=answer_type, labels_block=labels_block)
+    if answer_type == "agent":
+        yaml_text = yaml_text.replace("json_schema_file: null", "json_schema_file: schema.json")
+        (paths.task_dir / "schema.json").write_text(_AGENT_SCHEMA_TEMPLATE, encoding="utf-8")
+    paths.task_config.write_text(yaml_text, encoding="utf-8")
+    prompt_text = _AGENT_PROMPT_TEMPLATE if answer_type == "agent" else _TASK_PROMPT_TEMPLATE
+    paths.prompt_file.write_text(prompt_text, encoding="utf-8")
     if answer_type == "text":
         paths.rubric_file.write_text(_RUBRIC_TEMPLATE, encoding="utf-8")
     (paths.task_dir / "PROVENANCE.md").write_text(_PROVENANCE_TEMPLATE.format(name=name), encoding="utf-8")
