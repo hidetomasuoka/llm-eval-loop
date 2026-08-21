@@ -64,6 +64,8 @@
 **モデル呼び出しは常にpromptfoo経由**で行う（`echo` providerで既存出力をリプレイしたり、
 使い捨てconfigで1回のevalを流したりする形で実装している。`src/evalloop/calibrate.py`,
 `src/evalloop/analyze.py` 参照）。Pythonが直接LLM APIを叩くことはない。
+プロセスタスク（`task.process_file`）も同じ: LLMノードは promptfoo eval の波実行、
+最終採点は echo + 既存 assert。グラフの分岐・テンプレートだけが Python 側。
 
 > **補足**: promptfooは2026年3月にOpenAIに買収されたが、現行ライセンス（MIT）のOSSとして継続することが公式に表明されている（出典: [OpenAI to acquire Promptfoo](https://openai.com/index/openai-to-acquire-promptfoo/)、[Promptfoo is joining OpenAI](https://www.promptfoo.dev/blog/promptfoo-joining-openai/)）。ローカル実行ならデータは手元に残る。**`promptfoo share` はクラウドアップロードなので本プロジェクトでは使用禁止**（セクション9の公開ガード参照）。
 
@@ -386,6 +388,13 @@ human_labels.jsonl の各ケースについて、`--run-id` があれば既存ru
 5. **コストの二段ガード**: 実行前概算で確認プロンプト、実行後は実測をmeta/indexに記録。概算に使う単価表(config)は使用時点の公式価格に更新する
 6. **未校正／低一致率ジャッジのスコアには必ず警告表示**
 7. **ブログ出力は公開ガード（9.3）を通過しないと生成されない**。`promptfoo share`はどこからも呼ばない
+
+### 11.1 プロセスタスク（Dify風DAG）
+
+`task.yaml` の `process_file` が指す YAML は start / llm / template / if-else / end の DAG。
+視覚キャンバスは持たない。LLM 呼び出しはノード単位の promptfoo eval、最終出力は
+echo provider で既存グレーダーへ渡す。`optimize` はグラフ全体では拒否する（APO 7e 対象外）。
+DSL と実行は `src/evalloop/process/`、デモは `tasks/sample-process/`。
 
 ## 12. マイルストーン（全て実装済み）
 

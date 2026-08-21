@@ -239,6 +239,19 @@ def run(
     timeout_s: int | None = None,
     split: str = "test",
 ) -> RunOutcome:
+    if config.task.process_file:
+        from evalloop.process.execute import run_process
+
+        return run_process(
+            config,
+            paths,
+            variant=variant,
+            repeat=repeat,
+            limit=limit,
+            no_cache=no_cache,
+            timeout_s=timeout_s,
+            split=split,
+        )
     promptfoo_config_path = resolve_config_path(paths, variant, split=split)
     if not promptfoo_config_path.exists():
         raise RunError(f"{promptfoo_config_path} does not exist; run `evalloop build --task {paths.task}` first")

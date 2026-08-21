@@ -105,6 +105,22 @@ Adding a task never touches existing tasks. `uv run evalloop task init <name>` s
 
 Then run everything with `--task <name>`. Model definitions (provider IDs, prices, `supports_sampling_params`) live once in the global `config.yaml` registry; a task picks aliases from it. `models[].provider` uses promptfoo notation (e.g. `anthropic:messages:claude-...`, `ollama:chat:qwen2.5:7b`), while `optimize.reflection_provider` uses dspy/litellm notation (e.g. `anthropic/claude-...`). **The two formats differ.** Prices and provider IDs in the bundled config are samples only: never use an ID that doesn't pass `doctor`, and update prices to the official pricing at the time of use.
 
+## Process tasks (Dify-style node graphs)
+
+Besides a single `prompts/task.txt`, you can evaluate a Dify-like DAG of **start / llm / template / if-else / end** nodes declared in `process.yaml`. LLM nodes still go through promptfoo; branching and templates run in Python; the final output is graded with the echo provider plus the existing label/json/text asserts. There is no visual canvas (`evalloop process mermaid` prints a diagram). Graph-level `optimize` is out of scope — extract a single llm node into a prompt task first.
+
+Bundled demo `tasks/sample-process/` (classify → special reply for contract inquiries, canned reply otherwise):
+
+```bash
+uv run evalloop process validate --task sample-process
+uv run evalloop process mermaid --task sample-process
+uv run evalloop build --task sample-process --models qwen7b
+uv run evalloop run --task sample-process --limit 4
+uv run evalloop report <run_id>
+```
+
+Scaffold with `uv run evalloop task init NAME --kind process`. Set `process_file: process.yaml` in `task.yaml`. Conditions are `var == 'lit'` / `!=` / `contains` / `empty` only (no arbitrary code).
+
 > **Models that reject sampling parameters**: `claude-opus-4-8` and `claude-fable-5` reject `temperature` and other sampling parameters with **HTTP 400**. Set `models[].supports_sampling_params: false` for such models and `evalloop build` will omit temperature from the generated promptfoo config (`max_tokens` is always sent). The bundled `config.yaml` already sets this for opus48 / fable5.
 > Also note that `claude-fable-5` has always-on thinking, so its latency and output token counts can be larger than other models' (keep this in mind when interpreting cost estimates and latency comparisons).
 
@@ -121,6 +137,8 @@ Then run everything with `--task <name>`. Model definitions (provider IDs, price
 | `evalloop failures RUN_ID` | Extract failing cases, append note rows to notes.csv (idempotent) |
 | `evalloop cluster [--notes PATH]` | An LLM drafts a failure taxonomy from notes.csv |
 | `evalloop pivot RUN_ID` | Failure-category × model cross-tab |
+| `evalloop process validate` | Validate the `process.yaml` DAG (start/end, cycles, reachability) |
+| `evalloop process mermaid` | Print the process graph as a mermaid flowchart |
 | `evalloop diagnose [--answers 1,2,3]` | Interactive symptom → granularity → method checklist (APO readiness and recommended `optimize.method`; no LLM) |
 | `evalloop optimize` | Prompt optimization with dspy (GEPA / MIPROv2 / COPRO / TAPO, chosen via `optimize.method` in task.yaml), then automatic run/report/compare (method selection guide: [docs/APO_GUIDE.md](docs/APO_GUIDE.md)). With a dev split, the automatic eval runs on dev only and a McNemar shipping gate decides `promoted` (see "Improvement loop" note below) |
 | `evalloop compare --runs A,B[,C...]` | Compare 2 runs (before/after deltas + paired McNemar `b/c`/`mcnemar_p` columns + cost%/tokens/prompt-length tradeoff note) or 3+ runs (model×run matrix; matrix also shows optimize `search_cost` / `duration_s` from optimize_log) |
@@ -184,6 +202,7 @@ Raw run outputs (output.json / meta.json) can contain local absolute paths and p
 Each task documents its data source and how to re-obtain it in `tasks/<name>/PROVENANCE.md`. All data ever bundled here comes from public datasets or was created synthetically for this project; **none of it is related to real customer data, business data, or actual inquiries**.
 
 - `tasks/sample-inquiry/` (tracked, opt-in) — **24 self-made dummy cases** for 4-way inquiry classification (`meta.source: "self-made"`; invented texts imitating generic SaaS inquiries) plus **10 synthetic fixtures** for the judge-calibration demo (`output_raw` values are fictional model outputs)
+- `tasks/sample-process/` (tracked, opt-in) — **8 self-made dummy cases** (train 4 / test 4, `answer_type=json`) for a classify → if-else → canned-reply graph
 - `tasks/cuad100/` (data untracked) — a 150-case subset extracted from [CUAD v1](https://www.atticusprojectai.org/cuad) (published by The Atticus Project, **CC BY 4.0**), obtained via the `chenghao/cuad_qa` mirror on Hugging Face (train 50 / dev 40 / test 60, including 18 negative cases whose gold answer is "該当条項なし"); regenerate deterministically with `tasks/cuad100/scripts/build_golden.py`, and see its PROVENANCE.md for the file fingerprint and selection procedure
 
 ## Known constraints
@@ -192,6 +211,7 @@ Each task documents its data source and how to re-obtain it in `tasks/<name>/PRO
 - With MIPROv2, setting `params.max_bootstrapped_demos` / `max_labeled_demos` > 0 enables few-shot demo search (default 0 keeps instruction-only). The prompt must contain `{{demos}}`; chosen demos are written to `optimized/<alias>/<variant>/demos.jsonl` and re-expanded into the variant (train split only, with test-leak checks; see [docs/DESIGN.md](docs/DESIGN.md) §5.6)
 - To check few-shot **order sensitivity**, run `evalloop build --shuffle-demos N` to write `<task>_demoshuffle_{seed}` variants, then `evalloop run --variant ...` / `report` each and inspect spread with `evalloop compare --runs A,B,C...` (no automated run loop)
 - The "training metric is a proxy" constraint above is common to **GEPA, MIPROv2, and COPRO**, and to any future optimizer (OPRO, APE, EASE, etc.) this harness may add. Fast in-process candidate evaluation requires a structured verdict (label match, token F1, deep-equal, etc.); invoking an LLM judge per candidate rollout is forbidden by the iron rule (Python never calls a model provider directly). So "train on a proxy metric, verify on a separate final metric" is a harness-wide APO premise (see [docs/APO_GUIDE.md](docs/APO_GUIDE.md) for method selection)
+- Process tasks (`process_file`) cannot be `evalloop optimize`'d as a whole graph. Extract an llm node into a single-prompt task first
 - With a small local model (qwen2.5:7b) as judge, instruction following is less stable than with frontier models (e.g. it occasionally returns grading rationales in languages other than English/Japanese). Prefer a judge substantially stronger than the models being evaluated (as `config.yaml` is designed to do)
 - `tasks/cuad100/human_labels.jsonl` is gitignored. Issue #100 used a local **gold-oracle proxy** (not human review) to calibrate `glm-5.2` and `deepseek-v4-pro` at 100% agreement; see [tasks/cuad100/PROVENANCE.md](tasks/cuad100/PROVENANCE.md). Status is persisted in `results/<task>/calibration.json` and reused by later `run`/`report` for the same judge provider. The `sample-inquiry` task ships 10 synthetic labels for the calibration demo
 

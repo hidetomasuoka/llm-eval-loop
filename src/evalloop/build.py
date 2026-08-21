@@ -24,6 +24,8 @@ import yaml
 
 from evalloop.demos import DEMOS_PLACEHOLDER, DemoError, expand_demos_in_template
 from evalloop.paths import REPO_ROOT, TaskPaths
+from evalloop.process.execute import load_validated_process, write_node_promptfoo_configs
+from evalloop.process.schema import ProcessError
 from evalloop.schemas import Config, GoldenCase, assert_split_disjoint, load_golden_jsonl
 from evalloop.token_counting import average_input_tokens, render_case_prompts
 
@@ -242,6 +244,10 @@ def build(
             f"task {paths.task!r} has no dataset at {paths.golden}. Task data is not tracked in git "
             f"(issue #47 data policy) -- see {paths.task_dir / 'PROVENANCE.md'} for how to obtain it."
         )
+    if config.task.process_file:
+        if shuffle_demos is not None:
+            raise BuildError("process tasks do not support --shuffle-demos")
+        return _build_process(config, paths, allow_same_judge=allow_same_judge, yes=yes, confirm_fn=confirm_fn)
     cases = load_golden_jsonl(paths.golden)
 
     if config.task.answer_type == "label":
@@ -329,4 +335,142 @@ def build(
         except sensitivity_mod.SensitivityError as e:
             raise BuildError(str(e)) from e
 
+    return estimate
+
+
+def _prepare_split_cases(
+    config: Config, paths: TaskPaths
+) -> tuple[list[GoldenCase], list[GoldenCase], list[GoldenCase]]:
+    cases = load_golden_jsonl(paths.golden)
+    if config.task.answer_type == "label":
+        bad = sorted({c.id for c in cases if isinstance(c.expected, str) and c.expected not in config.task.labels})
+        if bad:
+            raise BuildError(f"golden.jsonl has case(s) with `expected` not in task.labels {config.task.labels}: {bad}")
+    train_cases = [c for c in cases if c.split == "train"]
+    dev_cases = [c for c in cases if c.split == "dev"]
+    test_cases = [c for c in cases if c.split == "test"]
+    if not test_cases:
+        raise BuildError("golden.jsonl has no split=='test' cases; promptfoo eval would run 0 tests")
+    assert_split_disjoint({c.id for c in train_cases}, {c.id for c in test_cases})
+    assert_split_disjoint({c.id for c in train_cases}, {c.id for c in dev_cases}, label="train/dev")
+    assert_split_disjoint({c.id for c in dev_cases}, {c.id for c in test_cases}, label="dev/test")
+    return train_cases, dev_cases, test_cases
+
+
+def _write_split_yamls(paths: TaskPaths, train_cases, dev_cases, test_cases) -> None:
+    _write_tests_yaml(paths.tests_test, test_cases)
+    _write_tests_yaml(paths.tests_train, train_cases)
+    if dev_cases:
+        _write_tests_yaml(paths.tests_dev, dev_cases)
+    else:
+        paths.tests_dev.unlink(missing_ok=True)
+        paths.promptfoo_config_dev.unlink(missing_ok=True)
+        if paths.variants_dir.exists():
+            for stale in paths.variants_dir.glob("*.dev.yaml"):
+                stale.unlink()
+
+
+def _confirm_cost(estimate: CostEstimate, config: Config, yes: bool, confirm_fn) -> None:
+    if estimate.total_usd > config.run.cost_warn_usd and not yes:
+        confirm = confirm_fn or (lambda msg: input(f"{msg} [y/N] ").strip().lower() == "y")
+        if not confirm(
+            f"Estimated cost ${estimate.total_usd:.4f} exceeds cost_warn_usd "
+            f"(${config.run.cost_warn_usd:.2f}). Continue?"
+        ):
+            raise BuildError("aborted by user: cost estimate exceeded cost_warn_usd")
+
+
+def estimate_process_cost(config: Config, test_cases: list[GoldenCase], paths: TaskPaths) -> CostEstimate:
+    from evalloop.process.execute import resolve_node_text
+
+    try:
+        graph = load_validated_process(config)
+    except ProcessError as e:
+        raise BuildError(str(e)) from e
+    llm_nodes = graph.llm_nodes()
+    if not llm_nodes:
+        return CostEstimate(
+            per_model_usd={m.alias: 0.0 for m in config.models},
+            per_model_input_tokens={m.alias: 0 for m in config.models},
+            token_count_methods={m.alias: "process-no-llm" for m in config.models},
+            total_usd=0.0,
+        )
+    parts = [estimate_cost(config, test_cases, resolve_node_text(node, paths.task_dir)) for node in llm_nodes]
+    per_model_usd = {alias: sum(p.per_model_usd[alias] for p in parts) for alias in parts[0].per_model_usd}
+    per_model_input_tokens = {
+        alias: sum(p.per_model_input_tokens[alias] for p in parts) for alias in parts[0].per_model_input_tokens
+    }
+    return CostEstimate(
+        per_model_usd=per_model_usd,
+        per_model_input_tokens=per_model_input_tokens,
+        token_count_methods=parts[0].token_count_methods,
+        total_usd=sum(per_model_usd.values()),
+    )
+
+
+def _build_process(
+    config: Config,
+    paths: TaskPaths,
+    *,
+    allow_same_judge: bool,
+    yes: bool,
+    confirm_fn,
+) -> CostEstimate:
+    try:
+        graph = load_validated_process(config)
+    except ProcessError as e:
+        raise BuildError(str(e)) from e
+
+    train_cases, dev_cases, test_cases = _prepare_split_cases(config, paths)
+    # Validate defaultTest (iron rule #2) even though process run uses echo grading.
+    default_test = _build_default_test(config, allow_same_judge, paths)
+    providers = []
+    for m in config.models:
+        provider_config: dict = {}
+        if m.supports_sampling_params:
+            provider_config["temperature"] = config.run.temperature
+        provider_config["max_tokens"] = config.run.max_tokens
+        providers.append({"id": m.provider, "label": m.alias, "config": provider_config})
+
+    process_rel = Path(config.task.process_file).name if config.task.process_file else "process.yaml"
+    promptfoo_config = {
+        "description": config.task.name,
+        "evalloop_process": True,
+        "process_file": process_rel,
+        "providers": providers,
+        "defaultTest": default_test,
+        "tests": f"file://{to_promptfoo_relpath(paths.tests_test, paths.promptfoo_dir)}",
+    }
+    config_text = yaml.safe_dump(promptfoo_config, allow_unicode=True, sort_keys=False)
+    _assert_config_never_references_train(config_text)
+    dev_config_text = None
+    if dev_cases:
+        dev_config = dict(promptfoo_config)
+        dev_config["tests"] = f"file://{to_promptfoo_relpath(paths.tests_dev, paths.promptfoo_dir)}"
+        dev_config_text = yaml.safe_dump(dev_config, allow_unicode=True, sort_keys=False)
+        _assert_config_never_references_train(dev_config_text)
+
+    _write_split_yamls(paths, train_cases, dev_cases, test_cases)
+    paths.promptfoo_dir.mkdir(parents=True, exist_ok=True)
+    paths.promptfoo_config.write_text(config_text, encoding="utf-8")
+    if dev_cases:
+        paths.promptfoo_config_dev.write_text(dev_config_text, encoding="utf-8")
+    write_node_promptfoo_configs(config, paths, graph)
+
+    estimate = estimate_process_cost(config, test_cases, paths)
+    print(f"[build] process graph {graph.source_path} ({len(graph.nodes)} nodes, {len(graph.llm_nodes())} llm)")
+    print(f"[build] {len(train_cases)} train / {len(dev_cases)} dev / {len(test_cases)} test cases from {paths.golden}")
+    print(f"[build] wrote {paths.tests_test} and {paths.tests_train}")
+    print(f"[build] wrote {paths.promptfoo_config}")
+    if dev_cases:
+        print(f"[build] wrote {paths.tests_dev} and {paths.promptfoo_config_dev}")
+    print("[build] estimated pre-run cost (repeat=%d, worst-case all llm nodes):" % config.run.repeat)
+    for alias, usd in estimate.per_model_usd.items():
+        print(
+            f"[build]   {alias}: ${usd:.4f} "
+            f"(~{estimate.per_model_input_tokens[alias]} input tokens/call; "
+            f"method={estimate.token_count_methods[alias]})"
+        )
+    print(f"[build]   TOTAL: ${estimate.total_usd:.4f}  (pre-run estimate)")
+    _confirm_cost(estimate, config, yes, confirm_fn)
     return estimate
