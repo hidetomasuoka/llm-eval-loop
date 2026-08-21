@@ -468,6 +468,12 @@ def optimize(
     config: Config, paths: TaskPaths, *, force: bool = False, yes: bool = False, confirm_fn=None
 ) -> OptimizeOutcome:
     cfg = config
+    if cfg.task.process_file:
+        raise OptimizeError(
+            "process tasks cannot be optimized as a whole graph "
+            "(APO 7e / multi-step is out of scope). Extract a single llm node "
+            "into a prompt task, then run `evalloop optimize` on that."
+        )
     score_fn = _score_fn_for(cfg)  # resolve the training metric first: fail fast on unsupported types
 
     split_test_ids, split_dev_ids, split_test_inputs, split_dev_inputs = _load_split_ids_from_build(paths)

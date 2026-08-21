@@ -59,3 +59,8 @@ def test_init_invalid_name_raises(isolated_root):
 def test_init_unknown_answer_type_raises(isolated_root):
     with pytest.raises(ValueError):
         paths_mod.init_task_workspace("t-x", root=isolated_root, answer_type="regex")
+
+
+def test_init_unknown_kind_raises(isolated_root):
+    with pytest.raises(ValueError, match="unknown task kind"):
+        paths_mod.init_task_workspace("t-x", root=isolated_root, kind="canvas")

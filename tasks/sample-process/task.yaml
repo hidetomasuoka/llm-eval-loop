@@ -1,0 +1,30 @@
+# =============================================================================
+# サンプルタスク: Dify風プロセス（分類 → 分岐テンプレート）
+#
+# 単発プロンプトではなく process.yaml の DAG を評価するデモ。
+# 合成データのため git 追跡にオプトイン（.gitignore の否定パターン）。
+# =============================================================================
+
+task:
+  answer_type: json
+  labels: []
+  json_schema_file: schema.json
+  process_file: process.yaml
+
+# 省略 = グローバル registry の全モデル
+
+judge:
+  provider: anthropic:messages:claude-sonnet-4-6
+  threshold: 0.8
+  agreement_threshold: 0.85
+
+optimize:
+  target_alias: qwen7b
+  reflection_provider: anthropic/claude-opus-4-8
+  auto: light
+
+blog:
+  jpy_per_usd: 150
+  slug_prefix: llm-eval
+  allowed_sources:
+    - "self-made"

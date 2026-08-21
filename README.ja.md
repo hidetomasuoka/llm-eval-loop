@@ -139,6 +139,28 @@ uv run evalloop blog --runs <run_id>                        # ブログ用の図
 単価・provider IDはあくまでサンプル値なので、`doctor` が通らないIDは使わず、単価は
 使用時点の公式価格に更新すること。
 
+## プロセスタスク（Dify風のノードグラフ）
+
+単発の `prompts/task.txt` だけでなく、Dify のような **start / llm / template / if-else / end**
+の DAG を `process.yaml` に書いて評価できる。LLM ノードは従来どおり promptfoo 経由、
+分岐とテンプレートは Python、最終出力は echo provider + 既存の label/json/text 採点器。
+視覚キャンバスは持たない（`evalloop process mermaid` で図を出す）。グラフ全体の
+`optimize` は対象外（ノードを単発タスクに切り出してから最適化する）。
+
+同梱デモ `tasks/sample-process/`（分類 → 契約照会だけ専用返信、他は定型）:
+
+```bash
+uv run evalloop process validate --task sample-process
+uv run evalloop process mermaid --task sample-process
+uv run evalloop build --task sample-process --models qwen7b
+uv run evalloop run --task sample-process --limit 4
+uv run evalloop report <run_id>
+```
+
+新規作成は `uv run evalloop task init NAME --kind process`。`task.yaml` に
+`process_file: process.yaml` を置き、条件式は `var == 'lit'` / `!=` / `contains` / `empty` のみ
+（任意コードは実行しない）。
+
 > **samplingパラメータを受け付けないモデルに注意**: `claude-opus-4-8` や `claude-fable-5` は
 > `temperature` 等のsamplingパラメータの指定を **HTTP 400で拒否**する。該当モデルには
 > `models[].supports_sampling_params: false` を設定すると、`evalloop build` が生成する
@@ -160,6 +182,8 @@ uv run evalloop blog --runs <run_id>                        # ブログ用の図
 | `evalloop failures RUN_ID` | 失敗ケース抽出、notes.csvにメモ欄を追記（冪等） |
 | `evalloop cluster [--notes PATH]` | notes.csvからLLMが失敗タクソノミー案を生成 |
 | `evalloop pivot RUN_ID` | 失敗カテゴリ×モデルのクロス集計 |
+| `evalloop process validate` | `process.yaml` の DAG 検証（start/end・閉路・到達性） |
+| `evalloop process mermaid` | プロセスグラフを mermaid flowchart として表示 |
 | `evalloop diagnose [--answers 1,2,3]` | 症状→粒度→手法の対話チェックリスト（APO適用可否と `optimize.method` 推奨。LLM不要） |
 | `evalloop optimize` | dspy（GEPA / MIPROv2 / COPRO / TAPO、task.yaml の `optimize.method` で選択）でプロンプト最適化、自動でrun/report/compare（手法選定は [docs/APO_GUIDE.md](docs/APO_GUIDE.md) 参照）。dev split があるタスクでは自動評価は dev のみで行い、McNemar 出荷ゲートが `promoted` を判定（下の改善ループの注記参照） |
 | `evalloop compare --runs A,B[,C...]` | 2runはbefore/after差分（paired McNemar の `b/c`・`mcnemar_p` 列とコスト%・出力トークン・プロンプト長のトレードオフ注意付き）、3run以上はモデル×runマトリクス比較（マトリクスには optimize_log の探索コスト `search_cost` / 所要時間 `duration_s` 列も表示） |
@@ -257,6 +281,8 @@ run成果物の生出力（output.json / meta.json）にはローカル絶対パ
 - `tasks/sample-inquiry/`（追跡・オプトイン） — 問い合わせ4分類の**自作ダミー24件**
   （`meta.source: "self-made"`、一般的なSaaS問い合わせを模した創作文）と、ジャッジ校正
   デモ用の**合成フィクスチャ10件**（`output_raw` は架空のモデル出力）
+- `tasks/sample-process/`（追跡・オプトイン） — 分類 LLM → if-else → 定型返信の
+  **自作ダミー8件**（train 4 / test 4、`answer_type=json`）。プロセス評価のデモ
 - `tasks/cuad100/`（データ非追跡） — [CUAD v1](https://www.atticusprojectai.org/cuad)
   （The Atticus Project発行、**CC BY 4.0**）から抽出した150件のサブセット
   （train 50 / dev 40 / test 60。「該当条項なし」が正解のネガティブ18件を含む）。
@@ -285,6 +311,8 @@ run成果物の生出力（output.json / meta.json）にはローカル絶対パ
   LLMジャッジを毎候補ロールアウトで呼ぶことは鉄の掟（Pythonからモデルproviderを
   直接呼ばない）上できない。よって「代理指標で学習し、最終評価は別指標で検証」は
   本ハーネスのAPO全体に共通する前提となる（手法選定は [docs/APO_GUIDE.md](docs/APO_GUIDE.md) 参照）
+- プロセスタスク（`process_file`）のグラフ全体は `evalloop optimize` 対象外。
+  LLM ノードを単発の prompt タスクに切り出してから最適化する
 - ローカル小型モデル（qwen2.5:7b）をジャッジに使うと、まれに英語・日本語以外の言語で
   採点理由を返すなど、フロンティアモデルほど指示追従が安定しない。ジャッジには
   極力、評価対象より十分強いモデルを使うことを推奨（`config.yaml`本来の設計どおり）

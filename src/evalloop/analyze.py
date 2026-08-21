@@ -34,6 +34,25 @@ class AnalyzeError(RuntimeError):
     pass
 
 
+def _load_last_nodes(run_dir: Path) -> dict[tuple[str, str], str]:
+    path = run_dir / "last_nodes.json"
+    if not path.exists():
+        return {}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[tuple[str, str], str] = {}
+    for key, node_id in raw.items():
+        if not isinstance(key, str) or "\t" not in key or not isinstance(node_id, str):
+            continue
+        case_id, alias = key.split("\t", 1)
+        out[(case_id, alias)] = node_id
+    return out
+
+
 def _head(value, n=HEAD_LEN) -> str:
     text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
     text = text.replace("\n", " ")
@@ -52,24 +71,23 @@ def failures(run_id: str, paths: TaskPaths) -> tuple[Path, Path]:
     parsed = parse_promptfoo_output(output_path)
 
     failing = [r for r in parsed.results if r.passed is False or r.error]
+    last_nodes = _load_last_nodes(paths.runs_dir / run_id)
     failures_path = paths.runs_dir / run_id / "failures.jsonl"
     with failures_path.open("w", encoding="utf-8") as f:
         for r in failing:
-            f.write(
-                json.dumps(
-                    {
-                        "case_id": r.case_id,
-                        "alias": r.alias,
-                        "category": r.category,
-                        "expected": r.expected,
-                        "output": r.output,
-                        "reason": r.reason,
-                        "error": r.error,
-                    },
-                    ensure_ascii=False,
-                )
-                + "\n"
-            )
+            row = {
+                "case_id": r.case_id,
+                "alias": r.alias,
+                "category": r.category,
+                "expected": r.expected,
+                "output": r.output,
+                "reason": r.reason,
+                "error": r.error,
+            }
+            failed_node = last_nodes.get((r.case_id or "", r.alias or ""))
+            if failed_node:
+                row["failed_node"] = failed_node
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
     existing_keys: set[tuple[str, str]] = set()
     notes_path = paths.notes

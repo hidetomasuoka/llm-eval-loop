@@ -1,0 +1,33 @@
+process:
+  version: 1
+  nodes:
+    - id: start
+      type: start
+    - id: classify
+      type: llm
+      prompt_file: prompts/classify.txt
+      output: label
+    - id: route
+      type: if-else
+      cases:
+        - when: "label == '契約照会'"
+          goto: contract_reply
+      else: default_reply
+    - id: contract_reply
+      type: template
+      template_file: prompts/contract_reply.txt
+      output: reply
+    - id: default_reply
+      type: template
+      template_file: prompts/default_reply.txt
+      output: reply
+    - id: end
+      type: end
+      assemble:
+        label: label
+        reply: reply
+  edges:
+    - {from: start, to: classify}
+    - {from: classify, to: route}
+    - {from: contract_reply, to: end}
+    - {from: default_reply, to: end}

@@ -8,8 +8,9 @@ monkeypatched.
 
 Data policy (issue #47 section 1.5): golden.jsonl / human_labels.jsonl /
 notes.csv / taxonomy*.yaml are gitignored by default -- only task.yaml,
-prompts/ and PROVENANCE.md are tracked. The synthetic sample-inquiry task is
-the only opt-in tracked dataset (quickstart + CI smoke rely on it).
+prompts/ and PROVENANCE.md are tracked. The synthetic sample-inquiry and
+sample-process tasks are the opt-in tracked datasets (quickstart + CI smoke
+rely on sample-inquiry; sample-process demonstrates process.yaml graphs).
 """
 
 from __future__ import annotations
@@ -54,6 +55,11 @@ class TaskPaths:
     @property
     def prompt_file(self) -> Path:
         return self.task_dir / "prompts" / "task.txt"
+
+    @property
+    def process_nodes_dir(self) -> Path:
+        """Build-time inspectable promptfoo configs for each llm node."""
+        return self.promptfoo_dir / "nodes"
 
     @property
     def rubric_file(self) -> Path:
@@ -192,12 +198,14 @@ _TASK_YAML_TEMPLATE = """\
 # データ（golden.jsonl / human_labels.jsonl 等）は git 管理外（issue #47 の
 # データポリシー）。出典・再取得手順は PROVENANCE.md に記録すること。
 # プロンプトは prompts/task.txt（textタスクは prompts/judge_rubric.txt も）に規約固定。
+# グラフ評価にする場合は process_file: process.yaml を足す
+# （`evalloop task init NAME --kind process`）。
 # =============================================================================
 
 task:
   answer_type: {answer_type}
-{labels_block}  json_schema_file: null
-
+{labels_block}  json_schema_file: {json_schema_file}
+{process_file_line}
 # グローバル registry（config.yaml）からの alias 選択。省略時 = 全モデル
 # models: [qwen7b, haiku45]
 
@@ -217,6 +225,31 @@ blog:
   jpy_per_usd: 150
   slug_prefix: llm-eval
   allowed_sources: ["self-made"]   # 公開ガードが許可する meta.source の値
+"""
+
+_PROCESS_YAML_TEMPLATE = """\
+process:
+  version: 1
+  nodes:
+    - id: start
+      type: start
+    - id: classify
+      type: llm
+      prompt_file: prompts/classify.txt
+      output: label
+    - id: end
+      type: end
+      output: label
+  edges:
+    - {from: start, to: classify}
+    - {from: classify, to: end}
+"""
+
+_PROCESS_CLASSIFY_PROMPT = """\
+次の問い合わせ文を分類し、ラベルだけを出力してください。
+
+入力:
+{{input}}
 """
 
 _TASK_PROMPT_TEMPLATE = """\
@@ -261,16 +294,22 @@ _PROVENANCE_TEMPLATE = """\
 """
 
 
-def init_task_workspace(name: str, root: Path = REPO_ROOT, answer_type: str = "label") -> TaskPaths:
+def init_task_workspace(
+    name: str, root: Path = REPO_ROOT, answer_type: str = "label", kind: str = "prompt"
+) -> TaskPaths:
     """Scaffold tasks/<name>/ (task.yaml + prompts/ + PROVENANCE.md).
 
     golden.jsonl is deliberately NOT created: the data policy keeps it out of
     git, and an empty file would only defer the real error from build time.
+    ``kind='process'`` writes process.yaml and a linear start -> llm -> end graph
+    instead of prompts/task.txt.
     """
     validate_task_name(name)
     # keep in sync with schemas.VALID_ANSWER_TYPES (importing it here would be circular)
     if answer_type not in {"label", "json", "text"}:
         raise ValueError(f"unknown answer_type {answer_type!r} (expected label/json/text)")
+    if kind not in {"prompt", "process"}:
+        raise ValueError(f"unknown task kind {kind!r} (expected prompt/process)")
     paths = TaskPaths(root=root, task=name)
     # duplicate = a task.yaml exists, not merely the directory: an empty dir or
     # a half-written scaffold isn't a task (list_tasks won't show it either),
@@ -284,11 +323,26 @@ def init_task_workspace(name: str, root: Path = REPO_ROOT, answer_type: str = "l
         if answer_type == "label"
         else "  labels: []\n"
     )
+    json_schema_file = "null"
+    if answer_type == "json":
+        (paths.task_dir / "schema.json").write_text('{"type": "object"}\n', encoding="utf-8")
+        json_schema_file = "schema.json"
+    process_file_line = "  process_file: process.yaml\n" if kind == "process" else ""
+    if kind == "process":
+        (paths.task_dir / "process.yaml").write_text(_PROCESS_YAML_TEMPLATE, encoding="utf-8")
+        (paths.task_dir / "prompts" / "classify.txt").write_text(_PROCESS_CLASSIFY_PROMPT, encoding="utf-8")
+    else:
+        paths.prompt_file.write_text(_TASK_PROMPT_TEMPLATE, encoding="utf-8")
     paths.task_config.write_text(
-        _TASK_YAML_TEMPLATE.format(name=name, answer_type=answer_type, labels_block=labels_block),
+        _TASK_YAML_TEMPLATE.format(
+            name=name,
+            answer_type=answer_type,
+            labels_block=labels_block,
+            json_schema_file=json_schema_file,
+            process_file_line=process_file_line,
+        ),
         encoding="utf-8",
     )
-    paths.prompt_file.write_text(_TASK_PROMPT_TEMPLATE, encoding="utf-8")
     if answer_type == "text":
         paths.rubric_file.write_text(_RUBRIC_TEMPLATE, encoding="utf-8")
     (paths.task_dir / "PROVENANCE.md").write_text(_PROVENANCE_TEMPLATE.format(name=name), encoding="utf-8")

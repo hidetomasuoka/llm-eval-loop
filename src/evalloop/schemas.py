@@ -44,6 +44,7 @@ class TaskConfig:
     prompt_file: str
     labels: list[str] = field(default_factory=list)
     json_schema_file: str | None = None
+    process_file: str | None = None
 
     def __post_init__(self) -> None:
         if self.answer_type not in VALID_ANSWER_TYPES:
@@ -227,12 +228,17 @@ def load_task(task: str | None = None, root: Path | None = None) -> tuple[Config
         raise SchemaError(f"{tp.task_config} missing required top-level key: {e}") from e
 
     json_schema_file = task_raw.get("json_schema_file")
+    process_file_raw = task_raw.get("process_file")
+    process_file = str(tp.task_dir / process_file_raw) if process_file_raw else None
+    if process_file and not (tp.task_dir / process_file_raw).is_file():
+        raise SchemaError(f"{tp.task_config}: process_file {process_file_raw!r} not found at {process_file}")
     task_cfg = TaskConfig(
         name=name,  # the directory name is the canonical task name
         answer_type=task_raw["answer_type"],
         prompt_file=str(tp.prompt_file),
         labels=task_raw.get("labels") or [],
         json_schema_file=str(tp.task_dir / json_schema_file) if json_schema_file else None,
+        process_file=process_file,
     )
 
     # task.yaml's models: is an alias subset of the global registry (omitted = all)

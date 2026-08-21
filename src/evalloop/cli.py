@@ -37,6 +37,8 @@ app = typer.Typer(
 )
 task_app = typer.Typer(help="Manage task workspaces under tasks/")
 app.add_typer(task_app, name="task")
+process_app = typer.Typer(help="Validate and visualize process.yaml graphs")
+app.add_typer(process_app, name="process")
 console = Console()
 
 _TASK_OPTION = typer.Option(
@@ -102,17 +104,23 @@ def _load_task_or_exit(task: str | None, models: str | None = None):
 def task_init(
     name: str = typer.Argument(..., help="New task name (lowercase alphanumerics and hyphens)"),
     answer_type: str = typer.Option("label", "--answer-type", help="label / json / text"),
+    kind: str = typer.Option("prompt", "--kind", help="prompt (single task.txt) or process (process.yaml graph)"),
 ) -> None:
     """Scaffold tasks/<name>/ (task.yaml + prompts/ + PROVENANCE.md). golden.jsonl is up to you -- it stays out of git."""
     try:
-        paths = paths_mod.init_task_workspace(name, answer_type=answer_type)
+        paths = paths_mod.init_task_workspace(name, answer_type=answer_type, kind=kind)
     except (paths_mod.TaskExistsError, paths_mod.TaskNotFoundError, ValueError) as e:
         console.print(f"[bold red]task init failed:[/bold red] {e}")
         raise typer.Exit(1) from e
     console.print(f"created {paths.task_dir}")
     console.print("next steps:")
     console.print(f"  1. edit {paths.task_config} (labels, models, judge)")
-    console.print(f"  2. edit {paths.prompt_file}" + (" and prompts/judge_rubric.txt" if answer_type == "text" else ""))
+    if kind == "process":
+        console.print(f"  2. edit {paths.task_dir / 'process.yaml'} and prompts under {paths.task_dir / 'prompts'}")
+    else:
+        console.print(
+            f"  2. edit {paths.prompt_file}" + (" and prompts/judge_rubric.txt" if answer_type == "text" else "")
+        )
     console.print(f"  3. put your dataset at {paths.golden} (gitignored -- document it in PROVENANCE.md)")
     console.print(f"  4. uv run evalloop build --task {name}")
 
@@ -144,6 +152,46 @@ def task_list() -> None:
             dataset = "[yellow]missing (see PROVENANCE.md)[/yellow]"
         table.add_row(name, dataset, "*" if name == default_task else "")
     console.print(table)
+
+
+@process_app.command("validate")
+def process_validate(task: str = _TASK_OPTION) -> None:
+    """Load and validate the task's process.yaml DAG."""
+    from evalloop.process.execute import load_validated_process
+    from evalloop.process.schema import ProcessError
+
+    cfg, paths = _load_task_or_exit(task)
+    if not cfg.task.process_file:
+        console.print(f"[bold red]process validate failed:[/bold red] task {paths.task!r} has no process_file")
+        raise typer.Exit(1)
+    try:
+        graph = load_validated_process(cfg)
+    except ProcessError as e:
+        console.print(f"[bold red]process validate failed:[/bold red] {e}")
+        raise typer.Exit(1) from e
+    n_llm = len(graph.llm_nodes())
+    console.print(
+        f"[green]ok[/green] {graph.source_path}: {len(graph.nodes)} nodes ({n_llm} llm), {len(graph.edges)} edges"
+    )
+
+
+@process_app.command("mermaid")
+def process_mermaid(task: str = _TASK_OPTION) -> None:
+    """Print a mermaid flowchart for the task's process.yaml."""
+    from evalloop.process.execute import load_validated_process
+    from evalloop.process.graph import to_mermaid
+    from evalloop.process.schema import ProcessError
+
+    cfg, paths = _load_task_or_exit(task)
+    if not cfg.task.process_file:
+        console.print(f"[bold red]process mermaid failed:[/bold red] task {paths.task!r} has no process_file")
+        raise typer.Exit(1)
+    try:
+        graph = load_validated_process(cfg)
+        console.print(to_mermaid(graph), highlight=False)
+    except ProcessError as e:
+        console.print(f"[bold red]process mermaid failed:[/bold red] {e}")
+        raise typer.Exit(1) from e
 
 
 @app.command()

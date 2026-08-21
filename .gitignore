@@ -41,6 +41,7 @@ tasks/*/failures.jsonl
 !tasks/sample-inquiry/golden.jsonl
 !tasks/sample-inquiry/demos.jsonl
 !tasks/sample-inquiry/human_labels.jsonl
+!tasks/sample-process/golden.jsonl
 
 # ---------------------------------------------------------------------------
 # evalloopの生成物（コミット禁止）

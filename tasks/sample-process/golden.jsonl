@@ -1,0 +1,8 @@
+{"id": "case-0001", "input": "契約書の解約条項について確認したいです。", "expected": {"label": "契約照会", "reply": "契約に関するご照会を受け付けました。担当者よりご連絡します。"}, "split": "train", "meta": {"category": "基本", "difficulty": "easy", "source": "self-made"}}
+{"id": "case-0002", "input": "ログインできずエラーになります。", "expected": {"label": "障害報告", "reply": "お問い合わせ（障害報告）を受け付けました。内容を確認のうえご案内します。"}, "split": "train", "meta": {"category": "基本", "difficulty": "easy", "source": "self-made"}}
+{"id": "case-0003", "input": "検索にフィルタを追加してほしいです。", "expected": {"label": "機能要望", "reply": "お問い合わせ（機能要望）を受け付けました。内容を確認のうえご案内します。"}, "split": "train", "meta": {"category": "基本", "difficulty": "easy", "source": "self-made"}}
+{"id": "case-0004", "input": "営業時間を教えてください。", "expected": {"label": "その他", "reply": "お問い合わせ（その他）を受け付けました。内容を確認のうえご案内します。"}, "split": "train", "meta": {"category": "基本", "difficulty": "easy", "source": "self-made"}}
+{"id": "case-0005", "input": "契約更新の手続きはいつからですか。", "expected": {"label": "契約照会", "reply": "契約に関するご照会を受け付けました。担当者よりご連絡します。"}, "split": "test", "meta": {"category": "基本", "difficulty": "easy", "source": "self-made"}}
+{"id": "case-0006", "input": "アプリがクラッシュして起動しません。", "expected": {"label": "障害報告", "reply": "お問い合わせ（障害報告）を受け付けました。内容を確認のうえご案内します。"}, "split": "test", "meta": {"category": "基本", "difficulty": "easy", "source": "self-made"}}
+{"id": "case-0007", "input": "ダークモードに対応してほしいです。", "expected": {"label": "機能要望", "reply": "お問い合わせ（機能要望）を受け付けました。内容を確認のうえご案内します。"}, "split": "test", "meta": {"category": "基本", "difficulty": "easy", "source": "self-made"}}
+{"id": "case-0008", "input": "資料請求はどこから行えますか。", "expected": {"label": "その他", "reply": "お問い合わせ（その他）を受け付けました。内容を確認のうえご案内します。"}, "split": "test", "meta": {"category": "基本", "difficulty": "easy", "source": "self-made"}}
